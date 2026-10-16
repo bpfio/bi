@@ -232,6 +232,17 @@
   - 对上层 Agent 屏蔽物理模型差异，对外暴露完全一致的标准化流式事件接口。
 - **对 `bi` 价值**：大幅简化 `BI-04` 单模型统一 SSE 流式驱动的适配器复杂度，实现零业务侵入的即插即用。
 
+#### (11) 工业级强化版 Pi-TUI 差分双缓冲与 PasteBurst 防冲看门狗 (`packages/pi-tui/`)
+- **核心痛点**：
+  1. 原版 `@earendil-works/pi-tui` 缺乏粘贴保护机制。用户从浏览器或文档中直接粘贴大段政策文本、JSON 或长 SQL 时，终端模拟器若未启用 Bracketed Paste Mode，高速连发的字符流会在几毫秒内触发 Enter 回车误判，导致半截提示词被提前提交给大模型；
+  2. 原版字符宽度缓存仅 512 条目，面对海量中文字符串容易发生哈希冲突并退化为单字节宽度；
+  3. 缺乏多 Agent 并发与工具折叠渲染的高阶组件。
+- **Kimi 工业化强化**：
+  - 在 `packages/pi-tui/src/paste-burst.ts` 中实现 62 行极简且确定性的 **PasteBurst 状态机**：监控字符接收脉冲间隔，当检测到短时间高频字符突发输入时，自动拦截压制 Enter 回车键达 120ms，杜绝任何长文本粘贴意外提交；
+  - 在 `packages/pi-tui/src/utils.ts` 中将 CJK 字符宽度缓存扩容至 4,096 条目，全面适配东亚宽字符；
+  - 提供了工业级终端渲染组件：`agent-swarm-progress.ts`（69KB，多 Agent 并发动态泳道进度看板）、`read-group.ts`（多文件读取折叠卡片）与 `tool-call.ts`（工具调用状态指示器）。
+- **对 `bi` 价值**：直接作为 `BI-19` 的核心底盘，复用率高达 95% 以上，彻底解决终端渲染跳字、误提交与多 Agent 协同可视化的痛点。
+
 ### 4. ZCode 全量工程底座（桌面宿主、CUA 视觉反爬与视觉裁判）资产解包深度发现
 
 随着 ZCode 官方仓库 19 个包（11,855 个源文件）全量检出至本地只读参考库，我们对清华官方的桌面形态、服务层与视觉判定进行了深度代码走读，提炼出三大核心资产：
@@ -257,6 +268,15 @@
   - 官方实现独立的 `packages/zcode-cua/`，内置 `broker-server.ts` 与 `pip-session-node.ts`；
   - 支持视窗画中画（PiP）受控视觉交互，模拟真实用户浏览、点击翻页与等待网络请求排空；
 - **对 bi 的价值**：为 `bi` 的政策探针（Scout）提供最强兜底。当标准抓取被强反爬拦截时，平滑降级至受控 Headless/CUA 机制获取数据，杜绝数据盲区。
+
+#### (4) 智谱 BigModel 闲时任务错峰调度引擎 (Off-Peak Scheduler - `packages/services/src/session/offPeakTaskService.ts` 与 `packages/desktop/src/scheduler/index.ts`)
+- **核心痛点**：长周期宏观经济测算、数十个行业多年度政策推演与海量上市公司研报穿透比对需要吞吐数百万至数千万 Token。若在日间高峰期直接在线调用，不仅容易遭遇并发限流（Rate Limit），而且会急速消耗昂贵的 Coding Plan 额度。
+- **清华架构**：
+  - 清华官方在 `offPeakTaskService.ts`（681 行完整状态机）与 `offPeakServerClient.ts` 中实现了工业级错峰异步调度机制；
+  - 排队取号与长轮询：向智谱错峰服务器申请排号 Ticket（`POST /ticket`），进入挂起队列并通过轻量级心跳后台轮询（`GET /ticket/status`）；
+  - 3102 异常续跑自愈：大模型运行超时或凭据过期（状态码 3102）时，自动触发重试续期与状态恢复；
+  - 终态 Outbox 结算：在智谱官方闲时窗口（夜间/周末算力波谷）以 1~3 折超低算力成本批量跑通，任务完成后原子回写入 Outbox 提货箱。
+- **对 `bi` 价值**：直接作为 `BI-02.3` 智谱 BigModel 闲时任务错峰调度引擎，使用户能够在下班前一键派发“夜间重度宏观政策推演”任务，次日早晨直接提货完整报告，大幅节约算力成本。
 
 ### 5. Pi Agent 原创架构与 CodeMode 内存精算沙箱深度走读
 
@@ -793,6 +813,7 @@ packages/
 │   │   │   ├── cli-oauth.ts      # 官方 OAuth init 与 poll 状态机
 │   │   │   ├── coding-plan-key.ts# API Key 二阶段 PAT 换票器与权益解析
 │   │   │   ├── quota-watchdog.ts # Coding Plan 额度监测与余额预警看门狗 (BI-02.2)
+│   │   │   ├── off-peak-service.ts# 智谱 BigModel 闲时任务错峰调度引擎 (BI-02.3)
 │   │   │   ├── credentials.ts    # 本地凭据安全存储与自动刷新看门狗
 │   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与扫码回显
 │   │   ├── gateway/       # 官方 Ultra VIP 专线网关路由与标头注入
@@ -853,16 +874,22 @@ packages/
 │   │       ├── a2a-email-gateway.ts   # L3: A2A 邮件私密信令网关 (SMTP/IMAP 跨物理墙控制面)
 │   │       └── github-a2a-hub.ts      # L3: GitHub A2A 任务中枢 (任务分支与 PR 交付数据面)
 │
-├── tui/                   # 终端交互层 (基于 @earendil-works/pi-tui)
+├── tui/                   # 终端交互层 (基于 Kimi Code 工业级强化版 pi-tui 双缓冲引擎)
 │   ├── src/
 │   │   ├── app.ts         # TUI 主生命周期与差分渲染循环 (处理 SIGINT 与按键)
+│   │   ├── engine/        # Kimi Code 强化版 Pi-TUI 核心差分引擎 (BI-19)
+│   │   │   ├── terminal.ts        # ANSI 双缓冲字符矩阵与增量局部刷新
+│   │   │   └── paste-burst.ts     # PasteBurst 非括号化长文本粘贴拦截状态机 (120ms 防冲)
+│   │   ├── components/    # 声明式终端渲染组件库
+│   │   │   ├── agent-swarm-progress.ts # 多 Agent 泳道进度条与并发看板 (BI-19)
+│   │   │   ├── read-group.ts      # 多文件读取折叠聚合卡片 (BI-19)
+│   │   │   ├── tool-call.ts       # 受控工具调用与参数状态卡片
+│   │   │   └── thinking.ts        # R1 思考流动态收起/展开折叠卡片
 │   │   ├── hud.ts         # Token 消耗、TTFT 延迟与 Cache 命中率状态栏
 │   │   ├── diff-view.ts   # 交互式 Git Unified Diff 预览与批准门
-│   │   ├── thinking.ts    # R1 思考流动态收起/展开折叠卡片
 │   │   ├── cjk-layout.ts  # CJK 东亚宽字符排版计算 (BI-19.1)
 │   │   ├── transcript-projection.ts # 四层同构 Transcript 视图投影 (BI-19.1)
 │   │   ├── workflow-view.ts# DAG 工作流步骤与检查点可视化看板
-│   │   ├── subagent-view.ts# A2A 多子智能体并行执行看板
 │   │   └── session-picker.ts# 历史会话毫秒级交互式切换器
 │
 └── plugins/               # 官方桌面版插件兼容体系与扩展中枢
@@ -897,6 +924,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 实现智谱 BigModel 双轨特权认证 (OAuth 免密 + API Key 二阶段 PAT 换票与 Ultra 专线重定向)
   ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
   ├── 落地 BI-02.2 Coding Plan 额度实时监测与余额告警看门狗 (quota-watchdog)
+  ├── 落地 BI-02.3 智谱 BigModel 闲时任务错峰调度引擎 (offPeakTaskService 681行状态机)
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
   ├── 接入 GLM、DeepSeek 等统一 SSE 流式驱动与单模型插槽路由 (Model Slot Router)
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
@@ -927,8 +955,10 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 挂接 Git Worktree 隔离运行沙箱与 Python 逆向勾稽核验
   └── 落实多轮思考流剥离 (CoT Stripping) 与 KV Cache 锁定调优
 
-[Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
-  ├── 接入 @earendil-works/pi-tui 差分渲染界面 (消除终端跳字闪烁)
+[Phase 5] Kimi Code 增强版 Pi-TUI 差分终端与正式交付 (Days 11~14)
+  ├── 落地 BI-19 Kimi Code 工业级强化版 pi-tui 差分渲染界面 (消除终端跳字闪烁)
+  ├── 挂载 PasteBurst 防冲看门狗 (120ms 字符脉冲拦截，杜绝长文本粘贴误提交)
+  ├── 实装 AgentSwarmProgress 多 Agent 泳道进度条与 read-group 文件折叠卡片
   ├── 落地 BI-19.1 CJK 东亚宽字符排版与四层同构 Transcript 状态投影层
   ├── 挂载 Token HUD 实时仪表盘 (显化 Cache Read 命中率 %、TTFT 延迟与 Token 消耗)
   ├── 实装 BI-18.2 Visual Judge 视觉核验判定器与图表渲染自愈闭环
