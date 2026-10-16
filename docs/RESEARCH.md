@@ -1579,3 +1579,91 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 随着上述 8 项深水区核心子系统的增补与全量对齐，`devplan.md` 的 Section II 与 Section III 已实现 100% 严格一致的 104 项任务全量覆盖（22 个顶级模块 + 82 个细粒度子任务）。
 
 这一架构以清华 ZCode 作为源头骨架，全面吸纳 Kimi Code、DeepSeek Harness、Pi Agent 与 OpenCode 的最佳实践，构建了一套兼具**清华学术严谨性、工业级防爆稳定性、大模型原生高能效与现代开源工程完备性**的顶尖智能体底座。
+
+## 二十二、 三大战略支柱架构深化与 109 项 SSOT 任务终极收敛
+
+### 1. 三大战略支柱体系与设计哲学对齐
+
+响应项目的最新工程战略定位，`bi` 项目正式确立了三位一体的顶层推进路线，并在底层任务矩阵中实现 100% 物理映射闭环：
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        bi 现代化政策调研与商业智能终端 Agent CLI                       │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│ 【支柱一：源头母体】以清华大学 ZCode 为统一架构蓝本，全量吸收契约、运行时与官方插件    │
+│  • 统一采用 @zcode/contracts 契约定义与形式化状态空间（formal-proof）防竞态不变量       │
+│  • 吸收 Append-only JSONL 会话分叉树与逆向差分回滚（file-rewind 21KB）                 │
+│  • 吸收智谱 BigModel 官方双轨特权认证、闲时错峰调度器（offPeakTaskService 681行）与卡抽卡│
+│  • 吸收 Golden Trajectory 黄金轨迹录制与脱机 Shadow Replay 离线非回归测试管线          │
+│  • 吸收自定义斜杠命令引擎与 Shell 参数展开器 (BI-01.2)、进程资源采样与钩子信任门 (BI-06.9)│
+│  • 全量移植 6 大官方插件: spreadsheets (xlsx.py), pdf, documents, visualize, superpowers│
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│ 【支柱二：终端与生态】CLI 功能 100% 完整复刻 Kimi Code CLI，深度吸收 Pi 与 OpenCode     │
+│  • 完整复刻 Kimi Code CLI 全部子命令: bi vis (本地Web), bi acp, bi upgrade, bi export,│
+│    bi fork, bi session, bi config, bi copy, --goal, --agent-file, --add-dir             │
+│  • 吸收 Kimi Code 工业级防爆: RepeatBreaker 三阶反驳打断门、smol-toml 语法树保留回写、 │
+│    MiniDB 纯 TS LSM 存储、Tower 多工作树协作与 Merge Gate、pi-tui CJK 东亚宽字符排版   │
+│  • 吸收 Pi Agent 极致性能: Chord Treap 零拷贝 JSON Delta、Durable 崩溃自愈 Actor、      │
+│    evals 确定性无头评测套件与看板、CodeMode 零依赖计算沙箱、1-token 脉冲缓存保活       │
+│  • 吸收 OpenCode 现代协议: steer/input 双边界收件箱门铃协调器、纯 TS 确定性 Shell 扫描、 │
+│    4 级 KV 缓存断点硬预算编排、html-markdown SAX 流式抽取、Merman 终端 Mermaid 渲染   │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│ 【支柱三：基础设施】统筹吸收 DeepSeek Harness 大模型原生全周期调度与公文处理          │
+│  • 吸收 Temporal 全周期时间调度领域模型 (After/At/Every/Cron 400年闰年/Daily/Weekly)   │
+│  • 吸收原生 Word/PPT 矢量 PDF 转译与 Visual Judge 多模态切片审计管线 (office-to-pdf)   │
+│  • 吸收 Strict Tool-pairing 前缀和平衡门禁 (防 API 400)、超大输出磁盘 Spill 溢出隔离   │
+│  • 吸收 LSP 符号级代码导航 (定义/引用/Hover)、异步作业三件套与交付物变更看板追踪       │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2. 5 项新增核心子系统技术原理解析
+
+#### 1. 自定义斜杠命令引擎与 Shell 参数展开器 (BI-01.2)
+- **归属源头**：清华大学 ZCode [apps/zcode-cli/packages/bootstrap/src/custom-commands.ts](file:///home/yupeng/references/zcode/apps/zcode-cli/packages/bootstrap/src/custom-commands.ts)（14KB）与 [custom-command-shell-expansion.ts](file:///home/yupeng/references/zcode/apps/zcode-cli/packages/bootstrap/src/custom-command-shell-expansion.ts)（10KB）。
+- **核心机制**：
+  1. 用户可在全局配置目录（`~/.bi/commands/`）或当前项目（`.bi/commands/`）下创建自定义 Markdown/Shell 提示词脚本（如 `/audit-policy`、`/check-yield`）；
+  2. 内置类 Shell 词法解析器，支持对输入的命令行参数进行提取与变量安全展开（自动替换位置参数与工作区环境变量）；
+  3. 通过 `slash-command-surface.ts` 将自定义命令动态注入 TUI 自动补全清单与无头批处理流水线，赋能团队统一沉淀专属 SOP 技能。
+
+#### 2. 进程资源开销采样器与工作区钩子信任准入门 (BI-06.9)
+- **归属源头**：清华大学 ZCode [apps/zcode-cli/packages/bootstrap/src/process-resource-sampler.ts](file:///home/yupeng/references/zcode/apps/zcode-cli/packages/bootstrap/src/process-resource-sampler.ts) 与 [workspace-hook-trust-cli.ts](file:///home/yupeng/references/zcode/apps/zcode-cli/packages/bootstrap/src/workspace-hook-trust-cli.ts)。
+- **核心机制**：
+  1. 高频定时采样 Node/Bun CLI 宿主进程的 CPU 核心利用率与 RSS 物理常驻内存，超出阈值时在 HUD 显性告警，防御死循环消耗主机资源；
+  2. 针对外部工作区中声明的自动化生命周期钩子（`.bi/hooks/`），建立显式信任准入验证门禁（Trust Gate）：首次进入新代码仓库时必须经人类确认放行，防止恶意开源项目通过自动化钩子静默逃逸。
+
+#### 3. 本地 Web 会话交互可视化服务器与访问令牌轮转引擎 (BI-20.5)
+- **归属源头**：Kimi Code [apps/kimi-code/src/cli/sub/vis.ts](file:///home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/vis.ts) 与 [apps/kimi-code/src/cli/sub/web/](file:///home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/web/)（68个源文件）。
+- **核心机制**：
+  1. 终端执行 `bi vis` 命令即可就地启动轻量本地 HTTP/WebSocket 可视化服务；
+  2. 采用动态随机访问令牌（Token Rotation）与局域网多网卡安全绑定（`access-urls.ts`），杜绝公网越权访问；
+  3. 在浏览器 Web 视窗中直观呈现完整会话 DAG 拓扑分支树、各轮次耗时瀑布流、工具调用折叠卡片与代码 Unified Diff，为宏观政策对比与报表审计提供超越纯终端界面的高维交互。
+
+#### 4. 独立 ACP 协议接入子命令与 IDE 桥接器 (BI-20.6)
+- **归属源头**：Kimi Code [apps/kimi-code/src/cli/sub/acp.ts](file:///home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/acp.ts) 与 [packages/acp-server/](file:///home/yupeng/references/kimi-code/packages/acp-server/)（46个源文件）。
+- **核心机制**：
+  1. 开放 `bi acp` 命令行接口，将底层统一 Agent 引擎封装为标准 Agent Client Protocol（JSON-RPC over stdio）服务端；
+  2. 直连 VS Code、Cursor 等现代 IDE 侧边栏，将终端会话、工具调用与思考流无缝投递至编辑器视窗；
+  3. 预留 KAP (Kimi Agent Protocol) 头协议兼容，支持无缝作为 IDE 插件的后台智能中枢。
+
+#### 5. 生产级 CLI 原子分阶段自升级与原生二进制交换引擎 (BI-20.7)
+- **归属源头**：Kimi Code [apps/kimi-code/src/cli/sub/upgrade.ts](file:///home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/upgrade.ts) 与 [apps/kimi-code/src/cli/update/](file:///home/yupeng/references/kimi-code/apps/kimi-code/src/cli/update/)（15个源文件）。
+- **核心机制**：
+  1. 提供 `bi upgrade` 命令与后台静默更新检测（`refresh.ts`）；
+  2. 采用分阶段安全下载机制（`native-stage.ts`），下载原生二进制到临时 staging 目录并计算 SHA-256 校验和防篡改；
+  3. 原子二进制文件交换（`native-swap.ts`）：在 Linux/macOS 环境下先执行 `unlink` 再执行 `rename`，安全替换当前正在运行的可执行文件，彻底杜绝 `Text file busy` 导致的崩溃；
+  4. 引入 `install-lock.ts` 文件锁，杜绝多进程并发升级竞态。
+
+---
+
+### 3. 109 项 SSOT 终极研发矩阵收敛总括
+
+通过本次对三大战略支柱的系统化对齐与 5 项深水区工程子系统的增补，`devplan.md` 的 Section II 与 Section III 已实现 **109 项任务（22 个顶级模块 + 87 个工程子任务）的 100% 绝对 1:1 对称收敛**。
+
+整个项目形成了：
+- **以清华 ZCode 为蓝本骨架**，保障学术严谨性、状态空间形式化约束与智谱特权通道；
+- **以 Kimi Code CLI 为交互全量复刻对象**，提供包含 `vis`、`acp`、`upgrade`、`export`、`fork` 等在内的工业级 CLI 全功能生态与防爆体系；
+- **以 Pi Agent、OpenCode 与 DeepSeek Harness 为高性能引擎**，注入 Treap 零拷贝状态追踪、纯 TS Shell 扫描、Temporal 400 年闰年全周期调度、Office 矢量转译与无头评测套件。
+
+这一体系构成了现代化终端 Agent CLI 最完备的工程执行总纲。
