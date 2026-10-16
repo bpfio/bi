@@ -50,13 +50,14 @@
 
 ---
 
-### 2. 六大标杆能力全景吸收规范 (Benchmark Synthesis)
+### 2. 七大标杆能力全景吸收规范 (Benchmark Synthesis)
 
-任何开发 Agent 在实现具体模块时，必须对齐以下六大标杆的最优实践：
+任何开发 Agent 在实现具体模块时，必须对齐以下七大标杆的最优实践：
 
 | 标杆工程 | 吸收模块与落位 | 核心实现机制与代码契约 |
 |---|---|---|
 | **清华 ZCode** | `packages/core/src/tool/edit-matchers.ts`<br>`packages/core/src/tool/read-file-state.ts`<br>`packages/core/src/memory/dream.ts`<br>`presets/plugins/superpowers/` | 1. **8 级阶梯弹性文件匹配**：自动归一化中英弯引号、剥离行号前缀、弹性缩进、相似度块锚点（0.8），彻底消灭 TargetContent 找不到的痛点，编辑成功率提升至 99.5%；<br>2. **Read-Before-Write 门禁与 mtime 防脏写**：未读文件禁止修改，基于真实 mtime 检测外部进程改动并拦截 stale write；<br>3. **Dream Cycle 仿生记忆沉淀**：后台空闲期基于文件锁自动提炼会话精华为长期记忆；<br>4. **清华顶级 Agent SOP**：吸收 `using-git-worktrees` 与 `verification-before-completion` 强制自验纪律。 |
+| **清华系 Kimi Code** | `packages/tree-sitter-bash/`<br>`packages/agent-core-v2/src/agent/toolExecutor/`<br>`packages/minidb/`<br>`packages/agent-core-v2/src/agent/media/`<br>`packages/acp-server/` | 1. **纯 TS Tree-sitter Bash 语法分析**：0 原生 C 依赖，50k 节点 / 50ms 超时熔断，语法树级免疫命令注入与越界窃密；<br>2. **细粒度 RWLock 调度矩阵**：只读并发、写操作按路径串行互斥、全局写设立屏障；<br>3. **纯 TS LSM-Tree 存储 (MiniDB)**：零 C 编译依赖，免疫 SQLite 锁死与动态链接缺失；<br>4. **端侧媒体压缩**：自动降采样与质量压缩（< 25KB），防止 Token 撑爆；<br>5. **ACP 标准服务端**：标准 JSON-RPC 开放协议直连现代 IDE。 |
 | **Claude Code** | `packages/core/src/prompt.ts`<br>`packages/core/src/agent.ts`<br>`packages/core/src/tools/bash.ts` | 1. **Prompt Cache 黄金排布**：严格遵循 `[静态 System + BI.md] → [静态 Tools] → [Anchor] → [历史消息]` 顺序，保证 GLM/DeepSeek 缓存命中率 ≥ 85%；<br>2. **二段式抢占取消**：单击 Esc / Ctrl+C 暂停并保留上下文，连续双击才退出；<br>3. **Linux PGID 组杀**：子进程派生独立 `setsid()`，超时发射 `-PGID` 信号彻底杀绝孤儿进程。 |
 | **OpenAI Codex** | `packages/core/src/sandbox/path-jail.ts`<br>`packages/tui/src/diff-view.ts` | 1. **Credential Guard 凭据防御**：严禁模型读取 `~/.ssh`、`~/.bash_history`、`.env` 等高危路径；<br>2. **交互式 Unified Diff**：对所有文件修改在终端高亮渲染 Diff，人类敲击 `y/n` 审查门放行。 |
 | **Qwen CLI** | `packages/core/src/parser.ts`<br>`packages/a2a/src/audit.ts` | 1. **Fuzzy Tool Parser**：模型输出的工具 JSON 遇到缺少括号或包裹在 Markdown 中时，自动进行 AST/正则容错修补；<br>2. **Self-Healing Traceback**：Python 脚本报错时自动捕获堆栈回溯，模型自主打补丁重试，杜绝求助人类。 |
@@ -107,16 +108,16 @@
 | **BI-01** | Bun Monorepo 骨架与多包拓扑初始化 | 根目录配置<br>`package.json`, `tsconfig.json` | 1. 建立 `packages/{core, worktree, workflow, mcp, a2a, tui, plugins}` 与 `presets/`；<br>2. 配置 TypeScript 5.x 严格模式与 Bun 工作区链接；`bun test` 骨架跑通 | P1 |
 | **BI-02** | 智谱 BigModel 官方双轨特权认证引擎 | `packages/core/src/auth/cli-oauth.ts`<br>`packages/core/src/auth/coding-plan-key.ts` | 1. **通道一**：OAuth 2.0 PKCE/Poll 状态机，生成 32 字节 PollToken 并唤醒浏览器，捕获 Project Access Token (PAT)；<br>2. **通道二**：API Key 二阶段换票器（换取 `token_use: "project_access"` 的短期 PAT）；<br>3. 凭据加密落盘于 `~/.bi/credentials.json` (0600 权限) | P0 |
 | **BI-02.1** | Ultra VIP 专线路由与特权指纹标头注入 | `packages/core/src/gateway/ultra-gateway.ts`<br>`packages/core/src/gateway/fingerprint.ts` | 1. 请求标头注入 `X-Coding-Plan-Api-Key`、`User-Agent: zcode-cli/0.1.8`、`x-zcode-trace-id`；<br>2. 自动重定向至专线 `/api/v1/ultra/anthropic/v1/messages`；实测触发官方 Coding Plan 计费抵扣与客户端费率 | P0 |
-| **BI-03** | Append-only JSONL 树状会话引擎 | `packages/core/src/session/manager.ts`<br>`packages/core/src/session/types.ts` | 1. 会话落盘至 `~/.bi/sessions/<id>.jsonl`，原子追加，抗机器掉电；<br>2. 每条记录携带 UUIDv7 `id` 与 `parentId`，天然支持分支与时光倒流；<br>3. SQLite WAL 索引表（`~/.bi/sessions.db`）实现历史列表毫秒级检索 | P0 |
+| **BI-03** | Append-only JSONL 树状会话引擎 | `packages/core/src/session/manager.ts`<br>`packages/core/src/session/types.ts` | 1. 会话落盘至 `~/.bi/sessions/<id>.jsonl`，原子追加，抗机器掉电；<br>2. 每条记录携带 UUIDv7 `id` 与 `parentId`，天然支持分支与时光倒流；<br>3. 混合索引设计：支持 SQLite WAL 与纯 TS MiniDB (LSM-Tree) 双引擎，历史列表毫秒级检索，保证 Bun Compile 零 C 依赖打包 | P0 |
 | **BI-03.1** | 会话时光倒流与物理文件差分回滚引擎 | `packages/core/src/session/file-rewind.ts` | 吸收清华核心算法：实现 `file-rewind.ts`（21KB）与 `workspace-checkpoints.ts`，基于 `diff` 逆向补丁与 SHA256 哈希校验，支持会话回退时工作区文件的物理级无损恢复与撤销 | P1 |
 | **BI-04** | 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/model-router.ts`<br>`packages/core/src/drivers/sse-driver.ts` | 统一抽象 OpenAI / Anthropic SSE 事件流；实现 `ModelSlotRouter`，将逻辑语义插槽（`fast`, `reasoner`, `auditor`）默认解析映射至用户单一主力模型 | P1 |
 | **BI-04.1** | Prompt Cache 黄金排布与 Fuzzy 工具解析器 | `packages/core/src/prompt.ts`<br>`packages/core/src/parser.ts` | 1. 严格锁定 `System + BI.md + Tools` 前缀顺序，确保服务端 Cache 命中率 ≥ 85%；<br>2. 引入 Qwen 风格容错解析器，对缺失闭合符或包裹代码块的畸形 JSON 自动 AST 修复 | P1 |
 | **BI-05** | `BI.md` 项目长期记忆自适应注入器 | `packages/core/src/rules.ts` | 启动时自动向上递归检索当前工程根目录的 `BI.md` 或 `.bi/rules.md`，将政策信源、统计口径与禁用词静态注入 System Prompt 前缀 | P1 |
 | **BI-05.1** | Dream Cycle 仿生做梦记忆沉淀中枢 | `packages/core/src/memory/dream.ts` | 借鉴清华认知神经科学设计：利用 `evaluateAutoDreamTiming` 与 `.consolidate-lock` 文件锁，在后台空闲期自动扫描会话精华，沉淀固化入项目级长期记忆 | P1 |
 | **BI-06** | 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/core/src/tools/bash.ts` | 派生独立子进程并调用 `setsid()` 赋予独立 PGID；超时（默认 120s）或被取消时向 `-PGID` 发送 `SIGTERM → (等待1.5s) → SIGKILL`，彻底杜绝僵尸进程 | P0 |
-| **BI-06.1** | Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/sandbox/path-jail.ts` | 借鉴 Codex，内核与路径层严密拦截对 `~/.ssh`、`~/.gnupg`、`~/.bash_history`、`/etc/` 以及项目外 `.env` 文件的读取尝试，违规直接阻断 | P0 |
+| **BI-06.1** | Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/sandbox/path-jail.ts` | 吸收 Codex 与 Kimi Code 纯 TS Tree-sitter Bash AST 解析器，在 50ms/50k 节点预算内完成语法树级安全扫描，严密拦截对 `~/.ssh`、`~/.gnupg`、`~/.bash_history`、`/etc/` 以及项目外 `.env` 文件的读取尝试与命令注入，违规直接阻断 | P0 |
 | **BI-06.2** | 嵌入式原生快速搜索加速器 | `packages/core/src/sandbox/embedded-search.ts` | 吸收清华执行加速设计：透明注入 `embedded-search-prelude.ts`（7.3KB），将模型的 `find`/`grep` 命令透明劫持路由至预编译静态 `bfs` 与 `ugrep` 二进制，搜索性能提升 20 至 50 倍且自动过滤 .git 目录 | P1 |
-| **BI-07** | 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/agent.ts` | 1. 支撑只读工具并发执行（`Promise.allSettled`）；<br>2. 落地二段式取消：单击 Esc/Ctrl+C 暂停并保留上下文，连续双击才真正退出 | P1 |
+| **BI-07** | 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/agent.ts` | 1. 吸收 Kimi Code 细粒度读写锁（RWLock）调度矩阵：只读工具安全并发（`Promise.all`），同文件写操作严格串行互斥（`fileAccessesOverlap`），全局操作设内存屏障；<br>2. 落地二段式取消：单击 Esc/Ctrl+C 暂停并保留上下文，连续双击才真正退出 | P1 |
 | **BI-07.1** | 8 级阶梯弹性文件匹配引擎 | `packages/core/src/tool/edit-matchers.ts` | 吸收清华核心算法：实现 exact、quote_normalized（中英弯引号）、line_number_stripped、indentation_flexible 与 block_anchor（0.8 相似度）等 8 级阶梯匹配，消灭匹配失败 | P0 |
 | **BI-07.2** | Read-Before-Write 门禁与 mtime 防脏写看门狗 | `packages/core/src/tool/read-file-state.ts` | 吸收清华防御机制：维护 `ReadFileStateMap`，未读文件严禁编辑修改；校验磁盘真实 `mtime`，一旦发生外部并发改动立即阻断并强制重新读取 | P0 |
 
@@ -127,7 +128,7 @@
 
 | 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
-| **BI-08** | 单次工具输出 64KB 有界截断保护 | `packages/core/src/context/bounded-tool-text.ts` | 限制单次工具输出上限 64,000 字符；超出时保留前 200 行与后 200 行，中间折叠并注入标记，完整输出存入沙箱磁盘日志 | P0 |
+| **BI-08** | 单次工具输出 64KB 有界截断与端侧媒体压缩保护 | `packages/core/src/context/bounded-tool-text.ts`<br>`packages/core/src/context/media-compress.ts` | 1. 限制单次工具输出上限 64,000 字符，超出时保留前 200 行与后 200 行，中间折叠并注入标记，完整输出存入沙箱磁盘日志；<br>2. 吸收 Kimi Code 端侧图片压缩管线（`image-compress.ts`），截图动态降采样至 25KB，杜绝多模态 Token 视窗瞬间撑爆 | P0 |
 | **BI-09** | 历史工具输出自动脱水修剪器 (Pruner) | `packages/core/src/context/pruner.ts` | 自动将 5 轮之前的历史 `tool_result` 大文本脱水为单行摘要标记，Token 占用压减 60%~70%，完整保留 Assistant 决策意图 | P1 |
 | **BI-10** | 80% 高水位静默自动紧缩器 (Auto-Compactor) | `packages/core/src/context/compactor.ts`<br>`packages/core/src/context/window-manager.ts` | 实时感知 API 返回的 `prompt_tokens`；触及 80% 水位时自动静默调用 Summarizer 提取阶段事实底账，生成 `CompactionEntry`，重构视窗并回落至 35% 安全区 | P0 |
 | **BI-11** | 终端 Token HUD 实时显性感知与手动控制门 | `packages/tui/src/hud.ts`<br>`packages/core/src/commands/compact.ts` | 1. 终端底部常驻渲染 `Tokens: 42k/128k (32%) | Cache: 88%`；<br>2. 开放手动 `/compact [prompt]`、`/rewind [steps]` 与 `/clear` 交互命令 | P1 |
@@ -140,7 +141,7 @@
 | 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
 | **BI-12** | Git Worktree 物理并发沙箱引擎 | `packages/worktree/src/engine.ts`<br>`packages/worktree/src/branch.ts` | 多 Agent 读写全部分流至 `~/.bi/worktrees/<task-id>` 独立目录；挂载独立临时分支 `bi-task-<id>`；任务完成经审查后原子 Merge，撤销则静默清空 | P0 |
-| **BI-13** | 完整 MCP 客户端 (Stdio + SSE 双通道) | `packages/mcp/src/client.ts`<br>`packages/mcp/src/transports/` | 1. `StdioClientTransport`：子进程看门狗与输入输出管道封套；<br>2. `SseClientTransport`：远程 HTTP/SSE 连接器（实测接驳 QNAP 生产环境 Logbook 服务）；<br>3. 动态聚合工具注册表 | P0 |
+| **BI-13** | 完整 MCP 客户端 (Stdio + SSE 双通道) 与 ACP 协议 | `packages/mcp/src/client.ts`<br>`packages/mcp/src/transports/`<br>`packages/acp/src/server.ts` | 1. `StdioClientTransport`：子进程看门狗与输入输出管道封套；<br>2. `SseClientTransport`：远程 HTTP/SSE 连接器（实测接驳 QNAP 生产环境 Logbook 服务）；<br>3. 动态聚合工具注册表；<br>4. 吸收 Kimi Code `acp-server`，支持标准 Agent Client Protocol 直连现代 IDE | P0 |
 
 ---
 
@@ -177,31 +178,31 @@
 
 ## 三、 开源轮子全景资产图谱与代码映射矩阵 (SSOT)
 
-> **开发铁律**：开发智能体在执行具体任务时，必须**严禁从零重复造轮子**！首选从清华大学 ZCode 官方仓库（`/home/yupeng/references/zcode`）中提取并适配工业级成熟源码；次选从 Pi Agent、DeepCode、OpenCode 或成熟社区库中吸收。下表为各任务的权威资产映射清单：
+> **开发铁律**：开发智能体在执行具体任务时，必须**严禁从零重复造轮子**！首选从清华大学 ZCode（`/home/yupeng/references/zcode`）与清华系 Kimi Code（`/home/yupeng/references/kimi-code`）官方仓库中提取并适配工业级成熟源码；次选从 Pi Agent、DeepCode、OpenCode 或成熟社区库中吸收。下表为各任务的权威资产映射清单：
 
 | 任务编号与名称 | 首选 ZCode 官方源码轮子 (清华大学工业级资产) | 其它标杆 / 社区成熟轮子 (备选与互补) | 代码复用率与自研量估算 | 核心算法与复用收益 |
 |---|---|---|---|---|
 | **BI-01** Bun Monorepo 骨架与多包拓扑初始化 | `apps/zcode-cli/packages/contracts/`<br>`apps/zcode-cli/packages/shared-types/`<br>`turbo.json`, `pnpm-workspace.yaml` | `@earendil-works/pi-agent-core`<br>`opencode/packages/core/` | 90% 轮子<br>10% 胶水配置 | 完整复用契约定义、类型签名与多包编译流水线，消灭接口歧义。 |
 | **BI-02** 智谱 BigModel 官方双轨特权认证引擎 | `packages/core/src/runtime/methods/model-runtime-headers.ts`<br>`packages/adapters/src/model/off-peak-request-auth.ts`<br>`packages/adapters/src/model/failure-classifier.ts` | Node `node:crypto` (生成安全 32 字节 PollToken) | 85% 轮子<br>15% 适配 | 复用官方 OAuth PKCE 轮询与二阶段换票机制，凭据加密落盘。 |
 | **BI-02.1** Ultra VIP 专线路由与特权指纹标头注入 | `packages/adapters/src/model/runner-network-headers.ts`<br>`packages/adapters/tests/provider-endpoint-routing-fetch.test.ts` | `opencode/packages/ai/src/providers/` | 95% 轮子<br>5% 胶水 | 复用 `X-Coding-Plan-Api-Key` 标头注入与 `/api/v1/ultra/` 专线 URL 重写，触发折扣。 |
-| **BI-03** Append-only JSONL 树状会话引擎 | `packages/core/src/runtime/methods/message-persistence.ts`<br>`packages/core/src/runtime/methods/session-fork.ts` (53KB)<br>`packages/core/src/runtime/methods/timeline-persistence.ts` | `pi/packages/coding-agent/src/core/session-manager.ts` (UUIDv7) | 90% 轮子<br>10% 适配 | 复用 53KB 会话分叉树算法，掉电不丢记录，毫秒级分支检索。 |
+| **BI-03** Append-only JSONL 树状会话引擎 | `packages/core/src/runtime/methods/message-persistence.ts`<br>`packages/core/src/runtime/methods/session-fork.ts` (53KB)<br>`packages/core/src/runtime/methods/timeline-persistence.ts` | `pi/packages/coding-agent/src/core/session-manager.ts` (UUIDv7)<br>`kimi-code/packages/minidb/` (纯 TS LSM-Tree/SkipList/Trigram 引擎) | 90% 轮子<br>10% 适配 | 复用 53KB 会话分叉树算法，结合 MiniDB 纯 TS LSM 存储，彻底消除 Bun 跨平台编译 native C 绑定痛点。 |
 | **BI-03.1** 会话时光倒流与物理文件差分回滚引擎 | `packages/core/src/runtime/methods/file-rewind.ts` (21KB)<br>`packages/core/src/runtime/methods/workspace-checkpoints.ts` (11KB) | `diff` npm package (`applyPatch`, `StructuredPatch`) | 90% 轮子<br>10% 适配 | 复用 21KB 逆向补丁恢复算法，时光倒流时物理工作区自动差分自愈。 |
 | **BI-04** 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/runtime/methods/turn-model-step.ts` (32KB)<br>`packages/core/src/runtime/methods/streaming-recovery.ts`<br>`packages/adapters/src/model/runner-generate.ts` | `deepcode/packages/core/src/session.ts` (R1 流式分离)<br>`eventsource-parser` | 85% 轮子<br>15% 适配 | 复用 32KB 流式 Step 状态机与断线自愈恢复，支持 R1 思考流无缝分离。 |
 | **BI-04.1** Prompt Cache 黄金排布与 Fuzzy 工具解析器 | `packages/core/src/context/builder.ts` (12KB, `ephemeral` 标记)<br>`packages/core/src/tool/input-normalization.ts`<br>`packages/core/src/tool/tool-input-validation-issues.ts` | Qwen CLI 畸变 JSON 自动修复 AST | 90% 轮子<br>10% 适配 | 严格锁定前缀顺序，Cache 命中率 ≥ 85%；自动清洗修复畸变 JSON。 |
 | **BI-05** `BI.md` 项目长期记忆自适应注入器 | `packages/core/src/memory/extraction.ts` (10KB)<br>`packages/core/src/memory/memory-file-path.ts`<br>`packages/core/src/context/sections/memory.ts` | Claude Code `CLAUDE.md` 注入规范 | 90% 轮子<br>10% 适配 | 向上递归检索定位 `BI.md`，事实与口径静态注入 System Prompt 前缀。 |
 | **BI-05.1** Dream Cycle 仿生做梦记忆沉淀中枢 | `packages/core/src/memory/dream.ts` (9.9KB, `evaluateAutoDreamTiming`)<br>`packages/core/src/memory/memory-agent-loop.ts` | 无 (清华大学 ZCode 独创认知算法) | 95% 轮子<br>5% 胶水 | REM 做梦机制，后台空闲期自动扫描会话精华，增量沉淀固化入长期记忆。 |
 | **BI-06** 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/adapters/src/exec/process-tree.ts`<br>`packages/adapters/src/exec/node-execution-adapter-process.ts`<br>`packages/core/src/tool/bash-timeout-policy.ts`<br>`packages/adapters/src/exec/cwd-capture.ts` | `pi/packages/coding-agent/src/core/tools/bash.ts` | 90% 轮子<br>10% 适配 | 独立 PGID 进程组，`SIGTERM → SIGKILL` 强杀超时与孤儿进程，自动捕获 cwd。 |
-| **BI-06.1** Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/tool/path-policy.ts`<br>`packages/core/src/tool/path-normalization.ts`<br>`packages/core/src/tool/handlers/bash-readonly-policy-*.ts` (14 文件) | OpenAI Codex CLI Path Jail 规则 | 90% 轮子<br>10% 适配 | 拦截 `~/.ssh`、`~/.gnupg`、`/etc/` 与外部 `.env` 访问，彻底封堵凭据外泄。 |
+| **BI-06.1** Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/tool/path-policy.ts`<br>`packages/core/src/tool/path-normalization.ts`<br>`packages/core/src/tool/handlers/bash-readonly-policy-*.ts` (14 文件) | `kimi-code/packages/tree-sitter-bash/` (纯 TS Tree-sitter Bash AST 解析器)<br>OpenAI Codex CLI Path Jail 规则 | 90% 轮子<br>10% 适配 | 结合 AST 语法树解析与 Path Jail，在 50ms/50k 节点硬预算下阻断 `rm -rf /`、子命令嵌套及凭据窃取，零 C 依赖。 |
 | **BI-06.2** 嵌入式原生快速搜索加速器 | `packages/adapters/src/exec/embedded-search-prelude.ts` (7.3KB)<br>`apps/zcode-cli/dependencies/native-search/` | BurntSushi/ripgrep 官方发布包 | 95% 轮子<br>5% 胶水 | 透明劫持 `find`/`grep` 至预编译静态 `bfs`/`ugrep`，速度提升 20 至 50 倍。 |
-| **BI-07** 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/tool/scheduler.ts` (7KB)<br>`packages/core/src/runtime/methods/streaming-tool-coordinator.ts` (14KB)<br>`packages/core/src/runtime/methods/turn-tools.ts` | Pi Agent `Promise.allSettled` 并行模式 | 85% 轮子<br>15% 适配 | 只读工具安全并发，双击抢占取消且保留已有上下文。 |
+| **BI-07** 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/tool/scheduler.ts` (7KB)<br>`packages/core/src/runtime/methods/streaming-tool-coordinator.ts` (14KB)<br>`packages/core/src/runtime/methods/turn-tools.ts` | `kimi-code/packages/agent-core-v2/src/agent/toolExecutor/toolScheduler.ts` (细粒度 RWLock 调度矩阵)<br>Pi Agent `Promise.allSettled` | 85% 轮子<br>15% 适配 | 落地 `ToolAccesses.conflict` 读并发、路径重叠串行与全局屏障，只读并发加速同时消灭并发脏写。 |
 | **BI-07.1** 8 级阶梯弹性文件匹配引擎 | `packages/core/src/tool/edit-matchers.ts` (13.2KB) | 无 (清华大学 ZCode 独创弹性算法) | 100% 轮子<br>0% 自研 | 8 级阶梯（exact、quotes、line-number、indentation、block 0.8），彻底消灭编辑失败。 |
 | **BI-07.2** Read-Before-Write 门禁与 mtime 防脏写看门狗 | `packages/core/src/tool/read-file-state.ts`<br>`packages/core/src/tool/read-file-state-metadata.ts` (5.4KB)<br>`packages/core/src/tool/handlers/edit.ts` | 无 (清华大学 ZCode 独创防御机制) | 100% 轮子<br>0% 自研 | 未读严禁修改，校验磁盘真实 mtime，外部并发篡改立即阻断。 |
-| **BI-08** 单次工具输出 64KB 有界截断保护 | `packages/adapters/src/exec/bash-output-policy.ts`<br>`packages/adapters/src/exec/bash-file-output.ts` (7KB)<br>`packages/core/src/tool/executor/result-content-projection.ts` | `zcode-app-cli` `bounded-tool-text.ts` | 95% 轮子<br>5% 胶水 | 单次工具输出上限 64KB，保留头尾 200 行，完整内容通过文件描述符直接落盘。 |
+| **BI-08** 单次工具输出 64KB 有界截断保护 | `packages/adapters/src/exec/bash-output-policy.ts`<br>`packages/adapters/src/exec/bash-file-output.ts` (7KB)<br>`packages/core/src/tool/executor/result-content-projection.ts` | `kimi-code/packages/agent-core-v2/src/agent/media/image-compress.ts` (端侧 25KB 媒体压缩)<br>`zcode-app-cli` `bounded-tool-text.ts` | 95% 轮子<br>5% 胶水 | 单次输出 64KB 头尾 200 行截断，辅以端侧图片就地压缩（25KB 预算），全面封堵视窗撑爆风险。 |
 | **BI-09** 历史工具输出自动脱水修剪器 (Pruner / Microcompact) | `packages/core/src/compact/microcompact.ts` (9.3KB) | 无 (清华大学 ZCode 独创脱水算法) | 100% 轮子<br>0% 自研 | 保留最近 5 轮工具结果，历史老旧 `Read`/`Bash` 脱水为单行标记，省 70% Token。 |
 | **BI-10** 80% 高水位静默自动紧缩器 (Auto-Compactor) | `packages/core/src/compact/policy.ts` (6.2KB)<br>`packages/core/src/compact/manual.ts`<br>`packages/core/src/runtime/methods/compact-active.ts` (28KB) | Claude Code `/compact` 机制 | 90% 轮子<br>10% 适配 | 扣减输出预留后的有效视窗计算，3 击熔断器，自动摘要事实底账并重构上下文。 |
 | **BI-11** 终端 Token HUD 实时显性感知与手动控制门 | `packages/core/src/runtime/methods/context-usage.ts` (14KB)<br>`packages/core/src/runtime/methods/usage-observability.ts` | `pi/packages/tui/src/program-status.ts` | 85% 轮子<br>15% 适配 | 常驻渲染已用 Token、百分比与缓存命中率，支持 `/compact` 手动交互。 |
 | **BI-12** Git Worktree 物理并发沙箱引擎 | `packages/superpowers-plugin/skills/using-git-worktrees/SKILL.md`<br>`packages/adapters/src/context/git-snapshot.ts` | Node `child_process.execFile` | 80% 轮子<br>20% 胶水 | 任务专属独立工作树 `~/.bi/worktrees/<id>`，审查后 Merge，失败静默丢弃。 |
-| **BI-13** 完整 MCP 客户端 (Stdio + SSE 双通道) | `packages/adapters/src/mcp/stdio-transport.ts`<br>`packages/adapters/src/mcp/network.ts`<br>`packages/adapters/src/mcp/pool.ts` | `pi/packages/mcp/src/client.ts` (21KB)<br>`streamable-http.ts` | 90% 轮子<br>10% 适配 | 纯白盒 Stdio 与 SSE 客户端，无第三方黑盒依赖，直接连通 QNAP Logbook。 |
+| **BI-13** 完整 MCP 客户端 (Stdio + SSE 双通道) | `packages/adapters/src/mcp/stdio-transport.ts`<br>`packages/adapters/src/mcp/network.ts`<br>`packages/adapters/src/mcp/pool.ts` | `pi/packages/mcp/src/client.ts` (21KB)<br>`kimi-code/packages/acp-server/` (标准 ACP 服务端)<br>`streamable-http.ts` | 90% 轮子<br>10% 适配 | 纯白盒 Stdio 与 SSE 客户端连通 QNAP Logbook，同时预留 ACP JSON-RPC 开放协议直通现代 IDE。 |
 | **BI-14** 声明式 DAG 工作流调度引擎 | `packages/dynamic-workflow/src/engine/engine.ts` (36KB)<br>`packages/dynamic-workflow/src/engine/scheduler.ts` (26KB)<br>`packages/dynamic-workflow/src/engine/journal-memory.ts` (11KB) | 无 (清华大学 ZCode 独创工作流引擎) | 90% 轮子<br>10% 适配 | 步骤并行拓扑调度，每步 Checkpoint 持久化，进程重启秒级断点自愈续跑。 |
 | **BI-14.1** 因果拓扑图与 Taint 污点分析编译器 | `packages/dynamic-workflow/src/analysis/causality-graph.ts`<br>`packages/dynamic-workflow/src/analysis/taint.ts` | Mermaid 流程图导出引擎 | 95% 轮子<br>5% 胶水 | 静态拓扑排序与数据污染分析，编译期检测死锁并生成可视化架构图。 |
 | **BI-15** A2A 跨角色分工与共享事实黑板 | `packages/core/src/subagent/runner.ts` (68KB)<br>`packages/core/src/subagent/explore.ts`<br>`packages/core/src/subagent/coordinator-response.ts` | OpenCode `protocol/` 跨端契约 | 85% 轮子<br>15% 适配 | 统一管理 Coordinator、Scout、Auditor、Reporter，单模型按需派生，事实黑板共享。 |

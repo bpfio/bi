@@ -35,6 +35,7 @@
 | **zcode-app-cli**<br>`bpfio/bi` 前身 | • `runtime-tui-bridge.ts`: 进程内函数级桥接<br>• `runtime-sqlite-recovery.ts`: SQLite 并发自愈<br>• `bounded-tool-text.ts`: 64KB 工具输出有界保护<br>• `file-diff-budget.ts`: 2000 行 Diff 预算限制 | • **同进程零拷贝直连（Zero IPC）**：彻底消灭 Localhost Socket 延迟与重连断连隐患<br>• 极高的工程鲁棒性与内存防泄漏 | • **混淆二进制黑盒**（`vendor/zcode.cjs`），供应链不可审计<br>• 27 个 AST/字符串补丁在版本升级中极易漂移 |
 | **DeepCode**<br>`lessweb/deepcode-cli` | • `packages/core/session.ts`: 会话状态机<br>• `packages/core/prompt.ts`: 提示词结构<br>• 支持 `thinkingEnabled` 与 `reasoningEffort` | • **原生适配 DeepSeek 系列**：深度适配 R1 思考流展示与参数调优<br>• 针对 DeepSeek 的 Prompt Cache 前缀优化与上下文压缩 | • 缺乏严格的沙箱隔离（Path Jail），代码中工具扩展体系较重 |
 | **OpenCode**<br>`anomalyco/opencode` | • `packages/ai/`: 75+ 多模型统一适配<br>• `packages/protocol/`: 跨进程/跨端协议契约<br>• `packages/tui/`: 多会话并行终端界面 | • **极度开放自由**：多模型即插即用，分发体验极佳（一键安装）<br>• 双 Agent 模式（Build vs Plan/Explore）架构清晰 | • 为兼容 75+ 模型导致提示词采用“最大公约数”，对具体模型的调优深度不足，幻觉率高于 ZCode |
+| **Kimi Code**<br>`MoonshotAI/kimi-code` | • `packages/tree-sitter-bash/`: 纯 TS Tree-sitter<br>• `packages/minidb/`: 纯 TS LSM-Tree/WAL 数据库<br>• `packages/agent-core-v2/`: DI 容器与细粒度调度<br>• `packages/acp-server/`: Agent Client Protocol | • **清华系月之暗面现代重构标杆 (MIT)**：<br>• **100% 纯 TypeScript 零 Native C 依赖**：手写 Bash 语法树、纯 TS 嵌入式 LSM 数据库，Bun 单文件编译 0 崩溃；<br>• **细粒度 RWLock 调度**：多工具读并发、写互斥与全局屏障；<br>• **多模态与客户端压缩**：终端图片就地无损压缩，保护视窗 | • 侧重通用软件工程编码，未内置宏观经济统计勾稽与部委政策长文档抽取的专业插件模板 |
 
 ### 2. 清华大学 ZCode 实验室官方源码十二大黄金模块与工业级算法图谱
 
@@ -132,6 +133,56 @@
   - `documents-plugin`：Word（`docx`）排版与样式生成；
   - `presentations-plugin`：PowerPoint（`pptx`）研报简报生成；
   - `visualize-plugin`：数据可视化图表与 `visual-judge.md` 视觉核验智能体。
+
+### 3. 清华系月之暗面 Kimi Code 官方源码六大黄金模块与工业级算法图谱
+
+月之暗面（Moonshot AI）技术团队同源于清华大学计算机系与交叉信息研究院。其最新开源的 `MoonshotAI/kimi-code`（位于本地只读参考库 `/home/yupeng/references/kimi-code`）代表了纯 TypeScript 技术栈下 Agent CLI 极简解耦架构的最高工程水平。系统深入审查后，提炼出其 **六大独特黄金资产与底层算法**，与 ZCode 形成强力互补：
+
+#### (1) 纯 TypeScript 版 Tree-Sitter Bash 语法分析器 (`packages/tree-sitter-bash`)
+- **核心痛点**：传统 CLI 执行 Bash 命令鉴权与安全审计（如检测 `rm -rf /`、拦截偷窃 `.env` / `~/.ssh` 凭据）时，若使用正则表达式极易被引号嵌套、变量替换（`eval` / `$()`）绕过；若引入 C++ 编译的 `tree-sitter.node`，则彻底破坏 Bun 单文件独立二进制（`bun build --compile`）与跨发行版便携性。
+- **Kimi 突破**：月之暗面手写了 **100% 纯 TypeScript 实现的 Tree-sitter Bash AST 解析器**：
+  - 零原生 C/C++ 依赖，语法树节点类型 1:1 严格对齐官方 `tree-sitter-bash 0.25.0`；
+  - 硬预算熔断机制：默认限制 `maxNodes = 50,000`、`timeoutMs = 50ms`，遇到病态递归或超长单行脚本立即安全返回 `{ ok: false, reason: 'aborted' }`，绝不卡死主事件循环；
+  - 递归深度硬上限：语法替换深度锁定在 150 级、复合表达式锁定在 500 级，在 V8 默认调用栈下留足 2.5 倍以上安全余量，彻底根治栈溢出（Stack Overflow）。
+- **对 `bi` 价值**：直接作为 `BI-06.1`（Credential Guard）的底层 AST 审计引擎，以零 C 依赖实现毫秒级高精度 Bash 命令安全检查。
+
+#### (2) 细粒度读写锁并发调度器 (`packages/agent-core-v2/src/agent/toolExecutor/toolScheduler.ts`)
+- **核心痛点**：多工具并发调用时，若两个工具同时读写同一文件，极易造成写写冲突或读到脏数据；简单串行化则严重劣化交互性能。
+- **Kimi 算法**：
+  - 落地 `ToolAccesses.conflict(left, right)` 细粒度资源读写锁（RWLock）矩阵：
+    - `read` + `read` 或 `search` + `search`：无冲突，并行并发执行；
+    - `write` + `read` 或 `write` + `write`：执行 `fileAccessesOverlap` 路径重叠判定，存在交集时自动进入阻塞队列；
+    - `kind: 'all'`（如 Bash 全局命令）：作为全局内存屏障（Write Barrier），等待此前所有并发读写任务彻底排空（Drain）后再独占执行。
+- **对 `bi` 价值**：为 `BI-07`（多工具并行流水线）提供了工业级确定性安全调度算法。
+
+#### (3) 纯 TypeScript 嵌入式 LSM-Tree / WAL 存储引擎 (`packages/minidb`)
+- **核心痛点**：传统 Agent 会话与索引依赖 SQLite（`sqlite3` / `better-sqlite3`），在多进程并发或 Bun 单二进制跨系统编译时，经常面临 `SQLITE_BUSY` 锁死或动态链接库缺失问题。
+- **Kimi 创新**：月之暗面完全自研了 `minidb`——**纯 TypeScript 编写的高性能嵌入式 LSM 数据库**：
+  - 架构包含 WAL（预写日志）、SkipList 内存跳表、Generation 分代文件合并压缩（LSM Compaction）、CRC32 校验与 Trigram 字符倒排索引；
+  - 零外部 C/C++ 编译产物，单文件打包极其轻巧；
+  - **对 `bi` 价值**：为 `BI-03` 会话索引与时间线缓存提供了零 C 依赖的理想备选引擎。
+
+#### (4) 客户端自适应多模态与图片压缩管道 (`packages/agent-core-v2/src/agent/media/`)
+- **核心痛点**：用户在终端交互中直接粘贴或拖入 4K 截图与长图时，未经压缩的原始图片会瞬间消耗数十万 Token 并引发 API 请求体超限报错。
+- **Kimi 算法**：
+  - `image-compress.ts`（25KB）：在客户端本地就地执行动态降采样与质量压缩；
+  - `file-type.ts`（10KB）：基于 Magic Number 纯二进制探测文件真实 MIME 类型；
+  - `byteLruCache.ts`：字节级内存 LRU 缓存，杜绝重复序列化与内存泄漏。
+- **对 `bi` 价值**：大幅增强 `bi` 面对研报附图、政策红头文件扫描件时的 Token 经济性与鲁棒性。
+
+#### (5) Agent Client Protocol 跨端标准服务端 (`packages/acp-server`)
+- **核心痛点**：CLI Agent 只能在终端字符界面运行，无法与现代代码编辑器（VS Code、Zed、JetBrains）无缝结合。
+- **Kimi 架构**：
+  - 完整实现 Zed、Anthropic 与 JetBrains 联合倡导的 **ACP（Agent Client Protocol）** 开放规范；
+  - 将核心 Agent 抽象为标准 JSON-RPC 服务端，支持命令批准、文件系统虚拟化挂载与双向事件推送；
+  - **对 `bi` 价值**：`bi` 可直接复用该协议封套，一键打通终端 CLI 与 VS Code 侧边栏，实现跨端复用。
+
+#### (6) 85% 水位自适应动态紧缩与带时间戳精确回滚 (`packages/agent-core-v2/src/agent/fullCompaction/`)
+- **核心痛点**：长程任务中如何平滑紧缩历史，并支持用户精确撤销错误步骤？
+- **Kimi 策略**：
+  - 设定 `triggerRatio: 0.85` 触发水位，强制预留 `reservedContextSize: 50,000` Tokens；
+  - 视窗安全底线：强制保留最近 4 轮完整消息（`maxRecentMessages: 4`），且未压缩部分上限锁定为视窗的 20%（`maxRecentSizeRatio: 0.2`）；
+  - `undoService.ts`：基于逻辑时间戳（`turnKey`）计算 `computeUndoCut`，支持精确回滚上下文与状态。
 
 ---
 
