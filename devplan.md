@@ -1,103 +1,174 @@
 # bi CLI Agent 工程研发与落地执行计划 (devplan.md)
 
-> 本文档是 `bi` CLI Agent（`bpfio/bi`）的官方工程开发计划与任务分解矩阵（WBS）。
-> 定位：100% 白盒开源、零数据外泄、极低幻觉、极高并发执行力，专精于**政策深度调研**与**商业智能/严密数据分析**的现代化终端 Agent CLI。
-> 架构基石：**单模型全自洽即插即用（Single-Model First）+ Python 沙箱代码运行即验（Code-backed Grounding）**。
-> 同步归档于 Logbook 知识中枢：`project: "bi"`。
+> **版本**：v1.1 (正式立项版)  
+> **项目**：`bi` (`bpfio/bi`)  
+> **定位**：100% 白盒开源、零数据外泄、极低幻觉、极高并发执行力的现代化政策深度调研与商业智能（BI）终端 Agent CLI。  
+> **基石**：**单模型全自洽即插即用（Single-Model First）+ Python 沙箱代码运行即验（Code-backed Grounding）**。  
+> **单一事实源 (SSOT)**：本文档是 `bi` 项目全生命周期的工程执行纲领与技术决策总纲。所有参与开发的 Agent 必须以此为顶层依据开展自主决策与代码施工。  
+> **Logbook 知识底账**：`project: "bi"`，研发批次：`BI-DEVPLAN-2026-10-16`。
 
 ---
 
-## 一、 核心架构原则与设计红线
+## 一、 整体开发提纲与框架 (Architecture & Decision Framework)
 
-1. **单模型自洽闭环（Single-Model First）**：
-   - 彻底摒弃异构双模型强制打架等学术化包袱；系统由用户配置的单一主力大模型（GLM、DeepSeek、Claude 或本地 vLLM）驱动，零额外 Key 负担，零多模型账单开销；
-   - 专职子角色（探针搜集、沙箱精算、研报撰写）均基于该单一模型按需派生。
-2. **代码运行即验（Code-backed Grounding）**：
-   - 严禁模型口算指标；良率对比、产能推算、财税勾稽必须在沙箱中由 Python（`pandas` / `openpyxl`）真实跑出结果作为事实底账；
-   - 严格贯彻“证据一致性铁律”（良率存在即有产线、0/1 与 1-100 维度分离）。
-3. **全自动三层上下文管理（Auto Context Management）**：
-   - 工具输出 64KB 有界截断 + 历史工具输出自动脱水 + 80% 水位静默自动紧缩（生成 Anchor 阶段底账）；
-   - 保留手动 `/compact`、`/rewind` 与 Token HUD 显性感知。
-4. **Git Worktree 物理并发隔离**：
-   - 子智能体读写全部分流至 `~/.bi/worktrees/<task-id>` 独立沙箱，杜绝改脏主工作区。
-5. **智谱 BigModel 官方特权无损对齐**：
-   - 官方 OAuth 免密 + API Key 二阶段 PAT 换票 + 特权标头注入与 Ultra VIP 专线路由，100% 享受 Coding Plan 客户端折扣。
-6. **100% 白盒可审计**：
-   - 彻底摒弃民间 `zcode-app-cli` 的混淆二进制（`vendor/zcode.cjs`）与 27 个脆弱 AST 补丁，全链路纯 TypeScript/Bun 源码构建。
+### 1. 核心包职责划分与依赖拓扑 (Package Topology)
+
+整个工程收敛在 TypeScript + Bun Monorepo 体系（位于 `packages/` 与 `presets/`），层级严格单向依赖，杜绝循环引用：
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                              终端展现层                                 │
+│      packages/tui (基于 @earendil-works/pi-tui 双缓冲差分渲染)          │
+│      ├── HUD 状态栏 (Token/Cache/延迟)   ├── Unified Diff 交互审查门    │
+│      └── 动态折叠卡片 (R1思考流/子任务)   └── /doctor 全链路健康体检引擎 │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ 调用
+┌───────────────────────────────────▼────────────────────────────────────┐
+│                             跨网协作与编排层                            │
+│  packages/a2a (分布式 A2A 协议)      packages/workflow (声明式 DAG 引擎) │
+│  ├── a2a-email-gateway (私密信令)   ├── DAG 拓扑依赖解析器             │
+│  ├── github-a2a-hub (PR 任务交付)    ├── Checkpoint 检查点持久化与自愈  │
+│  └── blackboard (共享事实黑板)       └── 运行即验代码审计闭环 (audit.ts) │
+└──────────────────┬─────────────────────────────────┬───────────────────┘
+                   │ 调用                            │ 调用
+┌──────────────────▼─────────────────────────────────▼───────────────────┐
+│                             执行与隔离沙箱层                            │
+│  packages/worktree (Git 物理隔离)    packages/mcp (标准 MCP 客户端)    │
+│  ├── ~/.bi/worktrees/<id> 临时沙箱   ├── StdioClientTransport (本地管道)│
+│  └── 独立分支挂载与零污染擦除        └── SseClientTransport (远程直连)  │
+└──────────────────┬─────────────────────────────────┬───────────────────┘
+                   │ 调用                            │ 调用
+┌──────────────────▼─────────────────────────────────▼───────────────────┐
+│                             状态机与内核基础层                          │
+│                          packages/core                                 │
+│  ├── agent.ts (核心循环与二段式抢占) ├── context/ (三层上下文水位与紧缩)│
+│  ├── session/ (UUIDv7 DAG 会话引擎)  ├── prompt.ts (Prompt Cache 排布)  │
+│  ├── auth/ (智谱双轨特权认证/PAT换票)├── sandbox/ (Path Jail 凭据防御)  │
+│  └── tools/bash.ts (Linux PGID 熔断) └── parser.ts (Fuzzy 容错解析器)   │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 二、 研发里程碑与任务拆解矩阵 (WBS)
+### 2. 五大标杆能力全景吸收规范 (Benchmark Synthesis)
 
-### 【Phase 1】 白盒内核、沙箱、会话持久化与官方双轨认证 (Days 1~3)
-> 目标：打通核心 Agent Loop、Append-only 会话引擎与智谱官方双轨特权鉴权。
+任何开发 Agent 在实现具体模块时，必须对齐以下五大标杆的最优实践：
 
-| 任务编号 | 任务名称 | 责任包 / 模块 | 核心交付物与验收标准 | 优先级 |
+| 标杆工程 | 吸收模块与落位 | 核心实现机制与代码契约 |
+|---|---|---|
+| **Claude Code** | `packages/core/src/prompt.ts`<br>`packages/core/src/agent.ts`<br>`packages/core/src/tools/bash.ts` | 1. **Prompt Cache 黄金排布**：严格遵循 `[静态 System + BI.md] → [静态 Tools] → [Anchor] → [历史消息]` 顺序，保证 GLM/DeepSeek 缓存命中率 ≥ 85%；<br>2. **二段式抢占取消**：单击 Esc / Ctrl+C 暂停并保留上下文，连续双击才退出；<br>3. **Linux PGID 组杀**：子进程派生独立 `setsid()`，超时发射 `-PGID` 信号彻底杀绝孤儿进程。 |
+| **OpenAI Codex** | `packages/core/src/sandbox/path-jail.ts`<br>`packages/tui/src/diff-view.ts` | 1. **Credential Guard 凭据防御**：严禁模型读取 `~/.ssh`、`~/.bash_history`、`.env` 等高危路径；<br>2. **交互式 Unified Diff**：对所有文件修改在终端高亮渲染 Diff，人类敲击 `y/n` 审查门放行。 |
+| **Qwen CLI** | `packages/core/src/parser.ts`<br>`packages/a2a/src/audit.ts` | 1. **Fuzzy Tool Parser**：模型输出的工具 JSON 遇到缺少括号或包裹在 Markdown 中时，自动进行 AST/正则容错修补；<br>2. **Self-Healing Traceback**：Python 脚本报错时自动捕获堆栈回溯，模型自主打补丁重试，杜绝求助人类。 |
+| **Pi Agent** | `packages/core/src/session/`<br>`packages/core/src/context/`<br>`packages/tui/` | 1. **UUIDv7 DAG 树状会话**：节点带 `id` 与 `parentId`，天然支持 `/rewind` 与 `/fork` 平行分支；<br>2. **CompactionEntry 抽象**：记录 `summary`、`tokensBefore` 与 `readFiles/modifiedFiles`；<br>3. **`pi-tui` 差分渲染**：纯 ANSI 矩阵差分计算，终端 0 闪烁，CPU < 1%。 |
+| **OpenCode** | `packages/core/src/model-router.ts`<br>`scripts/build-bin.ts` | 1. **统一模型适配器总线**：标准 SSE 事件分发，解耦物理模型差异；<br>2. **Bun Compile 原生打包**：一键生成 Linux/macOS 独立二进制 `bi`，用户免装 Node.js/Bun。 |
+
+---
+
+### 3. 开发智能体（Agent）自主决策树与不可违背红线
+
+当开发 Agent 在实现或重构过程中面临技术分歧时，必须严格执行以下决策逻辑：
+
+```
+[分歧场景 1: 模型选择与调用]
+  ├─ 必须坚持单模型自洽 (Single-Model First)！
+  ├─ 严禁在代码中写死“必须同时调 GLM 和 DeepSeek 才能工作”的逻辑；
+  └─ 任何角色（Scout/Auditor/Reporter）必须默认绑定到用户当前配置的单一主力模型。
+
+[分歧场景 2: 政策与数据防幻觉]
+  ├─ 严禁依靠大模型在 Prompt 里口算数值（良率、同比、财务勾稽）！
+  └─ 必须调用 Python 运行真实脚本，以终端输出（Stdout）作为进入事实黑板的唯一依据。
+
+[分歧场景 3: 上下文长度与压缩]
+  ├─ 单次工具输出 > 64KB？立即调用 BoundedToolText 保留头尾 200 行并在中间截断！
+  ├─ 当前上下文水位 >= 80%？立即挂起任务，调用 Summarizer 生成 CompactionEntry 重置视窗！
+  └─ 底层磁盘 JSONL 必须 Append-only，绝对禁止物理删除任何历史记录！
+
+[分歧场景 4: 跨网络协作]
+  ├─ 需要跨越 NAT / 防火墙进行轻量控制？走 A2A 邮件私密信令网关 (a2a-email-gateway)！
+  └─ 需要交付复杂代码、数据表与大篇幅研报？走 GitHub A2A 任务中枢 (github-a2a-hub) 的 PR 审查门！
+```
+
+---
+
+## 二、 细颗粒度工程研发任务矩阵 (WBS)
+
+### 【Phase 1】 白盒内核、沙箱、Prompt Cache 与官方双轨特权认证 (Days 1~3)
+> 目标：打通核心 Agent 循环、会话树、凭据防御、Prompt Cache 与智谱官方双轨特权折扣通道。
+
+| 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
-| **BI-01** | Bun Monorepo 骨架与工程环境构建 | 根目录配置 | 完成 `package.json`、`tsconfig.json` 工作区拓扑；配置 `packages/{core, worktree, workflow, mcp, a2a, tui, plugins}` | P1 |
-| **BI-02** | 智谱 BigModel 双轨特权认证与 Ultra 专线路由 | `packages/core/src/auth/`<br>`packages/core/src/gateway/` | 1. 落地 OAuth 2.0 PKCE/Poll 状态机（`cli-oauth.ts`）；<br>2. 落地 API Key 二阶段换票器（`coding-plan-key.ts`，换取带 `token_use: "project_access"` 的短期 PAT）；<br>3. 注入特权 Headers 并自动重定向至 Ultra VIP 专线（`/api/v1/ultra/...`），实测触发 Coding Plan 套餐抵扣 | P0 |
-| **BI-03** | Append-only JSONL 树状会话引擎 | `packages/core/src/session/` | 1. 会话持久化至 `~/.bi/sessions/<id>.jsonl`；<br>2. 消息节点携带 UUIDv7 `id` 与 `parentId`，天然支持 `/rewind` 撤回与 `/fork` 分支；<br>3. SQLite WAL 索引表（`~/.bi/sessions.db`）支撑秒开列表 | P0 |
-| **BI-04** | 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/model-router.ts`<br>`packages/core/src/drivers/` | 适配 GLM、DeepSeek、Claude 等标准 OpenAI / Anthropic 协议；实现零代码热切换的 `ModelSlotRouter` | P1 |
-| **BI-05** | `BI.md` 项目长期记忆自适应注入 | `packages/core/src/rules.ts` | 启动时自动解析当前工作区 `BI.md` 或 `.bi/rules.md`，静态固化官方信源与统计口径至 System Prompt 前缀 | P1 |
-| **BI-06** | 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/core/src/tools/bash.ts` | 派生独立 PGID；超时或被取消时内核级软硬两阶段熔断（SIGTERM → SIGKILL），彻底杜绝后台孤儿僵尸进程 | P0 |
-| **BI-07** | 多工具并行流水线与二段式抢占状态机 | `packages/core/src/agent.ts` | 1. 支撑多只读工具并发执行（`Promise.allSettled`）；<br>2. 落地 Esc / Ctrl+C 二段式优雅取消，保留现场与上下文 | P1 |
+| **BI-01** | Bun Monorepo 骨架与多包拓扑初始化 | 根目录配置<br>`package.json`, `tsconfig.json` | 1. 建立 `packages/{core, worktree, workflow, mcp, a2a, tui, plugins}` 与 `presets/`；<br>2. 配置 TypeScript 5.x 严格模式与 Bun 工作区链接；`bun test` 骨架跑通 | P1 |
+| **BI-02** | 智谱 BigModel 官方双轨特权认证引擎 | `packages/core/src/auth/cli-oauth.ts`<br>`packages/core/src/auth/coding-plan-key.ts` | 1. **通道一**：OAuth 2.0 PKCE/Poll 状态机，生成 32 字节 PollToken 并唤醒浏览器，捕获 Project Access Token (PAT)；<br>2. **通道二**：API Key 二阶段换票器（换取 `token_use: "project_access"` 的短期 PAT）；<br>3. 凭据加密落盘于 `~/.bi/credentials.json` (0600 权限) | P0 |
+| **BI-02.1** | Ultra VIP 专线路由与特权指纹标头注入 | `packages/core/src/gateway/ultra-gateway.ts`<br>`packages/core/src/gateway/fingerprint.ts` | 1. 请求标头注入 `X-Coding-Plan-Api-Key`、`User-Agent: zcode-cli/0.1.8`、`x-zcode-trace-id`；<br>2. 自动重定向至专线 `/api/v1/ultra/anthropic/v1/messages`；实测触发官方 Coding Plan 计费抵扣与客户端费率 | P0 |
+| **BI-03** | Append-only JSONL 树状会话引擎 | `packages/core/src/session/manager.ts`<br>`packages/core/src/session/types.ts` | 1. 会话落盘至 `~/.bi/sessions/<id>.jsonl`，原子追加，抗机器掉电；<br>2. 每条记录携带 UUIDv7 `id` 与 `parentId`，天然支持分支与时光倒流；<br>3. SQLite WAL 索引表（`~/.bi/sessions.db`）实现历史列表毫秒级检索 | P0 |
+| **BI-04** | 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/model-router.ts`<br>`packages/core/src/drivers/sse-driver.ts` | 统一抽象 OpenAI / Anthropic SSE 事件流；实现 `ModelSlotRouter`，将逻辑语义插槽（`fast`, `reasoner`, `auditor`）默认解析映射至用户单一主力模型 | P1 |
+| **BI-04.1** | Prompt Cache 黄金排布与 Fuzzy 工具解析器 | `packages/core/src/prompt.ts`<br>`packages/core/src/parser.ts` | 1. 严格锁定 `System + BI.md + Tools` 前缀顺序，确保服务端 Cache 命中率 ≥ 85%；<br>2. 引入 Qwen 风格容错解析器，对缺失闭合符或包裹代码块的畸形 JSON 自动 AST 修复 | P1 |
+| **BI-05** | `BI.md` 项目长期记忆自适应注入器 | `packages/core/src/rules.ts` | 启动时自动向上递归检索当前工程根目录的 `BI.md` 或 `.bi/rules.md`，将政策信源、统计口径与禁用词静态注入 System Prompt 前缀 | P1 |
+| **BI-06** | 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/core/src/tools/bash.ts` | 派生独立子进程并调用 `setsid()` 赋予独立 PGID；超时（默认 120s）或被取消时向 `-PGID` 发送 `SIGTERM → (等待1.5s) → SIGKILL`，彻底杜绝僵尸进程 | P0 |
+| **BI-06.1** | Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/sandbox/path-jail.ts` | 借鉴 Codex，内核与路径层严密拦截对 `~/.ssh`、`~/.gnupg`、`~/.bash_history`、`/etc/` 以及项目外 `.env` 文件的读取尝试，违规直接阻断 | P0 |
+| **BI-07** | 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/agent.ts` | 1. 支撑只读工具并发执行（`Promise.allSettled`）；<br>2. 落地二段式取消：单击 Esc/Ctrl+C 暂停并保留上下文，连续双击才真正退出 | P1 |
 
 ---
 
 ### 【Phase 2】 全自动三层上下文管理与有界防护 (Days 4~5)
-> 目标：彻底解决长会话爆视窗与内存泄漏问题，实现用户零负担的上下文自愈。
+> 目标：彻底消灭长会话上下文撑爆（Context Exceeded）与内存泄漏，打造自愈型视窗。
 
-| 任务编号 | 任务名称 | 责任包 / 模块 | 核心交付物与验收标准 | 优先级 |
+| 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
-| **BI-08** | 单次工具输出 64KB 有界截断保护 | `packages/core/src/context/bounded-tool-text.ts` | 移植打磨 `BoundedToolText`，单次工具输出上限 64KB 字符，保留头部 200 行与尾部 200 行，中间折叠，彻底防刷屏 | P0 |
-| **BI-09** | 历史老旧工具输出自动脱水修剪 | `packages/core/src/context/pruner.ts` | 对超过 5 轮的老旧工具输出自动缩减为单行摘要指示符，Token 消耗压减 60%+ | P1 |
-| **BI-10** | 80% 高水位静默自动紧缩器 | `packages/core/src/context/compactor.ts`<br>`packages/core/src/context/window-manager.ts` | 实时感知上下文长度；触及 80% 水位时自动提取事实底账生成 `CompactionEntry`（Anchor），重构上下文视窗，回落至 35% 安全区 | P0 |
-| **BI-11** | 终端 Token HUD 实时感知与手动控制门 | `packages/tui/src/hud.ts`<br>`packages/core/src/commands/` | 1. 终端状态栏常驻显化 `Ctx: 42k/128k (32%) | Cache: 88%`；<br>2. 支持手动 `/compact [prompt]`、`/rewind` 与 `/clear` | P1 |
+| **BI-08** | 单次工具输出 64KB 有界截断保护 | `packages/core/src/context/bounded-tool-text.ts` | 限制单次工具输出上限 64,000 字符；超出时保留前 200 行与后 200 行，中间折叠并注入标记，完整输出存入沙箱磁盘日志 | P0 |
+| **BI-09** | 历史工具输出自动脱水修剪器 (Pruner) | `packages/core/src/context/pruner.ts` | 自动将 5 轮之前的历史 `tool_result` 大文本脱水为单行摘要标记，Token 占用压减 60%~70%，完整保留 Assistant 决策意图 | P1 |
+| **BI-10** | 80% 高水位静默自动紧缩器 (Auto-Compactor) | `packages/core/src/context/compactor.ts`<br>`packages/core/src/context/window-manager.ts` | 实时感知 API 返回的 `prompt_tokens`；触及 80% 水位时自动静默调用 Summarizer 提取阶段事实底账，生成 `CompactionEntry`，重构视窗并回落至 35% 安全区 | P0 |
+| **BI-11** | 终端 Token HUD 实时显性感知与手动控制门 | `packages/tui/src/hud.ts`<br>`packages/core/src/commands/compact.ts` | 1. 终端底部常驻渲染 `Tokens: 42k/128k (32%) | Cache: 88%`；<br>2. 开放手动 `/compact [prompt]`、`/rewind [steps]` 与 `/clear` 交互命令 | P1 |
 
 ---
 
 ### 【Phase 3】 Git Worktree 并发隔离与完整 MCP 引擎 (Days 6~7)
-> 目标：提供物理级多任务隔离执行能力，接驳本地与远程私有工具中枢。
+> 目标：提供物理级并发沙箱，防止改脏工作区；接驳本地与远程私有工具中枢。
 
-| 任务编号 | 任务名称 | 责任包 / 模块 | 核心交付物与验收标准 | 优先级 |
+| 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
-| **BI-12** | Git Worktree 物理并发沙箱引擎 | `packages/worktree/` | 多任务与子 Agent 自动派生至 `~/.bi/worktrees/<task-id>` 独立目录；任务结束后自动审查合并或静默擦除，工作区 0 污染 | P0 |
-| **BI-13** | 完整 MCP 客户端 (Stdio + SSE) | `packages/mcp/` | 1. `StdioClientTransport`（受控子进程与管道看门狗）；<br>2. `SseClientTransport`（远程长连接，实测直连 QNAP Logbook 服务）；<br>3. 动态工具注册与 Schema 转换 | P0 |
+| **BI-12** | Git Worktree 物理并发沙箱引擎 | `packages/worktree/src/engine.ts`<br>`packages/worktree/src/branch.ts` | 多 Agent 读写全部分流至 `~/.bi/worktrees/<task-id>` 独立目录；挂载独立临时分支 `bi-task-<id>`；任务完成经审查后原子 Merge，撤销则静默清空 | P0 |
+| **BI-13** | 完整 MCP 客户端 (Stdio + SSE 双通道) | `packages/mcp/src/client.ts`<br>`packages/mcp/src/transports/` | 1. `StdioClientTransport`：子进程看门狗与输入输出管道封套；<br>2. `SseClientTransport`：远程 HTTP/SSE 连接器（实测接驳 QNAP 生产环境 Logbook 服务）；<br>3. 动态聚合工具注册表 | P0 |
 
 ---
 
-### 【Phase 4】 A2A 协议、任务分工与声明式 DAG 工作流 (Days 8~10)
-> 目标：实现长流程自动推进、确定性代码审计与事实黑板协同。
+### 【Phase 4】 A2A 协议、跨网双总线与声明式 DAG 工作流 (Days 8~10)
+> 目标：实现长流程自动推进、代码运行即验与跨电脑/跨防火墙分布式协作。
 
-| 任务编号 | 任务名称 | 责任包 / 模块 | 核心交付物与验收标准 | 优先级 |
+| 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
-| **BI-14** | 声明式 DAG 工作流调度引擎 | `packages/workflow/` | 1. 解析 YAML 格式 DAG 步骤（依赖解析、并行拓扑）；<br>2. 每一步落盘 Checkpoint，中断后支持秒级断点自愈续跑 | P1 |
-| **BI-15** | A2A 跨角色分工与事实黑板中枢 | `packages/a2a/` | 统一管理 Coordinator（编排）、Scout（搜集）、Auditor（精算）、Reporter（起草）；统一往 `Blackboard` 共享事实底账 | P1 |
-| **BI-15.1** | A2A 邮件私密信令网关 (Control Plane) | `packages/a2a/src/transports/a2a-email-gateway.ts` | 落地 SMTP/IMAP 跨网通信驱动：支持 TLS 465/993、HMAC-SHA256 验签、IMAP IDLE 秒级唤醒与发件人白名单，100% 穿透物理防火墙，支持人类抄送介入 | P1 |
+| **BI-14** | 声明式 DAG 工作流调度引擎 | `packages/workflow/src/engine.ts`<br>`packages/workflow/src/checkpoint.ts` | 1. 解析 YAML 格式 DAG 步骤（并行拓扑与前置依赖）；<br>2. 每一步完成自动持久化 Checkpoint，发生网络断线或进程重启秒级断点自愈续跑 | P1 |
+| **BI-15** | A2A 跨角色分工与共享事实黑板 | `packages/a2a/src/host.ts`<br>`packages/a2a/src/blackboard.ts` | 统一管理 Coordinator（编排）、Scout（搜集）、Auditor（精算）、Reporter（起草）；统一往 `Blackboard` 共享事实底账，所有角色基于单模型按需派生 | P1 |
+| **BI-15.1** | A2A 邮件私密信令网关 (Control Plane) | `packages/a2a/src/transports/a2a-email-gateway.ts` | 落地 SMTP/IMAP 跨网通信驱动：支持 TLS 465/993、HMAC-SHA256 签名校验、IMAP IDLE 秒级唤醒与发件人白名单；100% 穿透物理防火墙，支持人类抄送介入 | P1 |
 | **BI-15.2** | GitHub A2A 任务中枢 (Data & Task Plane) | `packages/a2a/src/transports/github-a2a-hub.ts` | 落地基于 Git 分支与 PR 的分布式任务中枢：任务专属分支派发（`bi-task-<id>`）、数据清洗脚本同步、Unified Diff 渲染与 PR 自动化审查合并 | P1 |
-| **BI-16** | Python 沙箱代码运行即验与审计闭环 | `packages/a2a/src/audit.ts` | 严禁口算；内置 Python 脚本运行门禁，强制执行勾稽对比，并依据证据一致性铁律自动纠偏 | P0 |
-
-> **跨网 A2A 双总线架构设计（控制面与数据面分离）**：
-> - **私密控制面（A2A 邮件私密信令网关）**：负责跨网 Agent 间的加密握手、静默唤醒、指令调度与进度汇报。依托邮件天然的 Store-and-Forward（离线存储转发）机制，100% 穿透企业局域网与物理防火墙，人类可直接抄送查阅或回复介入；
-> - **任务数据面（GitHub A2A 任务中枢）**：负责任务代码、重型数据表与研报的分发与交付。以 Git 分支作为任务隔离沙箱，以 Pull Request 作为最终验收门禁，实现全链路版本化不可篡改审计留痕。
+| **BI-16** | Python 沙箱代码运行即验与 Traceback 自愈 | `packages/a2a/src/audit.ts` | 严禁口算！调用沙箱 Python 脚本计算良率与勾稽指标；若抛出异常，自动捕获 Traceback 并在当前轮次内自动打补丁纠偏重跑，直到输出合规底表 | P0 |
 
 ---
 
-### 【Phase 5】 官方插件生态吸收、Pi-TUI 差分终端与交付验收 (Days 11~14)
-> 目标：吸收 15 个官方研报插件，打造极速无闪烁交互，完成端到端实战验收。
+### 【Phase 5】 官方研报插件生态吸收、Pi-TUI 差分终端与交付验收 (Days 11~14)
+> 目标：吸收 15 个官方研报插件，打造极速无闪烁交互，完成单文件二进制构建与实战验收。
 
-| 任务编号 | 任务名称 | 责任包 / 模块 | 核心交付物与验收标准 | 优先级 |
+| 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
-| **BI-17** | 官方插件双协议加载器 | `packages/plugins/` | 纯声明式解析 `.zcode-plugin` 与 `.claude-plugin`（`plugin.json`, `skills/`, `mcpServers/`），支持 Marketplace 安装 | P1 |
-| **BI-18** | 官方核心数据研报插件全量吸收 | `presets/plugins/` | 全量吸收移植 `spreadsheets-plugin`（金融/宏观勾稽）与 `pdf-plugin`（双栏公报长文本抽取）核心模板与脚本 | P1 |
-| **BI-19** | Pi-TUI 双缓冲差分无闪烁渲染 | `packages/tui/` | 基于 `@earendil-works/pi-tui` 构建；无跳字、无闪烁、CPU 占用 < 1%；支持 DeepSeek-R1 思考流动态折叠卡片 | P1 |
-| **BI-20** | 交互式 Git Unified Diff 审查门与 /doctor 体检 | `packages/tui/src/diff-view.ts`<br>`packages/core/src/doctor.ts` | 1. 变更文件弹出 Unified Diff 供人工确认；<br>2. `/doctor` 一键体检网络、凭据、Python 依赖与环境自愈 | P1 |
-| **BI-21** | 宏观政策与数据审计端到端实战验收 | 全链路 | 选取部委公报与上市企业研报开展真实数据穿透与报告生成演练，通过验收并发布 `bpfio/bi v1.0` | P0 |
+| **BI-17** | 官方插件双协议加载器 (.zcode & .claude) | `packages/plugins/src/loader.ts`<br>`packages/plugins/src/marketplace.ts` | 纯声明式解析 `.zcode-plugin` 与 `.claude-plugin` 标准（`plugin.json`, `skills/`, `mcpServers/`）；支持 Marketplace 目录索引与本地安装 | P1 |
+| **BI-18** | 官方核心数据研报插件全量吸收移植 | `presets/plugins/spreadsheets/`<br>`presets/plugins/pdf/` | 全量吸收移植官方 `spreadsheets-plugin`（全套金融与宏观统计 Python 勾稽模板）与 `pdf-plugin`（部委公报双栏排版与长篇抽取脚本） | P1 |
+| **BI-19** | Pi-TUI 双缓冲差分无闪烁渲染终端 | `packages/tui/src/app.ts`<br>`packages/tui/src/thinking.ts` | 移植 `@earendil-works/pi-tui` 双缓冲字符矩阵差分引擎；终端流式打字 0 闪烁，CPU < 1%；支持 DeepSeek-R1 思考流卡片动态折叠收起/展开 | P1 |
+| **BI-20** | 交互式 Git Unified Diff 审查门与 /doctor | `packages/tui/src/diff-view.ts`<br>`packages/core/src/doctor.ts` | 1. 文件变更弹出 Unified Diff 供人类确认；<br>2. `/doctor` 一键全链路体检智谱网络、凭据有效期、Python 环境（`pandas`/`openpyxl`）并附带修复建议 | P1 |
+| **BI-21** | 宏观政策与数据审计端到端实战演练验收 | 测试套件与场景演练 | 选取真实部委产业公报与上市公司财报，全流程演练政策比对、良率勾稽、Worktree 隔离与研报生成，指标误差 0 容忍 | P0 |
+| **BI-22** | Bun Compile 独立单文件原生二进制构建发布 | `scripts/build-bin.ts` | 通过 `bun build --compile` 打包输出免安装、零依赖的单一独立可执行文件 `bi`，跨平台支持 Linux x64 与 macOS arm64 | P0 |
 
 ---
 
-## 三、 执行推进原则与审批红线
+## 三、 开发智能体实战决策指引 (FAQ & Self-Correction)
 
-1. **审批先行**：每一个 Phase 的具体代码工程启动前，必须遵循《方案先行与执行前审批铁律》，向用户提交细化方案；
-2. **测试先行**：核心模块（OAuth 换票、会话 DAG、有界截断、PGID 熔断）必须配备 1:1 的单元测试与场景回放测试；
-3. **安全闭环**：严禁泄露任何真实私网 IP 与敏感凭据，所有示例均采用 RFC 5737 规范。
+在开发阶段，如果执行 Agent 遇到异常，必须按以下标准规程自愈：
+
+1. **遇到大模型返回畸形 JSON 时**：
+   - 严禁直接抛出 `SyntaxError` 中断会话；
+   - 必须流经 `FuzzyToolParser`，尝试剥离 Markdown 包裹标签、补齐缺失的双引号与花括号后再行反序列化。
+2. **遇到 Python 勾稽脚本运行抛错时**：
+   - 严禁将 Raw Traceback 直接作为最终答案抛给用户；
+   - 必须将异常堆栈送回模型，触发一次内部 Self-Healing 循环，修改脚本代码后再次在 Worktree 沙箱中重跑。
+3. **遇到工作区冲突或改动回滚时**：
+   - 严禁在当前工作区执行破坏性的 `git reset --hard`；
+   - 所有实验性代码必须在 `~/.bi/worktrees/` 中进行，即便崩溃只需安全删除工作树，主工作区毫发无损。
