@@ -416,6 +416,51 @@ DeepSeek Harness 在系统顶层基于 Cordis 依赖注入与插件树框架构�
   - 极限内存硬顶约束：在无 Swap 的 4GiB 与 8GiB cgroup 容器中对 Agent 全流程运行峰值 RSS 设硬顶门禁。
 - **对 bi 的落地价值**：为 `bi` 提供了可直接借鉴的端到端质量验收基准，确保在 2C2G / 4C8G 规格主机上稳定生产运行。
 
+### 7. 四大标杆未竟深水区与全景防遗漏资产深度补全 (Comprehensive Gap & Uncovered Assets)
+
+结合开发者社区在真实项目中的高频痛点与源码深度穿透，我们对 ZCode、Kimi Code、DeepSeek Harness 以及 Pi Agent 的未被充分显式化的底层资产进行了地毯式清查，提炼出七大关键杀手锏机制，并全量增补至 `devplan.md`：
+
+#### (1) 写前物理快照与无损文件历史回滚器 (Pre-Write Blob Snapshot & File History - `BI-03.2`)
+- **源码参考**：Kimi Code `packages/agent-core-v2/src/features/fileHistory/fileHistoryService.ts` (24.8KB)、`fileHistoryRetention.ts`、`IBlobStore`。
+- **核心痛点**：传统 Agent 依赖 Git 回滚，但在非 Git 目录、未初始化仓库或存在大量非跟踪文件时，一旦大模型执行错误的写操作或覆盖了已有代码，Git 回滚彻底失效，造成灾难性数据丢失。
+- **工程实现**：在任何写工具（`edit`, `write_to_file`, `bash` 写操作）分发前，触发 `WillExecuteToolEvent` 拦截器；利用 SHA-256 实时计算目标文件哈希，将二进制内容原子写入 `.bi/blobs/`，按 `turnId` 与执行阶段索引建立不可变文件历史快照；支持用户随时按轮次精准回滚单个或多个文件，与 Git 彻底解耦。
+
+#### (2) 会话状态空间形式化矩阵与不变量防竞态矩阵 (Product State Space & Invariant Guards - `BI-03.3`)
+- **源码参考**：清华 ZCode `packages/formal-proof/` 与 `docs/conversation-product-state-space.md` (19.5KB 核心规范)。
+- **核心痛点**：现代 CLI Agent 集成了 Compact 压缩、Fork 分支、Goal 目标续行、Subagent 派生、消息队列与 Query 编辑，多线程异步信令极易产生死锁或非法状态漂移（如：在 Subagent 活跃运行时并发触发 Compact 导致上下文撕裂；在流式生成中途执行 Fork 导致历史错乱）。
+- **工程实现**：建立由 `[runPhase] × [activeWork] × [queueAuthority] × [用户动作]` 构成的笛卡尔积状态转移矩阵；严格落地核心守卫不变量（Invariant Guards），在编译期与运行时阻断非法转换，根治状态机死锁。
+
+#### (3) 工具调用协作式超时看门狗 (Tool Timeout Policy & Cooperative Deadline Guard - `BI-06.3`)
+- **源码参考**：DeepSeek Harness `packages/guard/timeout-policy/` (8.3KB)、`packages/guard/timeout-policy/src/index.ts`。
+- **核心痛点**：外部网络请求（`web_search`、`web_fetch`）、第三方 MCP 服务或复杂 Python 脚本容易因服务端挂起或死锁无限期阻塞，导致 CLI 进程假死，用户被迫强制 `kill -9`。
+- **工程实现**：各工具显式声明自身运行预算（如搜索 30s、MCP 60s、Python 120s）；执行包装层为每个调用生成带截止时间的 `AbortSignal`；超时触发时协作式取消下游并在 `tools/execute` 返回标准化错误 `{ name: 'ToolTimeoutError', code: 'TOOL_TIMEOUT' }`，向模型清晰报告超时并赋予其自主重试或降级自愈能力，杜绝全进程冻结。
+
+#### (4) `/btw` 旁路零干扰问答微服务 (Side-Channel Query & Lightweight Fork - `BI-07.6`)
+- **源码参考**：Kimi Code `packages/agent-core-v2/src/features/btw/btwService.ts` 与 ZCode `docs/conversation-product-state-space.md`。
+- **核心痛点**：当 Agent 正在执行长达 5~10 分钟的长程重构或批量研报分析时，用户往往希望临时咨询一个不相关的代码细节（如“配置文件里的数据库端口是多少”）。若直接提问会强行中断正在运行的长任务；若等待则严重阻塞开发者工作节奏。
+- **工程实现**：实现 `/btw <问题>` 侧向通道；系统利用当前上下文快速 Fork 出一个只读轻量级临时执行分支，硬编码剔除所有写操作工具，仅赋予只读工具（`Read`、`Grep`、`Glob`）；秒级响应用户侧向提问，主 Agent 任务队列与执行流水线 100% 独立推进，互不干扰。
+
+#### (5) 流式缓动输出缓冲与帧率自适应节流器 (Paced Progress & Streaming OutputBuffer - `BI-19.2`)
+- **源码参考**：Pi Agent `@earendil-works/chord/output/` (`OutputBuffer.ts`, `Progress.ts`)。
+- **核心痛点**：在 DeepSeek-R1 高速输出思考流或 Bash 执行产生密集日志（每秒数千字符）时，高频向 TUI 派发渲染事件会导致 Node/Bun 事件循环饱和、终端字符抖动撕裂与 CPU 飙升至 100%。
+- **工程实现**：构建流式定长输出滑动窗口 `OutputBuffer`，支持严格的 UTF-8 字符边界与换行符几何计算；配合 `Progress` 模块的自适应 50ms 节流提交机制，无论上游 Token 喷涌多快，终端恒定维持平滑低开销刷新。
+
+#### (6) 四大协作模式切换器 (Collaboration Modes: Plan / Edit / Build / YOLO - `BI-20.1`)
+- **源码参考**：清华 ZCode `docs/conversation-product-state-space.md` 与 OpenCode 核心模式体系。
+- **核心痛点**：开发者在不同任务阶段对安全与效率的权衡不同：探索期需要严格只读，编码期需要 Diff 确认，实施期需要完整测试构建，批量自动化时需要极速无感放行。
+- **工程实现**：通过 `Shift+Tab` 或 `/mode` 快捷切换四大标准化模式：
+  1. `plan`：强制只读沙箱，专注探索与架构设计方案（对应 `BI-14.2`）；
+  2. `edit`：标准开发模式，高危写操作与文件修改强制弹出 Unified Diff 供人工确认；
+  3. `build`：工程构建模式，全自动触发编译、代码静态检查与测试套件；
+  4. `yolo`：极速自动模式，在沙箱与 PGID 看门狗保护下免审批直接执行安全操作，兼顾效率与安全底线。
+
+#### (7) 最终产出物显式交付与工作区变更追踪器 (Deliverables & Workspace Changes Tracker - `BI-21.2`)
+- **源码参考**：DeepSeek Harness `packages/deliverables/tool-present/` 与 `workspace-changes/`。
+- **核心痛点**：经过多轮复杂长程交互后，终端通常充斥着大量的中间思考流与工具日志，用户很难快速定位“本次任务最终交付了哪些文件、产生了哪些具体改动”。
+- **工程实现**：
+  1. 向模型暴露 `present(files, summary)` 工具，要求模型在达成目标后显式声明交付物，TUI 终端在轮次末尾渲染高亮交付卡片；
+  2. 自动捕获本轮会话前后的 Git 索引快照，计算变更文件列表、增删行数（`+N -M`）并生成对比摘要，让用户对变更一目了然。
+
 ---
 
 ## 三、 多 Agent 协同机制与 A2A 协议规范
