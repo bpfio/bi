@@ -195,7 +195,7 @@
   - `packages/desktop/src/host/`：与内核引擎（`packages/core`）的零拷贝直接桥接。
 - **对 bi 的指导**：验证了内核引擎完全独立于表现层，`bi` 采用相同的微内核设计，可在极简 Pi-TUI 终端与未来桌面形态之间零成本复用同一个引擎。
 
-#### (2) 视觉核验判定器闭环 (Visual Judge - `apps/zcode-cli/packages/visualize-plugin/skills/visualize/visual-judge.md` 与 `packages/services/src/gen-ui/`)
+#### (2) 视觉核验判定器闭环 (Visual Judge - `apps/zcode-cli/packages/spreadsheets-plugin/agents/visual-judge.md`、`visualize-skill-gate.ts` 与 `packages/services/src/gen-ui/`)
 - **核心痛点**：在数据分析与宏观研报场景中，Agent 自动编写 Python/ECharts/SVG 脚本生成的可视化图表，极易出现文字穿模重叠、坐标轴刻度过密挤压截断、图例溢出或配色反差缺失等“代码语法正确但视觉体验灾难”的问题。
 - **清华算法**：
   - 在图表渲染后，通过 Headless 浏览器自动将 HTML/SVG 图表快照转换为图片；
