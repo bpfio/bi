@@ -243,6 +243,14 @@
 - **同进程轻量上下文**：Sub-agent 绝非 OS 外部子进程，而是在当前 Node/Bun 进程内实例化独立的 `ChildExecutionContext`，派生独立的 Query Loop，零进程切换开销；
 - **双层会话历史物理隔离**：子 Agent 在执行深层代码或政策探索时，产生的几十次 `Grep`/`Read`/`Bash` 调用与数十万字符输出，全部写入独立的 `childSessionId` 持久化存储中；
 - **主视窗只接收提炼 Summary**：子 Agent 同步完成时仅向主 Agent 提交其最后一条文本块（Summary）与 Token Usage 元数据（异步后台任务则通过 `<task-notification>` 回传）。主对话视窗历史 0 污染，Token 视窗彻底免疫冲垮，单次复杂探索的主视窗 Token 消耗压减 95% 以上；
+- **Fork Subagent 字节级缓存复用**：当省略 `subagent_type` 时，子 Agent 克隆父级渲染好的 System Prompt、精确工具集合（Exact Tool Array）与历史消息切片，保持字节级完全一致（Byte-identical），使模型请求 100% 命中服务端的 Prompt Cache，首字延迟（TTFT）压降至毫秒级；
+- **双向信令协调总线 (SendMessage + RespondToCoordinator / BI-07.4)**：
+  - 父向子动态注入：主协调官调用 `SendMessage({ to, message })`，在子 Agent 运行期直接注入 steer 指令，在下一个工具批次边界平滑生效；
+  - 子向父中途汇报：子 Agent 独占专用工具 `RespondToCoordinator({ summary, message })`，在任务推进中途直接向父协调官指令队列发送阶段进展，写入 source 为 `subagent_message`，visibility 为 `model-only`，无需中断或提前终止子任务；
+- **Subagent-Driven Development (SDD) 双阶段自验 SOP (BI-18.1)**：
+  - 吸收清华 `subagent-driven-development/SKILL.md`：Implementer（按计划实现与测试） → Spec Reviewer（第一阶段规范合规核验） → Code Quality Reviewer（第二阶段代码质量与异常审查），实现全自动闭环交付，零琐碎打扰人类；
+- **Live Event Mirror Sink 只镜不落库机制**：
+  - 子 Agent 内部的 `tool_call_scheduled`、`progress` 事件通过 `source: "subagent"` 实时镜像到父级 Live Sink，TUI 实时以独立动效卡片渲染；落盘持久化时父级直接丢弃，做到“只镜不落库”，兼顾极致沉浸交互与底层历史树纯净；
 - **防递归死锁与 MCP 快照借用**：子 Agent 工具池被物理剥离 `Agent` 与 `AskUserQuestion` 工具，彻底阻断无限递归派生；通过借用父级 MCP 快照端口（`borrowed-mcp-port.ts`），子 Agent 结束退出时绝不触碰或销毁父级 MCP 连接。
 
 ### 1. 跨智能体角色拓扑与事实黑板 (预置资产参考流)
@@ -824,6 +832,8 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
   ├── 实现基于 Linux PGID 进程组看门狗的受控 Bash 执行器 (杜绝孤儿进程)
   ├── 落地多工具调用并行并发流水线 (Promise.allSettled)
+  ├── 落地 BI-07.3 本地 Sub-agent 视窗沙箱与 Fork Subagent 字节级 Prompt Cache 继承
+  ├── 落地 BI-07.4 双向信令协调 (SendMessage/RespondToCoordinator) 与只镜不落库 Mirror Sink
   └── 接入二段式优雅抢占与取消状态机 (Ctrl+C / Esc 保留上下文即时纠偏)
 
 [Phase 2] Git Worktree 并发隔离与完整 MCP 引擎 (Days 4~5)
@@ -839,6 +849,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 [Phase 4] 官方插件体系吸收与防幻觉强化 (Days 9~10)
   ├── 落地 packages/plugins 官方插件双协议加载器 (.zcode-plugin & .claude-plugin)
   ├── 全量移植官方 spreadsheets-plugin 与 pdf-plugin 核心库
+  ├── 吸收 BI-18.1 清华顶尖 Agent SOP (含 SDD 双阶段审查与完工自验看门狗)
   ├── 挂接 Git Worktree 隔离运行沙箱与 Python 逆向勾稽核验
   └── 落实多轮思考流剥离 (CoT Stripping) 与 KV Cache 锁定调优
 
