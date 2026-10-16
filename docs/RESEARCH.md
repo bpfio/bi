@@ -1489,3 +1489,93 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   2. 确定性脱敏管线（`sanitizeMessage`）：建立双向映射脱敏字典，将工程真实物理路径、本地用户名、代码 Patch 细节与用户私有提示词严格替换为规范化的结构化占位符（如 `[redacted:filepath:1]`、`[redacted:content:2]`）；
   3. 拓扑与底账保真留存：在抹除敏感隐私内容的同时，100% 完整保留轮次时间戳、Step 耗时时序、Token 消耗账目、工具调用骨架树与 DAG 状态机转移路径，实现在零数据外泄安全红线下的跨环境故障精准复现与效能评估。
 
+## 二十一、 五大标杆仓库全景对比复盘与 8 项深水区子系统增补吸收
+
+### 1. 五位一体全景架构矩阵复盘
+
+在完成对清华大学 ZCode、清华系 Kimi Code CLI、DeepSeek Harness、Pi Agent 以及 OpenCode CLI 五大标杆仓库的全面逐包逐模块地毯式审计后，整体技术栈的演进脉络与吸收格局已清晰呈现：以 ZCode 作为架构源头母体，融合其它四大工业级开源标杆之长，形成覆盖 104 项物理任务（22 个核心模块 + 82 个细颗粒度子任务）的闭环体系。
+
+| 标杆项目 | 核心定位与设计哲学 | 首要汲取价值与核心资产 | 本次增补吸收的深水区子系统 |
+|---|---|---|---|
+| **清华 ZCode**<br>(`references/zcode`) | **架构底座与源头母体**<br>学术严谨性与工业落地的结晶，强类型契约、形式化状态空间约束 | 核心接口契约、BigModel 双轨特权认证、错峰与高速卡申领、会话分叉树、动态 DAG 工作流、8 级上下文修剪、官方数据研报插件全套 | **BI-03.6** 离线阴影会话回放与非回归验证引擎（Golden Trajectory 录制与脱机重演） |
+| **Kimi Code CLI**<br>(`references/kimi-code`) | **工业级工程实践与防爆治理**<br>极致终端交互体验、防冲防抖与深层防御体系 | 三级 TOML 配置系统、MiniDB LSM 存储、Tower 多 Agent 工作树、AgentSwarm 蜂群并发调度、Plan 模式生命周期、Pi-TUI 强化底座与 CJK 排版 | **BI-07.13** 规范哈希工具调用排重器与三阶反驳循环打断门<br>**BI-10.5** 中断状态上下文自愈注入器与日期跨越感知器 |
+| **DeepSeek Harness**<br>(`references/deepseek-harness`) | **大模型原生工程支撑与基础设施**<br>深度契合大模型特性的调度、紧缩、文档处理与评测体系 | 官方适配器与思考流分离、Tool-pairing 原子配对门禁、超大输出磁盘 Spill 溢出隔离、历史多模态图像卸载、LSP 符号级代码导航、交付物追踪 | **BI-07.14** 跨时区全周期任务调度引擎与持久化重放中枢<br>**BI-18.3** 原生 Office 公文双向转译与无头 PDF 渲染管线 |
+| **Pi Agent**<br>(`references/pi`) | **高并发状态反应式追踪与无头评测**<br>极致算法性能、轻量纯 TS 数据结构与 Actor 状态机 | CodeMode 零依赖沙箱、KV 缓存 1-token 脉冲保活、流式缓冲与帧率自适应节流、外部编辑器桥接、HTML 独立报告生成器 | **BI-14.5** 进程崩溃自愈持久化调度器与 Actor 状态机<br>**BI-19.7** 反应式结构化 JSON Delta 状态追踪器与客户端零拷贝投影层<br>**BI-21.3** 确定性无头 Agent 评测套件与基准打分引擎 |
+| **OpenCode CLI**<br>(`references/opencode`) | **协议治理与安全护城河**<br>现代开源 CLI 架构、严格词法扫描与紧凑展现 | 双边界收件箱（steer/input）、4 级缓存断点策略、纯 TS Shell 词法扫描、SAX 流式 HTML-Markdown 转换、分级工具名录压缩、Mermaid 终端渲染、会话脱敏导出 | 已在第 20 节全量吸收入 WBS（BI-03.5, BI-04.4, BI-06.8, BI-07.12, BI-10.4, BI-13.3, BI-19.6, BI-20.4 共 8 项） |
+
+---
+
+### 2. 八大深水区增补子系统深度技术原理解析
+
+#### 1. 离线阴影会话回放与非回归验证引擎 (BI-03.6)
+- **归属源头**：清华大学 ZCode [tools/prompt-trajectory/record.ts](file:///home/yupeng/references/zcode/apps/zcode-cli/tools/prompt-trajectory/record.ts)（11.6KB）与 [scripts/shadow-replay.mjs](file:///home/yupeng/references/zcode/apps/zcode-cli/scripts/shadow-replay.mjs)（10.8KB）。
+- **问题根因**：在 Agent 系统迭代过程中，修改 System Prompt、调整工具 Schema 甚至升级大模型基模版本，都极易引发隐蔽的破坏性回归（如原本能通过的财务勾稽因某句提示词微调而失败）。而在公网进行全量重新测试会产生巨大的真实 API 费用和不可预期的外部文件系统副作用。
+- **机制原理**：
+  1. 黄金轨迹录制（Golden Trajectory Recording）：在生产或开发态执行基准任务时，原子捕获包含全量输入 Prompt、大模型流式 Tokens、工具调用参数与返回结果的时序快照树；
+  2. 阴影回放驱动（Shadow Replay Harness）：脱机离线重演历史真实会话，将工具执行路由至轨迹沙箱存根，在 0 实际 API 开销与 0 文件系统副作用下比对新代码生成的决策路径；
+  3. 非回归一致性断言：自动计算新旧分支在关键决策节点、工具调用序列与最终交付结果的一致性评分，确立工程演进的绝对安全护城河。
+
+#### 2. 规范哈希工具调用排重器与三阶反驳循环打断门 (BI-07.13)
+- **归属源头**：Kimi Code [agent-core-v2/src/agent/toolDedupe/toolDedupeService.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/toolDedupe/toolDedupeService.ts)（19.3KB，588行）。
+- **问题根因**：在长程自主编码与数据分析中，大模型经常因观察结果不符合预期而陷入死循环（如用相同参数反复读取同一文件、重复执行同一无状态命令），造成巨大的 Token 浪费，甚至在无人工干预时耗尽额度。
+- **机制原理**：
+  1. 规范化参数哈希（Canonical Argument Hashing）：对模型发起的工具调用参数执行递归键排序与规范化序列化，计算 SHA-256 哈希值；若在预设窗口内命中完全一致的调用，直接返回缓存的执行结果，避免重复 I/O；
+  2. 三阶渐进式反驳打断门（`RepeatBreaker`）：
+     - 第 1 阶（软性反驳）：提示模型该调用与先前完全一致，强制要求模型以单句形式说明预期获得的新信息；
+     - 第 2 阶（深度证伪）：强制要求模型执行证伪检查（Falsification check），列出支撑当前假设的反向证据，或主动调用提问门向人类求助；
+     - 第 3 阶（硬阻断）：若模型仍执意发起相同调用，系统直接熔断拦截工具执行权限，强制模型基于现有上下文直出最终结论，彻底消灭死循环。
+
+#### 3. 跨时区全周期任务调度引擎与持久化重放中枢 (BI-07.14)
+- **归属源头**：DeepSeek Harness [packages/schedule/schedule/src/domain.ts](file:///home/yupeng/references/deepseek-harness/packages/schedule/schedule/src/domain.ts)（79.9KB，1896行）与官方 `Temporal` 规范。
+- **问题根因**：传统的定时任务往往仅依赖简单的 `setTimeout` 或外部系统 Cron。在复杂跨国研究、多时区对齐以及长达数周的数据追踪场景下，存在时区漂移、闰年与夏令时边界错误，以及进程重启或会话 Fork 导致的定时器丢失或重复轰炸。
+- **机制原理**：
+  1. 全周期调度领域原语（Temporal Schedules）：覆盖 After（相对延时）、At（ISO 绝对时间点/本地时钟）、Every（定长间隔）、Cron（标准 5 字段，内嵌 400 年格里高利历法闰年周期）、Daily（每日固定时点）与 Weekly（每周固定星期）；
+  2. 持久化事件溯源与重放（Durable Event Sourcing）：所有调度生命周期（创建、触发、跳过、取消）作为结构化事件持久化存储；
+  3. 崩溃恢复游标对齐：进程重启时，重放中枢根据最后确认时间戳（`lastAckTime`）智能计算遗漏触发策略（`catchup`），避免堆积事件瞬间并发打爆系统。
+
+#### 4. 中断状态上下文自愈注入器与日期跨越感知器 (BI-10.5)
+- **归属源头**：Kimi Code [agent-core-v2/src/agent/interruptionReminder/](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/interruptionReminder/)（2.8KB）与 [agent-core-v2/src/features/dateChange/](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/features/dateChange/)（6KB）。
+- **问题根因**：用户常在模型输出中途按下 Ctrl+C 紧急打断并输入新要求。由于被打断的轮次没有正常结束符，模型在下一轮对话中容易产生混乱、反复道歉（如抱歉被中断）或丢失被打断前的有效推理信息；同时，长程会话跨过午夜时，模型仍基于旧系统时间推演，引发日期计算错误。
+- **机制原理**：
+  1. 中断恢复事实注入器：捕获中断信号后，清理末尾残缺块，并在下一轮前置自动注入规范上下文事实提醒（`The previous turn was interrupted by the user before completion...`），引导模型直接专注于用户的新指令，杜绝无效道歉幻觉；
+  2. 跨午夜日期感知看门狗：后台定时对比系统物理时钟与会话初始化时区，一旦检测到跨越 00:00，自动在上下文末尾注入带有最新物理日期的 `date_change` 披露标记，保障涉税与宏观政策时间维度的绝对准确。
+
+#### 5. 进程崩溃自愈持久化调度器与 Actor 状态机 (BI-14.5)
+- **归属源头**：Pi Agent [packages/durable/src/harness/scheduler.ts](file:///home/yupeng/references/pi/packages/durable/src/harness/scheduler.ts)（84.6KB，1953行）与 [types.ts](file:///home/yupeng/references/pi/packages/durable/src/types.ts)（46.7KB）。
+- **问题根因**：政策研报与大规模数据处理等工作流往往持续数小时。如果调度状态仅保存在内存中，一旦遭遇服务器意外断电、OOM 杀进程或宿主维护重启，数小时的中间推演数据将全部丢失，必须从头再来。
+- **机制原理**：
+  1. 状态机 Checkpoint 事务落盘：工作流中的每一个 Step、每次状态迁移（Pending -> Running -> Suspended -> Completed）均通过原子事务写入持久化存储（`storage.tasks`）；
+  2. 重启断点秒级自愈扫描：进程拉起时，调度器以分页游标（`SCAN_PAGE_SIZE = 256`）扫描持久化存储中处于未完结态的任务，精确恢复内存 Actor 状态机，无需人工介入即可无损续跑；
+  3. 分片定时与防溢出：对于大跨度休眠任务，通过 `MAX_TIMER_DELAY` 分片防止 Node/Bun 32 位定时器整数溢出，提供金融级系统鲁棒性。
+
+#### 6. 原生 Office 公文双向转译与无头 PDF 渲染管线 (BI-18.3)
+- **归属源头**：DeepSeek Harness [packages/document/office-to-pdf](file:///home/yupeng/references/deepseek-harness/packages/document/office-to-pdf)（14.7KB）与 LibreOffice 无头渲染管线。
+- **问题根因**：国内部委公文与企事业单位研报绝大多数以 Word（.docx）和演示文稿（.pptx）形式下发和流转。大模型直接解析 Office 二进制 XML 容易丢失红头公文排版、批示手迹、印章位置与复杂多栏布局等极其关键的多模态视觉信息。
+- **机制原理**：
+  1. 原生高精矢量转译：通过轻量无头转译管线，将 Word、PPT 毫秒级转换为标准矢量 PDF，完整保真字体、版心、印章与表格排版；
+  2. 页面高精切片与投递：将生成的 PDF 页面按需渲染为超高分辨率位图，按页投递给视觉视窗（Visual Window）与 Visual Judge 核验门；
+  3. 双向闭环审计：不仅支持从原始公文提取多模态视觉上下文，还支持在模型生成最终研报后就地导出为符合国家公文标准的 Office 格式。
+
+#### 7. 反应式结构化 JSON Delta 状态追踪器与客户端零拷贝投影层 (BI-19.7)
+- **归属源头**：Pi Agent [@earendil-works/chord/src/delta/tracker.ts](file:///home/yupeng/references/pi/packages/chord/src/delta/tracker.ts)（79.8KB，2239行）。
+- **问题根因**：在复杂长程任务中，会话状态树（包含数百个消息块、工具状态、思考流折叠状态与工作区变更）规模极其庞大。若每次状态微调都对全量树执行 JSON 序列化并推送给 TUI 或远程 A2A 节点，会导致终端高频重绘卡顿与严重的 CPU 暴击。
+- **机制原理**：
+  1. 片段表（Piece Table）与平衡树堆（Treap）：在纯 TypeScript 环境下构建高性能不可变数据追踪结构，避免 JavaScript 引擎因频繁创建对象触发深度 GC 暂停；
+  2. RFC 6902 JSON Patch 极简 Delta 流：仅捕获发生变动的局部字段，实时计算增删改（add/remove/replace）差分补丁流；
+  3. 零拷贝投影层：终端 UI 与远程协同节点仅需在本地状态上应用微量 Delta 补丁，以近乎 0 的 CPU 开销和极低带宽实现毫秒级帧率流畅刷新。
+
+#### 8. 确定性无头 Agent 评测套件与基准打分引擎 (BI-21.3)
+- **归属源头**：Pi Agent [packages/evals/src/harness.ts](file:///home/yupeng/references/pi/packages/evals/src/harness.ts)（20.6KB）与 [report.ts](file:///home/yupeng/references/pi/packages/evals/src/report.ts)（19KB）。
+- **问题根因**：研发高质量政策审计 Agent 时，开发人员往往依靠主观感受测试几个用例，缺乏工程化、自动化与量化的客观质量护城河。一旦修改核心调度或 Prompt，无法快速验证系统整体能力是提升还是退化。
+- **机制原理**：
+  1. 零 GUI 纯命令行评测执行器（Headless Eval Harness）：提供标准 CLI 运行套件，支持配置隔离的工作区沙箱与模拟测试夹具（Mock Tools/Providers）；
+  2. 黄金基准用例集（Benchmark Suite Cases）：沉淀真实宏观研报提炼、财报交叉勾稽与代码重构等标准用例库，自动执行端到端闭环验证；
+  3. 多维量化打分看板（Evaluation Report）：自动采集并生成包含用例通过率、执行时延分布、Token 吞吐量、KV 缓存命中率与上下文滑动峰值的综合打分看板，确保每一次版本发布均有据可依。
+
+---
+
+### 3. 104 项任务闭环结构与演进收敛
+
+随着上述 8 项深水区核心子系统的增补与全量对齐，`devplan.md` 的 Section II 与 Section III 已实现 100% 严格一致的 104 项任务全量覆盖（22 个顶级模块 + 82 个细粒度子任务）。
+
+这一架构以清华 ZCode 作为源头骨架，全面吸纳 Kimi Code、DeepSeek Harness、Pi Agent 与 OpenCode 的最佳实践，构建了一套兼具**清华学术严谨性、工业级防爆稳定性、大模型原生高能效与现代开源工程完备性**的顶尖智能体底座。
