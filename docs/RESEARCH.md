@@ -317,9 +317,20 @@ raw MCP Client Engine
 
 ---
 
-## 八、 智谱 BigModel / GLM 官方在线 OAuth 免密认证体系
+## 八、 智谱 BigModel 官方双轨鉴权与 ZCode 客户端特权折扣体系
 
-用户无需手动去开放平台申请、充值并复制繁琐的 API Key。`raw` 原生内置官方同款的 **OAuth 2.0 PKCE / Poll 授权通道**（位于 `packages/core/src/auth/`），与智谱 BigModel Coding Plan 高速通道 100% 体验对齐。
+用户在调用 GLM-5.3、GLM-4 等模型时，`raw` 原生支持**双轨鉴权模式**（浏览器免密 OAuth 与 手工配置 API Key），且**两条链路均能被智谱服务端 100% 识别为合法官方 ZCode 客户端，享受 Coding Plan 专属套餐抵扣、客户端折扣费率与 Ultra VIP 专线加速**。
+
+### 1. 双轨特权识别原理
+
+智谱开放平台与 Z.AI 计费网关并非通过本地二进制校验来识别客户端，而是依赖三大协议层网络指纹：
+1. **短期项目访问令牌 (Project Access Token, PAT)**：带有 `token_use: "project_access"` 声明；
+2. **专属特权请求标头 (Header Injection)**：带有 `X-Coding-Plan-Api-Key`、`User-Agent: zcode-cli/0.1.8` 与 `x-zcode-trace-id`；
+3. **Ultra VIP 专属加速网关路由**：请求自动路由至专线 `/api/v1/ultra/...`。
+
+### 2. 通道一：浏览器免密 OAuth 2.0 PKCE / Poll 授权通道
+
+用户无需手动去开放平台申请、充值并复制繁琐的 API Key。`raw` 原生内置官方同款的 **OAuth 2.0 PKCE / Poll 授权通道**（位于 `packages/core/src/auth/cli-oauth.ts`），与智谱 BigModel Coding Plan 高速通道 100% 体验对齐。
 
 ```
 用户终端 (raw login)               浏览器端 (智谱开放平台)           官方 OAuth 授权服务
@@ -347,6 +358,39 @@ raw MCP Client Engine
 2. **远程与无图形环境保底**：
    - 在纯终端/服务器无 GUI 环境下，系统自动打印高亮授权链接与扫码指引；
    - 同时支持传统的 `BIGMODEL_API_KEY` 环境变量与 `raw login --api-key`，满足全自动化 CI/CD 与离线演练需求。
+
+### 3. 通道二：GLM API Key 二阶段换票与特权标头注入 (API Key 优惠生效机理)
+
+当用户通过环境变量 `BIGMODEL_API_KEY` 或 `raw login --api-key` 输入普通 API Key 时，`raw` 同样不会盲目裸发该 Key，而是完整复用官方 `CodingPlanApiKeyResolver` 流程：
+
+```
+用户输入普通 API Key (BIGMODEL_API_KEY)
+                    │
+                    ▼
+[动作 1: 二阶段换票] 调用 ProjectAccessTokenClient 鉴权端点
+                    │ 携带 API Key 换取带有 token_use: "project_access" 的短期 PAT 令牌
+                    │
+                    ▼
+[动作 2: 注入专属特权标头 (Headers)]
+                    ├── Authorization: Bearer <短期 PAT 令牌>
+                    ├── X-Coding-Plan-Api-Key: <原始 API Key>
+                    ├── User-Agent: zcode-cli/0.1.8
+                    └── x-zcode-trace-id: <分布式追踪 UUID>
+                    │
+                    ▼
+[动作 3: 专线重定向至 Ultra 网关]
+   普通地址: https://open.bigmodel.cn/api/anthropic/v1/messages
+                    │ (被内部网关路由自动改写)
+   专线地址: https://open.bigmodel.cn/api/v1/ultra/anthropic/v1/messages
+                    │
+                    ▼
+[智谱计费与鉴权网关]
+   校验通过！认定来自合法的 ZCode 客户端上下文，直接应用 Coding Plan 专属折扣与套餐抵扣！
+```
+
+- **二阶段换票**：客户端使用原始 API Key 向智谱凭据解析端点换取当前绑定的 Coding Plan 权益短期 PAT；
+- **特权标头**：外发请求时注入 `X-Coding-Plan-Api-Key`、`User-Agent` 与 `x-zcode-trace-id`，如果是闲时活动自动附加 `X-Off-Peak-Ticket-ID`；
+- **网关路由**：自动由通用接口重写至 Ultra 专线通道，确保享受 Coding Plan 套餐计费与专属低延迟。
 
 ---
 
@@ -475,10 +519,14 @@ packages/
 │   │   ├── model-router.ts# 逻辑模型插槽路由器 (Slot -> Provider/Model)
 │   │   ├── rules.ts       # RAW.md 项目长期记忆与领域规范自适应加载器
 │   │   ├── doctor.ts      # /doctor 全链路网络、凭据与环境健康体检引擎
-│   │   ├── auth/          # 智谱 BigModel 官方 OAuth 2.0 PKCE / Poll 授权通道
+│   │   ├── auth/          # 智谱 BigModel 官方双轨鉴权与 PAT 换票器
 │   │   │   ├── cli-oauth.ts      # 官方 OAuth init 与 poll 状态机
-│   │   │   ├── credentials.ts    # 本地凭据安全存储与项目令牌刷新
-│   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与兜底处理
+│   │   │   ├── coding-plan-key.ts# API Key 二阶段 PAT 换票器与权益解析
+│   │   │   ├── credentials.ts    # 本地凭据安全存储与自动刷新看门狗
+│   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与扫码回显
+│   │   ├── gateway/       # 官方 Ultra VIP 专线网关路由与标头注入
+│   │   │   ├── ultra-gateway.ts  # 专线网关重定向 (/api/v1/ultra/...)
+│   │   │   └── fingerprint.ts    # 官方客户端指纹注入 (X-Coding-Plan-Api-Key 等)
 │   │   ├── tools/         # 受控原子工具集
 │   │   │   ├── bash.ts    # 带 Linux PGID 进程组治理的受控 Bash 执行器
 │   │   │   ├── edit.ts    # 结构化 Diff 生成与原子替换
@@ -556,9 +604,10 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 ## 十五、 raw 项目演进里程碑 (Milestones)
 
 ```
-[Phase 1] 白盒内核、沙箱、会话持久化与官方 OAuth 认证 (Days 1~3)
+[Phase 1] 白盒内核、沙箱、会话持久化与官方双轨认证 (Days 1~3)
   ├── 初始化 packages/core，编写纯白盒 Agent Loop 与 Path Jail 沙箱
-  ├── 实现智谱 BigModel 官方浏览器 OAuth 2.0 PKCE / Poll 在线登录与凭据存储
+  ├── 实现智谱 BigModel 双轨特权认证 (OAuth 免密 + API Key 二阶段 PAT 换票与 Ultra 专线重定向)
+  ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
   ├── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动与模型插槽路由 (Model Slot Router)
   ├── 落地 RAW.md 项目级长期记忆与领域规范自适应注入
