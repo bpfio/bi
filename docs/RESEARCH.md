@@ -1,22 +1,24 @@
 # raw CLI Agent 架构全景调研与细颗粒度设计蓝图 (Architecture Research & Detailed Blueprint)
 
-> 本文档是 `raw` 项目（`bpfio/raw`）的权威架构调研与技术设计报告，基于对 **Pi Agent**、**zcode-app-cli**、**ZCode 官方开源仓库 (`zai-org/ZCode`)**、**DeepSeek Harness (`deepcode-cli`)** 与 **OpenCode (`opencode.ai`)** 的全量代码分析，确立了项目的核心设计原则、防幻觉机制、**A2A 跨智能体协议规范**、**完整 MCP 兼容引擎** 与五阶段工程落地蓝图。
+> 本文档是 `raw` 项目（`bpfio/raw`）的权威架构调研与技术设计报告，基于对 **Pi Agent**、**zcode-app-cli**、**ZCode 官方开源仓库 (`zai-org/ZCode`)**、**DeepSeek Harness (`deepcode-cli`)** 与 **OpenCode (`opencode.ai`)** 的全量代码分析，确立了项目的核心设计原则、防幻觉机制、**A2A 跨智能体协议规范**、**完整 MCP 兼容引擎**、**工业级会话管理体系 (Session Engine)** 与五阶段工程落地蓝图。
 > 同步归档于 Logbook 知识中枢：`project: "raw"`, `research_id: 24`。
 
 ---
 
 ## 一、 调研背景与使命定位
 
-在政策调研与数据分析场景中，传统的通用 Coding Agent 常常面临三大结构性缺陷：
+在政策调研与数据分析场景中，传统的通用 Coding Agent 常常面临四大结构性缺陷：
 1. **安全性与黑盒困境**：许多轻量工具采用二进制混淆包或依赖多层脆弱的 AST 补丁，代码无法白盒审计，存在供应链投毒与未授权数据外泄（Telemetry）风险；
 2. **幻觉率与执行力脱节**：同为先进模型，在不同脚手架（Harness）下表现天差地别——缺乏严格闭环约束的 Agent 常常产生严重幻觉（捏造数据、指标前后矛盾、虚构文件），而过度复杂的框架则陷入漫长的 IPC 延迟与上下文爆炸；
-3. **协同隔离能力缺失**：单 Agent 面对几十页红头政策公报与海量财务报表时，上下文极易被中间提取过程冲刷殆尽，缺乏**多智能体（A2A）分工与独立沙箱机制**。
+3. **协同隔离能力缺失**：单 Agent 面对几十页红头政策公报与海量财务报表时，上下文极易被中间提取过程冲刷殆尽，缺乏**多智能体（A2A）分工与独立沙箱机制**；
+4. **会话管理简陋脆弱**：大多数工具仅做简单的内存数组保存，遇到中断或意外退出即导致上下文全失，缺乏**有向无环图（DAG）分支推演、时光倒流（Rewind）与长会话无损紧缩**能力。
 
 **`raw` 的使命**：
 打造一个**100% 白盒开源、零数据外泄、极低幻觉、极高执行力**的现代化 Agent CLI。
 - **双擎核心**：深度整合 **GLM**（敏捷信息流探针）与 **DeepSeek**（长链因果逻辑推演）；
 - **主攻领域**：**政策深度调研**（条文比对、脉络追溯、博弈推演）与 **严密数据分析**（指标穿透、勾稽核验、产能良率事实审计）；
 - **协议完备**：内置**工业级 MCP 客户端**（兼容 Stdio/SSE 远程与本地服务）与 **A2A 跨智能体通信协议**；
+- **状态中枢**：内置**工业级 DAG 会话管理引擎**（Append-only 事件溯源 + 无损紧缩 + 平行分支）；
 - **终端交互**：继承 `@earendil-works/pi-tui` 的无闪烁差分渲染与渐进折叠手感。
 
 ---
@@ -27,7 +29,7 @@
 
 | 标杆项目 | 核心模块与代码走读 | 核心优势（精髓借鉴） | 关键局限与对抗成本 |
 |---|---|---|---|
-| **Pi Agent**<br>`@earendil-works/pi` | • `packages/agent/`: 状态机与上下文管理<br>• `packages/tui/`: 双缓冲差分渲染引擎<br>• `packages/mcp/`: 独立白盒 MCP 客户端<br>• `packages/coding-agent/`: 4 大原子工具 | • **极简主义哲学**：系统提示词压制在 1000 Token 内<br>• **错误作为一等公民**：抛异常自动转化为 `isError: true` 促使模型自愈<br>• 架构解耦：TUI 与内核彻底分离，依赖极少 | • 偏向单 Agent 通用编码，缺乏针对 DeepSeek-R1 思考流的特定处理与多智能体分流 |
+| **Pi Agent**<br>`@earendil-works/pi` | • `packages/coding-agent/src/core/session-manager.ts` (单文件 2,014 行)<br>• `packages/tui/`: 双缓冲差分渲染引擎<br>• `packages/mcp/`: 独立白盒 MCP 客户端<br>• `packages/agent/`: 4 大原子工具 | • **DAG 会话树体系**：每一条消息携带 `id` (UUIDv7) 与 `parentId`，天然支持分支分叉与 Rewind 时光倒流<br>• **错误作为一等公民**：抛异常自动转化为 `isError: true` 促使模型自愈<br>• 架构解耦：TUI 与内核彻底分离，依赖极少 | • 偏向单 Agent 通用编码，缺乏针对 DeepSeek-R1 思考流的特定处理与多智能体分流 |
 | **ZCode 官方版**<br>`zai-org/ZCode` | • `packages/core/src/runtime/`: 工业级调度器<br>• `packages/core/src/subagent/`: 多智能体协调器<br>• `packages/spreadsheets-plugin/`: 表格计算<br>• `packages/pdf-plugin/`: 政策 PDF 结构化提取 | • **极低幻觉率**：经过数百万次调优的 System Prompt、Tool Schema 与先读后写门禁<br>• **金融级 Event Sourcing**：基于 SQLite 不可变事件流的会话恢复<br>• **开箱即用的专业数据/研报分析插件** | • 官方 CLI 前端采用 React+OpenTUI，较为臃肿且构建链庞大（巨石 Monorepo） |
 | **zcode-app-cli**<br>`bpfio/raw` 前身 | • `runtime-tui-bridge.ts`: 进程内函数级桥接<br>• `runtime-sqlite-recovery.ts`: SQLite 并发自愈<br>• `bounded-tool-text.ts`: 64KB 工具输出有界保护<br>• `file-diff-budget.ts`: 2000 行 Diff 预算限制 | • **同进程零拷贝直连（Zero IPC）**：彻底消灭 Localhost Socket 延迟与重连断连隐患<br>• 极高的工程鲁棒性与内存防泄漏 | • **混淆二进制黑盒**（`vendor/zcode.cjs`），供应链不可审计<br>• 27 个 AST/字符串补丁在版本升级中极易漂移 |
 | **DeepCode**<br>`lessweb/deepcode-cli` | • `packages/core/session.ts`: 会话状态机<br>• `packages/core/prompt.ts`: 提示词结构<br>• 支持 `thinkingEnabled` 与 `reasoningEffort` | • **原生适配 DeepSeek 系列**：深度适配 R1 思考流展示与参数调优<br>• 针对 DeepSeek 的 Prompt Cache 前缀优化与上下文压缩 | • 缺乏严格的沙箱隔离（Path Jail），代码中工具扩展体系较重 |
@@ -135,7 +137,62 @@ raw MCP Client Engine
 
 ---
 
-## 五、 核心设计原则 (Design Principles)
+## 五、 工业级会话管理体系设计 (Session Management & DAG State Machine)
+
+政策推演跨度大、数据链路长，会话管理是整个系统的**记忆中枢与容灾底线**。
+
+```
+                    ┌──────────────────────────────────────────────┐
+                    │        会话交互命令与入口 (CLI / TUI)        │
+                    │  raw -c (继续) | raw -r <id> | /rewind | /fork│
+                    └──────────────────────┬───────────────────────┘
+                                           │
+                    ┌──────────────────────▼───────────────────────┐
+                    │        会话状态机引擎 (Session Engine)        │
+                    ├──────────────────────────────────────────────┤
+                    │ • DAG 树状分支 (Branching)  • 时光倒流 (Rewind) │
+                    │ • 两级上下文紧缩 (Compaction) • A2A 父子血缘树 │
+                    └──────────────┬───────────────────────────────┘
+                                   │
+              ┌────────────────────┴────────────────────┐
+              ▼                                         ▼
+┌──────────────────────────────┐          ┌──────────────────────────────┐
+│  不可变事件流 (Append-only)   │          │  元数据快速索引 (SQLite)     │
+│  ~/.raw/sessions/<id>.jsonl  │          │  ~/.raw/sessions.db          │
+│ • 每步实时追加，抗强杀 0 损坏 │          │ • 毫秒级列表检索 (raw -l)    │
+│ • 包含 UUIDv7 + parentId 指针 │          │ • 记录 Token 消耗与时间戳    │
+└──────────────────────────────┘          └──────────────────────────────┘
+```
+
+### 1. 存储架构：双层混合持久化引擎
+* **主体存储（Append-only JSONL）**：
+  - 会话数据保存在 `~/.raw/sessions/<session-id>.jsonl` 中；
+  - 每一个交互步骤（`user_prompt`、`assistant_message`、`tool_call`、`tool_result`）在完成瞬间以单行 JSON 原子追加；
+  - **抗灾能力**：遭遇机器断电、系统崩溃或 `SIGKILL` 强杀，已落盘记录 100% 完整，绝无数据库死锁或文件损坏风险。
+* **元数据轻量缓存（SQLite WAL 模式）**：
+  - 维护 `~/.raw/sessions.db` 单表索引（包含 `id`, `title`, `cwd`, `created_at`, `updated_at`, `token_total`, `message_count`）；
+  - 执行 `raw list` / `raw -l` 时由 SQLite 毫秒级秒开渲染历史列表，无需遍历解析整个 JSONL 目录。
+
+### 2. DAG 有向无环图分支与时光倒流 (Rewind & Branching)
+* **节点指针模型**：每个消息记录包含全局唯一的时间可排序 `id`（UUIDv7）和父节点 `parentId` 指针；
+* **`/rewind` (时光倒流)**：一键撤回上一个交互节点，撤销失误的分析假设或改错的代码；
+* **`/fork` (平行分支推演)**：针对不同的政策假设（如“利率保持不变” vs “利率下调 50BP”），在任意历史节点原地开辟平行分析分支，主分支历史完整保留，双向自由切换对比。
+
+### 3. 两级长会话无损紧缩 (Two-Tier Compaction)
+针对多达几十轮的长周期深度调研，构建两级紧缩机制：
+* **一级紧缩（Tool Output Pruning）**：
+  - 自动折叠前期已经完成的冗长 `grep`、网页 HTML 抓取内容，仅保留首尾哈希与简要状态，立减 70% Token；
+* **二级紧缩（Distillation Summary）**：
+  - 触发轻量模型生成《阶段调研底账与已知事实清单》，将前半部历史蒸馏为 1 条系统级 Anchor 消息，重置上下文窗口，支撑数百轮连续作业不爆上下文。
+
+### 4. 断点续连与环境自愈 (Resume & Hydration)
+* **`raw -c` (断点接续)**：自动定位当前工作区最近活跃会话并平滑恢复；
+* **`raw -r <id>` (跨会话唤醒)**：精准恢复历史任意会话；
+* **环境自愈**：恢复时自动复位 Git 状态、重新连通远程 MCP 服务（如 QNAP Logbook），恢复当时沙箱环境。
+
+---
+
+## 六、 核心设计原则 (Design Principles)
 
 1. **状态所有权单一（Single State Owner）**：
    运行时（Runtime / Event Store）是唯一的单一事实源；TUI 界面坚决不维护独立状态副本，仅作为**纯投影（Projection）**被动响应事件。
@@ -148,7 +205,7 @@ raw MCP Client Engine
 
 ---
 
-## 六、 如何防止幻觉？（防幻觉工程体系）
+## 七、 如何防止幻觉？（防幻觉工程体系）
 
 针对数据分析与政策研判场景，构建五重防幻觉闭环机制：
 
@@ -166,7 +223,7 @@ raw MCP Client Engine
 
 ---
 
-## 七、 如何提高执行效率与吞吐？（极速调优方案）
+## 八、 如何提高执行效率与吞吐？（极速调优方案）
 
 1. **KV Cache / Prompt Caching 前缀锁定**：
    - 将不变的 System Prompt、A2A 契约与 Tool Schemas 置于消息数组最前端，保持字节级静态；
@@ -179,30 +236,32 @@ raw MCP Client Engine
 
 ---
 
-## 八、 细颗粒度工程落地方案（五大核心包设计）
+## 九、 细颗粒度工程落地方案（五大核心包设计）
 
 项目采用现代化 TypeScript + Bun Monorepo 架构（收敛至 `packages/`），彻底摆脱对混淆二进制的依赖：
 
 ```text
 packages/
-├── core/                  # 状态机内核与 Agent Loop (基于 pi-agent-core 精髓)
+├── core/                  # 状态机内核、沙箱与会话引擎 (基于 pi-agent-core 精髓)
 │   ├── src/
 │   │   ├── agent.ts       # 核心循环状态机 (Planning -> Tool -> Reflection)
 │   │   ├── history.ts     # 消息历史管理与 CoT 思考流自动切除
-│   │   ├── session.ts     # SQLite / JSONL 会话事件持久化
+│   │   ├── session.ts     # JSONL Append-only 树状会话引擎 (DAG Fork & Rewind)
+│   │   ├── compaction.ts  # 两级长会话无损紧缩与记忆蒸馏
+│   │   ├── indexer.ts     # SQLite 会话元数据快速索引器
 │   │   └── sandbox.ts     # Path Jail 路径越界校验器
 │
 ├── mcp/                   # 工业级 MCP 客户端引擎 (借鉴 Pi MCP Client)
 │   ├── src/
 │   │   ├── client.ts      # JSON-RPC 2.0 客户端实现
 │   │   ├── stdio.ts       # 本地子进程 Stdio 管道与看门狗
-│   │   ├── sse.ts         # 远程 SSE/HTTP 连接器
+│   │   ├── sse.ts         # 远程 SSE/HTTP 连接器 (直连 QNAP Logbook)
 │   │   └── registry.ts    # 动态工具与资源聚合注册表
 │
 ├── a2a/                   # A2A 跨智能体协议中枢 (借鉴 ZCode subagent)
 │   ├── src/
-│   │   ├── coordinator.ts # 主协调官调度状态机
-│   │   ├── subagent.ts    # 隔离子智能体运行沙箱
+│   │   ├── coordinator.ts # 主协调官调度状态机 (搭载 R1)
+│   │   ├── subagent.ts    # 隔离子智能体运行沙箱 (搭载 GLM / V3)
 │   │   ├── envelope.ts    # 强类型消息封套与序列化
 │   │   └── mailbox.ts     # 异步收件箱与 Logbook 桥接
 │
@@ -211,6 +270,7 @@ packages/
 │   │   ├── app.ts         # TUI 主生命周期与差分渲染循环
 │   │   ├── thinking.ts    # R1 思考流动态收起/展开折叠卡片
 │   │   ├── subagent-view.ts# A2A 多子智能体并行执行看板
+│   │   ├── session-picker.ts# 历史会话毫秒级交互式切换器
 │   │   └── diff-view.ts   # 结构化代码/条文变更对比视图
 │
 └── plugins/               # 政策与数据专业分析插件 (借鉴 ZCode plugins)
@@ -222,11 +282,12 @@ packages/
 
 ---
 
-## 九、 raw 项目演进里程碑 (Milestones)
+## 十、 raw 项目演进里程碑 (Milestones)
 
 ```
-[Phase 1] 白盒内核与安全沙箱 (Days 1~3)
+[Phase 1] 白盒内核、沙箱与会话持久化 (Days 1~3)
   ├── 初始化 packages/core，编写纯白盒 Agent Loop
+  ├── 落地 Append-only JSONL 会话引擎 (支持断点恢复与 DAG 分支)
   ├── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动
   └── 落地带 Path Jail 的 4 大原子工具 (read/write/edit/bash)
 
@@ -247,6 +308,6 @@ packages/
 
 [Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
   ├── 接入 @earendil-works/pi-tui 差分渲染界面
-  ├── 挂载 A2A 子任务看板与思考流折叠视图
+  ├── 挂载 A2A 子任务看板、会话选择器与思考流折叠视图
   └── 端到端宏观政策与数据审计实战验收，发布 bpfio/raw v1.0
 ```
