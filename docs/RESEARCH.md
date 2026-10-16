@@ -278,6 +278,16 @@
   - 终态 Outbox 结算：在智谱官方闲时窗口（夜间/周末算力波谷）以 1~3 折超低算力成本批量跑通，任务完成后原子回写入 Outbox 提货箱。
 - **对 `bi` 价值**：直接作为 `BI-02.3` 智谱 BigModel 闲时任务错峰调度引擎，使用户能够在下班前一键派发“夜间重度宏观政策推演”任务，次日早晨直接提货完整报告，大幅节约算力成本。
 
+#### (5) 智谱与 ZCode 官方赠送 Token 申领与免费加速抽卡架构 (`packages/services/` 与 `packages/shared/src/highspeed.ts`)
+- **核心痛点**：智谱官方与 ZCode 经常在特定周期（新用户注册、周末算力狂欢、节假日福利活动、版本升级补偿）定向投放数百万至数百亿 Units 的限时赠送 Token 与免费高速推理卡。传统开源 Agent 缺乏与官方福利营销中枢对接的能力，导致用户无法感知并错失大量免费算力红利；或者因未及时消耗，赠送额度在后台静默过期。
+- **清华官方实现**：
+  - **赠送包自动探测与原子入账**：官方在 `bigmodelCodingPlanSubscriptionProvider.ts`（272~408 行）与 `zaiStartPlanBilling.ts` 中实现了完整的权益探测与核销闭环：
+    - `GET /api/v1/zcode-plan/billing/preview`：请求带 App Version 与平台指纹，拉取当前账号所有可领取的限时体验套餐（如 `weekend-plan`、`start-plan`）；
+    - `POST /api/v1/zcode-plan/billing/claim`：携带 JWT 凭据与防刷标头，一键申领并将福利 Token 原子挂载至用户的 `user_plan_id` 实例，回显生效期与截止期；
+    - `GET /api/v1/zcode-plan/billing/balance`：动态轮询赠送额度余额（`total_units`、`remaining_units`、`expires_at`），客户端结合服务端时钟自动做过期修剪。
+  - **免费高速推理抽卡机制 (Highspeed Card)**：在 `highspeedCardService.ts`（383 行）与 `highspeedHttpTransport.ts` 中，会话发起前自动调用 `POST /api/v1/highspeed/draw` 抽取加速卡，抽中可走 `/api/v1/highspeed/` 专线大幅提升推理 TPS；若卡过期（业务错误码 `3402`），状态机自动平滑降级回原模型继续执行，杜绝中断。
+- **对 `bi` 价值**：直接作为 `BI-02.4`，使 `bi` 具备自动感知官方赠送福利、一键 `/claim` 申领入账并在 HUD 中优先抵扣即将过期算力的完整能力。
+
 ### 5. Pi Agent 原创架构与 CodeMode 内存精算沙箱深度走读
 
 除清华大学 ZCode 与清华系 Kimi Code 外，本地参考库中的 `@earendil-works/pi`（Pi Agent）同样贡献了两大顶尖工程设计：
@@ -814,6 +824,8 @@ packages/
 │   │   │   ├── coding-plan-key.ts# API Key 二阶段 PAT 换票器与权益解析
 │   │   │   ├── quota-watchdog.ts # Coding Plan 额度监测与余额预警看门狗 (BI-02.2)
 │   │   │   ├── off-peak-service.ts# 智谱 BigModel 闲时任务错峰调度引擎 (BI-02.3)
+│   │   │   ├── benefit-claim.ts  # 官方赠送 Token 自动探测与一键申领引擎 (BI-02.4)
+│   │   │   ├── highspeed-card.ts # 免费高速推理抽卡与 3402 降级看门狗 (BI-02.4)
 │   │   │   ├── credentials.ts    # 本地凭据安全存储与自动刷新看门狗
 │   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与扫码回显
 │   │   ├── gateway/       # 官方 Ultra VIP 专线网关路由与标头注入
@@ -925,6 +937,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
   ├── 落地 BI-02.2 Coding Plan 额度实时监测与余额告警看门狗 (quota-watchdog)
   ├── 落地 BI-02.3 智谱 BigModel 闲时任务错峰调度引擎 (offPeakTaskService 681行状态机)
+  ├── 落地 BI-02.4 智谱与 ZCode 官方赠送 Token 申领与免费加速抽卡引擎 (Benefit & Highspeed Draw)
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
   ├── 接入 GLM、DeepSeek 等统一 SSE 流式驱动与单模型插槽路由 (Model Slot Router)
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
