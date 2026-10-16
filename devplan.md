@@ -5,7 +5,8 @@
 > **定位**：100% 白盒开源、零数据外泄、极低幻觉、极高并发执行力的现代化政策深度调研与商业智能（BI）终端 Agent CLI。  
 > **基石**：**单模型全自洽即插即用（Single-Model First）+ Python 沙箱代码运行即验（Code-backed Grounding）**。  
 > **单一事实源 (SSOT)**：本文档是 `bi` 项目全生命周期的工程执行纲领与技术决策总纲。所有参与开发的 Agent 必须以此为顶层依据开展自主决策与代码施工。  
-> **Logbook 知识底账**：`project: "bi"`，研发批次：`BI-DEVPLAN-2026-10-16`（全量 104 项研发任务 SSOT 闭环：22 项核心主任务 + 82 项高标准工程子任务）。
+> **技术大典**：详见 [docs/FIVE_AGENTS_FULL_SPECTRUM_ANALYSIS.md](file:///home/yupeng/zcodecli/docs/FIVE_AGENTS_FULL_SPECTRUM_ANALYSIS.md)（五大标杆 165 个子包、25,150 个代码文件 100% 全覆盖组件逻辑大典与速查字典，后续开发严禁重复扫描源码）。  
+> **Logbook 知识底账**：`project: "bi"`，研发批次：`BI-DEVPLAN-2026-10-16`（全量 104 项研发任务 SSOT 闭环：22 项核心主任务 + 82 项高标准工程子任务，Logbook 调研记录 Research #25 ~ #31）。
 
 ---
 
