@@ -1139,6 +1139,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 ```
 [Phase 1] 白盒内核、沙箱、会话持久化与官方双轨认证 (Days 1~3)
   ├── 初始化 packages/core，编写纯白盒 Agent Loop 与 Path Jail 沙箱
+  ├── 落地 BI-01.1 三级 TOML 配置系统、多源优先级合并与动态热重载引擎 (configService & smol-toml)
   ├── 实现智谱 BigModel 双轨特权认证 (OAuth 免密 + API Key 二阶段 PAT 换票与 Ultra 专线重定向)
   ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
   ├── 落地 BI-02.2 Coding Plan 额度实时监测与余额告警看门狗 (quota-watchdog)
@@ -1148,11 +1149,13 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 接入 GLM、DeepSeek 等统一 SSE 流式驱动与单模型插槽路由 (Model Slot Router)
   ├── 落地 BI-04.2 DeepSeek-V3/R1 官方原生适配器、思考流解析与 v41 视觉 Token 几何网格算法
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
+  ├── 落地 BI-05.2 项目技术栈自主探测与 BI.md 规则自省生成器 (sessionInitService)
   ├── 实现基于 Linux PGID 进程组看门狗的受控 Bash 执行器 (杜绝孤儿进程)
   ├── 落地多工具调用并行并发流水线 (Promise.allSettled)
   ├── 落地 BI-07.3 本地 Sub-agent 视窗沙箱与 Fork Subagent 字节级 Prompt Cache 继承
   ├── 落地 BI-07.4 双向信令协调 (SendMessage/RespondToCoordinator) 与只镜不落库 Mirror Sink
   ├── 落地 BI-07.5 重复工具调用卫生守卫与自主目标自动续行引擎 (Repeat Tool Reminder & Goal Driver)
+  ├── 落地 BI-07.8 并行子智能体蜂群并发调度器与模板扇出执行引擎 (AgentSwarm)
   └── 接入二段式优雅抢占与取消状态机 (Ctrl+C / Esc 保留上下文即时纠偏)
 
 [Phase 2] Git Worktree 并发隔离、三层上下文与完整 MCP 引擎 (Days 4~5)
@@ -1192,3 +1195,39 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 挂载 DAG 工作流看板、A2A 看板与思考流折叠视图
   └── 端到端宏观政策与数据审计实战演练验收，发布 bpfio/bi v1.0
 ```
+
+---
+
+## 十六、 Kimi Code 三级 TOML 配置体系、蜂群调度与工程自省深度调研
+
+### 1. 三级 TOML 配置拓扑与优先级裁决引擎
+
+为彻底解决生产环境下多项目、多环境、多模型配置混乱问题，吸收 Kimi Code 工业级三级 TOML 拓扑结构：
+1. **全局运行配置 (`~/.bi/config.toml` 或 `$BI_CODE_HOME/config.toml`)**：定义全局 LLM 提供商、模型参数重写（Overrides）、默认工具白名单、权限策略与外部生命周期钩子（Hooks）；
+2. **终端外观首选项 (`~/.bi/tui.toml`)**：定义主题颜色、CJK 字符宽度补丁、终端蜂鸣、行号渲染与通知看门狗；
+3. **工作区私有覆盖 (`.bi/local.toml`)**：定义当前仓库专属的 `additional_dir` 挂载路径、工作区私有模型覆盖，且被 Git 严格忽略，杜绝团队协作时本地配置外泄；
+4. **多源优先级裁决阶梯**：
+   `CLI 启动参数 (Flags)` > `环境变量 ($BI_*)` > `工作区私有配置 (.bi/local.toml)` > `全局用户配置 (~/.bi/config.toml / tui.toml)` > `内置基线默认值 (Built-in Defaults)`。
+
+### 2. 语法树级注释保留原子回写与结构化密钥脱敏
+
+在配置写入与持久化过程中，兼顾人性化体验与绝对安全性：
+- **注释保留原子回写 (Preserving Comments via smol-toml)**：当用户通过终端交互菜单或大模型自愈微调配置项时，采用 AST 语法树级差异算法（`planConfigWriteback`），精确更新键值对，100% 保留用户手写的注释、空行与格式排版；
+- **结构化敏感词脱敏 (Structural Secret Redaction via redactSecrets)**：吸收 DeepSeek Harness 官方算法，对标记 `role('secret')` 属性的凭据（如 API Key、PAT 令牌、私有通道密钥）进行结构化剥离，在 TUI 交互面板、多进程 IPC、A2A 信令传输与日志落盘前统一遮蔽（例如替换为 `[REDACTED]`），同时支持 `api_key_env` 环境变量间接引用，杜绝明文密钥落盘。
+
+### 3. TUI 交互式配置面板与免重启动态热重载
+
+- **终端交互式面板 (`/config`)**：在 TUI 终端中弹出全屏/模态设置面板，支持方向键快速切换模型、调优推理强度（`off/low/high/max`）、配置工具白名单与编辑外观主题；
+- **免重启动态热重载 (`/reload` 与 `/reload-tui`)**：当外部直接修改 TOML 文件后，无需中断长程会话或终止后台子任务，通过命令即时触发配置重载与参数热插拔，0 掉线生效。
+
+### 4. 并行子智能体蜂群并发调度器 (AgentSwarm)
+
+面对海量文件并行审计、多来源政策并行比对场景，单智能体串行执行吞吐量低：
+- **Prompt 模板与条目扇出**：模型调用 `AgentSwarm({ tasks: [...], prompt_template: "...", max_concurrency: 5 })`，系统自动以当前条目填入占位符，原子派生 N 个轻量子智能体并行奔跑；
+- **并发池与熔断控频**：通过 XState 驱动的限流队列，将瞬时并发限制在物理安全槽位内，防止打爆系统内存或触发 LLM API 速率限制；
+- **泳道级看板与聚合**：子任务事件实时投影至 `AgentSwarmProgress` TUI 动态泳道，长任务可随手暂停/恢复，终态结果聚合回传主会话。
+
+### 5. 项目工程自省与规则生成器 (`bi init` / `/init`)
+
+- **自主探测与模式识别**：提供 `bi init` 子命令与 `/init` 交互指令，派生只读探测子智能体全面递归解析工程根目录的构建工具链（`package.json`、`Cargo.toml`、`pyproject.toml`、`go.mod`、`Makefile` 等）；
+- **自适应规则起草**：自动提炼代码风格、包管理器指令、单测运行规程与核心架构路径，结合交互预览与人类确认，一键生成高质量初始 `BI.md` 项目长期记忆文件。
