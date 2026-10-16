@@ -150,7 +150,7 @@
   - `usageStatsService.ts`：后台低频探查与本地缓存账户余额、剩余调用次数与限频水位，平滑计算当前使用速率与预警阈值。
 - **对 `bi` 价值**：直接作为 `BI-02.2` 的底层实现，在终端 HUD 实时显性预警（如额度低于 10% 亮黄告警），避免任务中途意外断粮。
 
-### 3. 清华系月之暗面 Kimi Code 官方源码十大黄金模块与工业级算法图谱
+### 3. 清华系月之暗面 Kimi Code 官方源码十八大黄金模块与工业级算法图谱
 
 月之暗面（Moonshot AI）技术团队同源于清华大学计算机系与交叉信息研究院。其最新开源的 `MoonshotAI/kimi-code`（位于本地只读参考库 `/home/yupeng/references/kimi-code`）代表了纯 TypeScript 技术栈下 Agent CLI 极简解耦架构的最高工程水平。系统深入审查后，提炼出其 **十大独特黄金资产与底层算法**，与 ZCode 形成强力互补：
 
@@ -259,6 +259,49 @@
   - 维护会话级待办状态机（`pending`、`in_progress`、`completed` 三态，单向流转并防回退）；
   - 通过 `todoListReminder` 在每次模型推理前（`beforeStep`）动态提取未完成待办，以轻量化结构主动注入 Context 尾部（In-History 友好排布，不破坏头部 Prompt Cache），强行校准模型注意力。
 - **对 `bi` 价值**：直接作为 `BI-14.3`，与 ZCode 的完工自验看门狗（BI-21.1）及 DeepSeek 的 Goal 自动续行（BI-07.5）形成合力，彻底消灭长程任务中的步骤跳跃与目标漂移。
+
+#### (14) 外部生命周期钩子系统 (`packages/agent-core-v2/src/features/externalHooks/` 32KB)
+- **核心痛点**：企业合规审计、前置代码扫描或外部 CI 联动往往需要在 Agent 执行特定工具、开始会话或发起审批时插入定制逻辑。缺乏外部钩子时，开发者只能通过魔改源码或全局代理进行硬拦截。
+- **Kimi 架构**：
+  - 月之暗面在 `features/externalHooks/` 中建立了完备的生命周期钩子总线；
+  - 支持在 `config.toml` 中声明 `[[hooks]]`，内置 20 种关键生命周期事件（`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`PermissionResult`、`UserPromptSubmit`、`TurnStarted`、`SessionStart`、`SessionEnd`、`PreCompact`、`PostCompact` 等）；
+  - 钩子执行外部 Shell 命令，接收 JSON 格式的执行上下文，并支持基于 `{ action: 'allow' | 'block', reason: '...' }` 进行原子化操作阻断。
+- **对 `bi` 价值**：直接作为 `BI-06.4`，使 `bi` 原生具备企业级安全阻断与外部自动化脚本插拔能力。
+
+#### (15) 会话内 Cron 定时调度服务 (`packages/agent-core-v2/src/features/cron/` 60KB)
+- **核心痛点**：长程自动化运维与监控中，开发者常需要 Agent 每隔一段时间（如每 5 分钟）轮询 CI 状态、拉取部署指标或检查服务器健康，传统 CLI Agent 只能依赖阻塞式 sleep 或外部手动轮询。
+- **Kimi 架构**：
+  - 月之暗面在 `features/cron/` 中基于 XState 状态机实现了活跃会话内的定时器引擎（`cronService.ts` 593行）；
+  - 向大模型暴露 `CronCreate`、`CronList`、`CronDelete` 3 大工具；
+  - 支持标准 5 字段 Cron 表达式与毫秒级间隔定时器，内置随机抖动（Jitter）防瞬时惊群，支持事件溯源与会话 Fork 继承。
+- **对 `bi` 价值**：直接作为 `BI-07.7`，与夜间错峰调度（BI-02.3）互补，赋予 `bi` 活跃会话内自主挂载定时探针的能力。
+
+#### (16) Tower 多 Agent 工作区协同协议与合并门禁 (`packages/agent-core-v2/src/features/tower/` 116KB)
+- **核心痛点**：单 Agent 串行处理大型多模块项目时效率低下；而盲目并发修改又会导致文件读写冲突与代码损坏。
+- **Kimi 架构**：
+  - 月之暗面在 `features/tower/` 中自研了 Tower 多 Agent 协同系统（`towerService.ts` 36.7KB、`bashGuard.ts` 16.7KB）；
+  - 提供 13 个 `Tower*` 专用工具（`TowerInit`, `TowerPlan`, `TowerSpawn`, `TowerMerge`, `TowerRebase`, `TowerReview`, `TowerFinding`, `TowerMission`, `TowerInbox`, `TowerStatus` 等）；
+  - 基于 Git Worktree 在物理隔离分支上协同派生 Worker 与 Reviewer，通过 `.tower/comms/` 专用信令通道交互，并实行严密的 Merge Gate 审查合并门禁。
+- **对 `bi` 价值**：直接作为 `BI-12.2`，为 `bi` 提供了基于 Git Worktree 的大型多模块分布式并行施工底座。
+
+#### (17) 系统桌面级原生通知与长任务催促看门狗 (`packages/agent-core-v2/src/features/notify/`)
+- **核心痛点**：耗时 5~15 分钟的超长程宏观分析或全量编译时，开发者不可能全程死守终端；当 Agent 中途需要人类用户确认审批时，若无主动提醒，会话容易长时间卡死在等待状态。
+- **Kimi 架构**：
+  - 月之暗面在 `features/notify/` 中提供了 `notifyUserNudgeService.ts` 与 `notify-user` 工具；
+  - 当长耗时后台任务执行完成、或 Agent 等待人类审批超过预设阈值时，自动调用操作系统原生通道（Linux `notify-send` / macOS AppleScript / Windows PowerShell）弹出系统通知，并发出终端蜂鸣 `\a`。
+- **对 `bi` 价值**：直接作为 `BI-19.3`，彻底解放开发者守候终端的心理焦虑，实现真正的非阻塞异步交付。
+
+#### (18) 工业级完整 CLI 辅助生态子命令群与参数矩阵 (`apps/kimi-code/src/cli/`)
+- **核心痛点**：仅有单入口交互式命令往往难以满足 CI/CD 自动化流水线、团队研报导出分享、备选路径分叉探索及多工作区协同等复合场景。
+- **Kimi 架构**：
+  - 在 `apps/kimi-code/src/cli/sub/` 中提供了一整套成熟的辅助子命令群：
+    - `export`：将会话上下文与多轮对话一键导出为独立排版的 Markdown、HTML 报告或分享归档；
+    - `fork`：在 CLI 命令行直接针对历史会话任意轮次进行分叉克隆；
+    - `session`：提供 `list`、`show`、`prune` 等终端会话快速管理能力；
+    - `vis`：启动本地 Web 服务，在浏览器中直观复盘审查会话 DAG 与 Diff；
+  - 在 `commands.ts` 中提供了完备的 CLI 启动参数矩阵：`--agent-file <path>`（支持单 Markdown 文件直接加载自定义 Agent）、`--add-dir <dir>`（多根工作区挂载）与 `--prompt <p> --output-format stream-json`（流水线无头非交互直出）。
+- **对 `bi` 价值**：直接作为 `BI-20.2`，一举补齐 `bi` 从“极客交互终端”走向“工业级通用命令行工具集”的最后一块拼图。
+
 
 ### 4. ZCode 全量工程底座（桌面宿主、CUA 视觉反爬与视觉裁判）资产解包深度发现
 
