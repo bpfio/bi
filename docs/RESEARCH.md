@@ -317,7 +317,84 @@ raw MCP Client Engine
 
 ---
 
-## 八、 核心设计原则 (Design Principles)
+## 八、 智谱 BigModel / GLM 官方在线 OAuth 免密认证体系
+
+用户无需手动去开放平台申请、充值并复制繁琐的 API Key。`raw` 原生内置官方同款的 **OAuth 2.0 PKCE / Poll 授权通道**（位于 `packages/core/src/auth/`），与智谱 BigModel Coding Plan 高速通道 100% 体验对齐。
+
+```
+用户终端 (raw login)               浏览器端 (智谱开放平台)           官方 OAuth 授权服务
+      │                                    │                                 │
+      ├────── 1. 生成 32 字节 PollToken ───┼────────────────────────────────►│ POST /oauth/cli/init
+      │                                    │                                 │
+      │◄───── 2. 返回 authorize_url 与 flow_id ──────────────────────────────┤
+      │
+      ├────── 3. 自动拉起浏览器打开授权页 ─►│
+      │                                    │
+      │                                    │ (用户在浏览器扫码/点击确认)
+      │                                    │
+      ├────── 4. 终端后台安静轮询 (Poll) ──┼────────────────────────────────►│ GET /oauth/cli/poll/{flow_id}
+      │          (每隔 1.5s 发送一次)      │                                 │
+      │                                    │                                 │ (返回 status: "ready" + Token)
+      │◄───── 5. 换取 accessToken、refreshToken 与短期 Project Token ────────┤
+      │
+      └────── 6. 安全存入 ~/.raw/credentials.json (加密保护，零明文暴露)
+```
+
+1. **零配置秒级登录**：
+   - 终端输入 `raw login`（或 `raw login bigmodel`），系统自动调用默认浏览器唤醒智谱官方授权页；
+   - 用户确认后，终端后台静默捕获授权结果，直接将短期项目令牌（Project Access Token）写入本地凭据库；
+   - 后续所有模型调用均可满速直连 GLM-5.3、GLM-4 等模型服务与 Coding Plan 专属通道。
+2. **远程与无图形环境保底**：
+   - 在纯终端/服务器无 GUI 环境下，系统自动打印高亮授权链接与扫码指引；
+   - 同时支持传统的 `BIGMODEL_API_KEY` 环境变量与 `raw login --api-key`，满足全自动化 CI/CD 与离线演练需求。
+
+---
+
+## 九、 ZCode 官方桌面版插件体系与 Marketplace 兼容架构
+
+`raw` 坚决摒弃民间 `zcode-app-cli` 的脆弱 AST 补丁与混淆黑盒，**100% 规范兼容官方开源版（`zai-org/ZCode`）桌面端与 CLI 的插件标准**。该标准本质是对 Claude 开放插件协议（`.claude-plugin`）的超集扩展（`.zcode-plugin`），属于纯声明式资产体系。
+
+```text
+my-plugin/
+├── .zcode-plugin/
+│   └── plugin.json          # 插件元数据契约 (双向兼容 .claude-plugin/plugin.json)
+├── skills/                  # 专业技能集 (包含 SKILL.md 与领域 SOP 模板)
+│   └── xlsx/SKILL.md
+├── agents/                  # 特化子智能体定义 (Markdown + YAML Frontmatter)
+│   └── visual-judge.md
+├── hooks/
+│   └── hooks.json           # 生命周期钩子 (SessionStart / PreTool / PostTool)
+├── mcpServers/
+│   └── .mcp.json            # 插件自备的 MCP 工具拓扑配置
+└── templates/ & scripts/    # 执行分析所需的 Python / Node / Bash 脚本
+```
+
+1. **五大声明式能力单元**：
+   - **Skills 技能库**：通过 `SKILL.md` 动态向模型注入政策分析框架、长篇公报抽取规范与统计学计算指引；
+   - **Agents 特化智能体**：插件可自带专职子 Agent（如表格视觉审校员 `visual-judge.md`），独立声明提示词、工具权限与温度；
+   - **MCP Servers 挂载**：插件自带的本地/远程 MCP 服务随插件启用自动拉起，即插即用；
+   - **Hooks 生命周期拦截**：在会话初始化或工具调用前后介入执行环境探测；
+   - **Commands 斜杠指令**：扩展专属终端命令（如 `/xlsx`）。
+
+2. **官方高价值开源插件全量收割**：
+   - **`spreadsheets-plugin`**：全套金融、财税、宏观统计 Python 勾稽计算模板库（`palettes.py`、`finance.md`）与表格一致性校验；
+   - **`pdf-plugin` & `documents-plugin`**：专精部委公报双栏排版与长篇研报的版式解析、目录构建与关键段落抽取；
+   - **`presentations-plugin` & `visualize-plugin`**：研报图表可视化与自动化 PPT 幻灯片生成；
+   - **`browser-use-plugin`**：无头浏览器复杂交互与政务动态数据爬取。
+
+3. **三大降维增强（解决原版插件痛点）**：
+   - **Git Worktree 隔离运行**：插件 Python 脚本运行全部分流至 `~/.raw/worktrees/<task-id>` 独立沙箱，杜绝生成临时垃圾文件污染用户当前工作区；
+   - **DeepSeek-R1 双擎对抗审校**：插件生成的报表与提取的数据，必须经由 Critic 角色根据证据一致性规则严查勾稽关系，根除指标幻觉；
+   - **生态双通**：同时识别 `.zcode-plugin` 与 `.claude-plugin`，一键通吃两大开源社区插件生态。
+
+4. **Marketplace 市场分发机制**：
+   - 支持解析 `marketplace.json` 目录索引；
+   - 支持通过 Git URL 或本地目录安装：`raw plugins install <source>`；
+   - 支持 `user`（全局）与 `project`（项目）双重作用域。
+
+---
+
+## 十、 核心设计原则 (Design Principles)
 
 1. **状态所有权单一（Single State Owner）**：运行时为唯一单一事实源，TUI 为无状态投影；
 2. **原子工具极简化（Minimalist Primitives）**：收敛于 4 大原子工具（`read`, `write`, `edit`, `bash`）+ 轻量 `fetch`；
@@ -326,7 +403,7 @@ raw MCP Client Engine
 
 ---
 
-## 九、 如何防止幻觉？（防幻觉工程体系）
+## 十一、 如何防止幻觉？（防幻觉工程体系）
 
 1. **信息流完整性与有界截断（Bounded IO）**：工具输出超 64KB 时保留首尾结构，绝不断开 JSON 闭合；
 2. **真实退出码与错误反馈（Error as Feedback）**：执行出错必须返回真实 Stderr 包装为 `isError: true` 迫使模型自愈；
@@ -336,7 +413,7 @@ raw MCP Client Engine
 
 ---
 
-## 十、 如何提高执行效率与吞吐？（极速调优方案）
+## 十二、 如何提高执行效率与吞吐？（极速调优方案）
 
 1. **KV Cache 前缀锁定**：固定 System Prompt 与 Tool Schemas 前缀，确保服务端 Cache 命中率维持在 80%+，首字延迟压制在 300ms 以内；
 2. **GLM + DeepSeek 快慢双擎流水线**：GLM 负责高通量抓取清洗，DeepSeek 负责深度因果推理；
@@ -344,16 +421,20 @@ raw MCP Client Engine
 
 ---
 
-## 十一、 细颗粒度工程落地方案（六大核心包设计）
+## 十三、 细颗粒度工程落地方案（六大核心包设计）
 
 项目采用现代化 TypeScript + Bun Monorepo 架构（收敛至 `packages/`）：
 
 ```text
 packages/
-├── core/                  # 状态机内核、沙箱、会话引擎与模型路由 (基于 pi-agent-core)
+├── core/                  # 状态机内核、沙箱、会话引擎、模型路由与 OAuth 认证
 │   ├── src/
 │   │   ├── agent.ts       # 核心循环状态机 (Planning -> Tool -> Reflection)
 │   │   ├── model-router.ts# 逻辑模型插槽路由器 (Slot -> Provider/Model)
+│   │   ├── auth/          # 智谱 BigModel 官方 OAuth 2.0 PKCE / Poll 授权通道
+│   │   │   ├── cli-oauth.ts      # 官方 OAuth init 与 poll 状态机
+│   │   │   ├── credentials.ts    # 本地凭据安全存储与项目令牌刷新
+│   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与兜底处理
 │   │   ├── history.ts     # 消息历史管理与 CoT 思考流自动切除
 │   │   ├── session.ts     # JSONL Append-only 树状会话引擎 (DAG Fork & Rewind)
 │   │   ├── compaction.ts  # 两级长会话无损紧缩与记忆蒸馏
@@ -397,11 +478,15 @@ packages/
 │   │   ├── subagent-view.ts# A2A 多子智能体并行执行看板
 │   │   └── session-picker.ts# 历史会话毫秒级交互式切换器
 │
-└── plugins/               # 政策与数据专业分析插件 (基于 ZCode plugins)
+└── plugins/               # 官方桌面版插件兼容体系与扩展中枢
     ├── src/
-    │   ├── spreadsheets.ts# CSV / Excel 结构化表格勾稽计算探针
-    │   ├── pdf-extractor.ts# 长篇政策文件与研报章节提取
-    │   └── audit-rules.ts # 证据一致性与数据矛盾自检规则
+    │   ├── manager.ts     # 插件安装、卸载、启用、禁用与更新
+    │   ├── loader.ts      # 解析 plugin.json、挂载 skills/agents/mcp/hooks
+    │   ├── marketplace.ts # marketplace.json 解析与 Git 仓库拉取
+    │   └── runner.ts      # 插件 Python/Node 隔离运行看门狗 (结合 Worktree)
+    └── presets/           # CLI 开箱即用内置的官方精选插件
+        ├── spreadsheets/  # 官方 XLSX 专业勾稽计算与模板库
+        └── pdf-extractor/ # 官方长篇政策 PDF 结构化抽取核心
 
 presets/                   # 开箱即用声明式资产 (数据/配置层，零代码入侵)
 ├── agents/                # 预置角色模版 (YAML 声明式定义)
@@ -416,29 +501,30 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 ---
 
-## 十二、 raw 项目演进里程碑 (Milestones)
+## 十四、 raw 项目演进里程碑 (Milestones)
 
 ```
-[Phase 1] 白盒内核、沙箱与会话持久化 (Days 1~3)
-  ├── 初始化 packages/core，编写纯白盒 Agent Loop
-  ├── 落地 Append-only JSONL 会话引擎 (支持断点恢复与 DAG 分支)
-  ├── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动
-  └── 落地带 Path Jail 的 4 大原子工具 (read/write/edit/bash)
+[Phase 1] 白盒内核、沙箱、会话持久化与官方 OAuth 认证 (Days 1~3)
+  ├── 初始化 packages/core，编写纯白盒 Agent Loop 与 Path Jail 沙箱
+  ├── 实现智谱 BigModel 官方浏览器 OAuth 2.0 PKCE / Poll 在线登录与凭据存储
+  ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
+  └── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动与模型插槽路由 (Model Slot Router)
 
-[Phase 2] Git Worktree 隔离与完整 MCP 引擎 (Days 4~5)
-  ├── 实现 packages/worktree，落地子智能体工作区物理隔离
+[Phase 2] Git Worktree 并发隔离与完整 MCP 引擎 (Days 4~5)
+  ├── 实现 packages/worktree，落地子智能体工作区物理隔离与自动擦除
   ├── 实现 packages/mcp，支持 Stdio 与 SSE 双通道 (实测接驳 Logbook)
   └── 验证工作区零污染与外部工具动态注册
 
 [Phase 3] A2A 协议、红蓝对抗与 DAG 工作流编排 (Days 6~8)
-  ├── 落地 packages/workflow 声明式 DAG 步骤调度与 Checkpoint 检查点
-  ├── 落地 packages/a2a 协调器、事实黑板与红蓝对抗审查委员会
+  ├── 落地 packages/workflow 声明式 DAG 步骤调度与 Checkpoint 检查点自愈
+  ├── 落地 packages/a2a 通用容器、事实黑板与红蓝对抗审查协议 (DebateProtocol)
   └── 跑通“主协调官(R1) -> 探针(GLM) -> 精算师(V3) -> 审校员(R1)审查放行”闭环
 
-[Phase 4] 专业研报/数据插件与防幻觉门禁 (Days 9~10)
-  ├── 移植表格计算与 PDF 结构化分析核心
-  ├── 落实多轮思考流剥离 (CoT Stripping) 与 KV Cache 优化
-  └── 接入数据一致性自检门禁
+[Phase 4] 官方插件体系吸收与防幻觉强化 (Days 9~10)
+  ├── 落地 packages/plugins 官方插件双协议加载器 (.zcode-plugin & .claude-plugin)
+  ├── 全量移植官方 spreadsheets-plugin 与 pdf-plugin 核心库
+  ├── 挂接 Git Worktree 隔离运行沙箱与 DeepSeek-R1 逆向勾稽审校
+  └── 落实多轮思考流剥离 (CoT Stripping) 与 KV Cache 锁定调优
 
 [Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
   ├── 接入 @earendil-works/pi-tui 差分渲染界面
