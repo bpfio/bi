@@ -40,22 +40,27 @@
 
 ## 三、 多 Agent 协同机制与 A2A 协议规范
 
-在数据分析与政策研判场景中，`raw` 采用**层次化多智能体协调体系（Coordinator-Worker）**，并引入**红蓝对抗审校委员会机制（Adversarial Debate）**。
+在架构设计上，`raw` 坚决杜绝“把角色、提示词或物理模型写死在 TypeScript 源码中”的低级硬编码反模式。系统严格贯彻**三权分立的解耦架构**：
+1. **引擎运行时（Engine Runtime - `packages/a2a` & `packages/core`）**：100% 领域中立、角色中立、模型中立，仅提供通用的智能体生命周期容器、消息路由、辩论协议原语与事实黑板；
+2. **声明式角色资产（Declarative Persona Assets - `presets/agents/`）**：完全由 YAML / Markdown 声明定义，支持三级覆盖与运行时动态生成；
+3. **逻辑模型插槽路由（Model Slot Router - `packages/core/src/model-router.ts`）**：角色仅绑定逻辑语义插槽（如 `reasoner`, `fast`, `auditor`），物理厂商与模型 ID 由用户配置动态解析，支持零代码热切换。
 
-### 1. 跨智能体角色拓扑与红蓝对抗
+### 1. 跨智能体角色拓扑与红蓝对抗 (预置资产参考流)
+
+下图展示系统内置的政策研判预置流水线（由声明式配置装配，非硬编码逻辑）：
 
 ```
                     ┌──────────────────────────────────────────────┐
-                    │      主协调官 (The Architect / Coordinator)   │
-                    │         (搭载 DeepSeek-R1，全局战略推演)       │
+                    │  主协调官预设 (The Architect / Coordinator)   │
+                    │         (绑定 slot: reasoner，全局战略推演)   │
                     └───────┬──────────────┬──────────────┬────────┘
                             │              │              │
            ┌────────────────┘              │              └────────────────┐
            ▼                               ▼                               ▼
 ┌──────────────────────┐      ┌──────────────────────┐      ┌──────────────────────┐
-│  政策探针子智能体     │      │   数据精算子智能体   │      │   红队审校子智能体   │
-│  (The Scout Subagent)│      │  (The Auditor Sub)   │      │  (The Critic Sub)    │
-│ (搭载 GLM-5.3 Flash) │      │  (搭载 DeepSeek-V3)  │      │ (搭载 DeepSeek-R1)   │
+│  政策探针预设         │      │   数据精算预设       │      │   红队挑刺预设       │
+│  (The Scout Persona) │      │  (The Auditor Persona│      │  (The Critic Persona)│
+│  (绑定 slot: fast)   │      │  (绑定 slot: auditor)│      │ (绑定 slot: reasoner)│
 │ - 爬取部委公告与公报 │      │ - 执行 CSV/表格运算  │      │ - 交叉检验良率与产能 │
 │ - 提取关键条文摘要   │      │ - 校验勾稽计算与偏差 │      │ - 严厉审查逻辑矛盾   │
 └──────────┬───────────┘      └──────────┬───────────┘      └──────────┬───────────┘
@@ -68,14 +73,69 @@
                     └──────────────────────────────────────────────┘
 ```
 
-* **红蓝对抗审校闭环（Debate Loop）**：
-  - 生成者（Scout/Auditor）形成研判初稿；
-  - 审校员（Critic）根据“证据一致性铁律”强行审查，一旦发现“有良率数据却推导无产能”、“引用文件与结论不符”，直接驳回初稿并附带批判证据；
-  - 必须由 Critic 签署放行（Sign-off），成果方可合入最终研报。
-* **共享事实黑板模式（Blackboard Pattern）**：
-  - 子智能体将各自核验无误的关键事实发布至共享黑板，其他智能体即时可见，杜绝重复计算。
+* **红蓝对抗审校闭环（Debate Loop 原语）**：
+  - 引擎提供通用的 `DebateProtocol` 状态机（Proposer 提案者 vs Challenger 质疑者 vs Arbiter 仲裁者）；
+  - 在政策研判流水线中，Scout/Auditor 产出初稿后，由 Critic 依据“证据一致性铁律”强行审查，一旦发现“有良率数据却推导无产能”、“引用文件与结论不符”，直接触发 `debate_challenge` 驳回初稿并附带反向证据；
+  - 必须由 Critic 签署放行（`debate_accept`），成果方可合入最终研报。
+* **共享事实黑板模式（Blackboard Pattern 原语）**：
+  - 子智能体将各自核验无误的关键事实发布至共享黑板，其他智能体即时可见，杜绝重复计算与信息孤岛。
 
-### 2. A2A 消息封套契约 (Message Envelope Specification)
+### 2. 声明式角色资产规范 (Declarative Persona Specification)
+
+所有 Agent 角色均采用结构化声明文件定义，绝无一行 TypeScript 代码硬编码角色逻辑。
+
+#### (1) 三级覆盖发现机制 (Priority Discovery)
+1. **引擎内置预设**：`presets/agents/*.yaml`（开箱即用的政策、审计与代码分析角色）；
+2. **全局用户配置**：`~/.raw/agents/*.yaml`（用户跨项目复用的个性化自定义角色）；
+3. **项目工作区配置**：`.raw/agents/*.yaml`（针对当前工程特化的专职角色，优先级最高）；
+4. **运行时即时定义（Ephemeral Ad-hoc Subagent）**：主协调官或用户可在交互中通过 A2A 协议动态生成临时子角色。
+
+#### (2) 角色定义 Schema 示例 (`presets/agents/scout.yaml`)
+```yaml
+schema_version: "raw/v1"
+name: scout
+title: 政策与信息搜集探针
+description: 高频、敏捷的信息捕获探针，专精于公开公报抓取与条文结构化提取
+slot: fast                               # 绑定逻辑模型插槽，不锁死物理厂商
+temperature: 0.2
+max_steps: 20
+worktree: branch                         # 隔离模式: branch (开辟独立工作区) | inherit | share
+permissions:
+  tools:
+    allow: ["read", "fetch", "mcp:logbook/*"]
+    deny: ["bash", "write"]              # 探针仅有只读权限，杜绝篡改环境
+system_prompt: |
+  你是一个专精于事实检索与长文本抽取的高频信息搜集探针。
+  你的核心职责是从官方公报、部委通知与公开报告中精准抽取事实。
+  你必须坚守客观中立立场，严禁主观脑补，逐字提取核心条文与发布时间。
+```
+
+### 3. 模型插槽与提供商解耦路由 (Model Slot & Provider Decoupling)
+
+角色与物理模型彻底脱钩。角色仅声明所需的能力特征（Model Slot），具体物理模型由统一的 Model Router 进行解析：
+
+```
+角色声明 (slot: "reasoner")
+       │
+       ▼
+Model Slot Router (解析 ~/.raw/config.yaml 或环境变量)
+       │
+       ├─► 默认解析: deepseek / deepseek-reasoner (R1)
+       ├─► 生产可切: siliconflow / deepseek-ai/DeepSeek-R1
+       ├─► 备用可切: anthropic / claude-3-7-sonnet (Thinking)
+       └─► 私网可切: local / ollama/deepseek-r1-70b
+```
+
+* **统一插槽定义**：
+  - `reasoner`：长思维链推演与反向挑刺（默认 DeepSeek-R1）；
+  - `fast`：高吞吐量公报爬取与信息抽取（默认 GLM-5.3 / DeepSeek-V3）；
+  - `auditor`：严谨表格函数计算与统计检验（默认 DeepSeek-V3）；
+  - `general`：日常指令协调与交互总结。
+* **零侵入 CLI 动态覆写**：
+  - 命令行即时热插拔：`raw --slot reasoner=claude-3-7-sonnet --slot fast=qwen-2.5-coder`；
+  - 零代码重编，模型升级无缝透明。
+
+### 4. A2A 消息封套契约 (Message Envelope Specification)
 
 ```typescript
 export interface A2AMessageEnvelope<T = unknown> {
@@ -104,7 +164,7 @@ export type A2AMessageType =
   | "user_escalation";      // 向上升级至用户人工介入确认
 ```
 
-### 3. 子智能体上下文隔离沙箱 (Subagent Context Isolation)
+### 5. 子智能体上下文隔离沙箱 (Subagent Context Isolation)
 
 * **独立事件流**：每个 Subagent 在启动时被分配完全独立的内存会话，享有专属的工具执行栈与临时上下文，**绝不污染主协调官的消息树**；
 * **成果折叠收敛（Result Handoff）**：子智能体运行结束时，必须执行“蒸馏收敛”，仅将**最终结论、关键数据表格、引用的条文原话与可信度评分**打包进 `task_complete` 回传；
@@ -290,9 +350,10 @@ raw MCP Client Engine
 
 ```text
 packages/
-├── core/                  # 状态机内核、沙箱与会话引擎 (基于 pi-agent-core)
+├── core/                  # 状态机内核、沙箱、会话引擎与模型路由 (基于 pi-agent-core)
 │   ├── src/
 │   │   ├── agent.ts       # 核心循环状态机 (Planning -> Tool -> Reflection)
+│   │   ├── model-router.ts# 逻辑模型插槽路由器 (Slot -> Provider/Model)
 │   │   ├── history.ts     # 消息历史管理与 CoT 思考流自动切除
 │   │   ├── session.ts     # JSONL Append-only 树状会话引擎 (DAG Fork & Rewind)
 │   │   ├── compaction.ts  # 两级长会话无损紧缩与记忆蒸馏
@@ -319,13 +380,14 @@ packages/
 │   │   ├── sse.ts         # 远程 SSE/HTTP 连接器 (直连 QNAP Logbook)
 │   │   └── registry.ts    # 动态工具与资源聚合注册表
 │
-├── a2a/                   # A2A 跨智能体协议与红蓝对抗中枢 (基于 ZCode subagent)
+├── a2a/                   # 通用 A2A 跨智能体协议与运行时引擎 (零业务硬编码)
 │   ├── src/
-│   │   ├── coordinator.ts # 主协调官调度状态机 (搭载 R1)
-│   │   ├── subagent.ts    # 隔离子智能体运行沙箱 (搭载 GLM / V3)
-│   │   ├── debate.ts      # 红蓝对抗审校委员会 (Critic Verification)
-│   │   ├── blackboard.ts  # 共享事实黑板中枢
-│   │   └── envelope.ts    # 强类型消息封套与序列化
+│   │   ├── host.ts        # 通用智能体生命周期容器 (AgentHost)
+│   │   ├── registry.ts    # 声明式角色资产注册表 (三级覆盖加载器)
+│   │   ├── debate.ts      # 领域中立的辩论与裁决协议状态机 (DebateProtocol)
+│   │   ├── blackboard.ts  # 结构化共享事实黑板 (Blackboard)
+│   │   ├── router.ts      # 动态 A2A 消息路由器与生命周期总线
+│   │   └── envelope.ts    # A2A 强类型消息封套规范与序列化
 │
 ├── tui/                   # 终端交互层 (基于 @earendil-works/pi-tui)
 │   ├── src/
@@ -340,6 +402,16 @@ packages/
     │   ├── spreadsheets.ts# CSV / Excel 结构化表格勾稽计算探针
     │   ├── pdf-extractor.ts# 长篇政策文件与研报章节提取
     │   └── audit-rules.ts # 证据一致性与数据矛盾自检规则
+
+presets/                   # 开箱即用声明式资产 (数据/配置层，零代码入侵)
+├── agents/                # 预置角色模版 (YAML 声明式定义)
+│   ├── coordinator.yaml   # 主协调官预设 (slot: reasoner)
+│   ├── scout.yaml         # 敏捷信息探针预设 (slot: fast)
+│   ├── auditor.yaml       # 数据精算师预设 (slot: auditor)
+│   └── critic.yaml        # 红队挑刺官预设 (slot: reasoner)
+└── workflows/             # 预置工作流 DAG (声明式编排拓扑与对抗逻辑)
+    ├── policy-audit.yaml  # 政策调研红蓝对抗闭环流水线
+    └── data-check.yaml    # 数据勾稽与一致性验证流水线
 ```
 
 ---
