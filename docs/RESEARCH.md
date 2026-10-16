@@ -24,9 +24,9 @@
 
 ---
 
-## 二、 五大标杆方案与开源架构深度剖析
+## 二、 六大标杆方案与开源架构深度剖析
 
-本地已于 `~/references/` 建立了 4 大核心开源工程图纸库（`pi`、`zcode`、`deepcode`、`opencode`），经深度代码走读，提炼以下关键发现：
+本地已于 `~/references/` 建立了 5 大核心开源工程图纸库（`pi`、`zcode`、`kimi-code`、`deepcode`、`opencode` 与 `deepseek-harness`），经深度代码走读，提炼以下关键发现：
 
 | 标杆项目 | 核心模块与代码走读 | 核心优势（精髓借鉴） | 关键局限与对抗成本 |
 |---|---|---|---|
@@ -36,6 +36,7 @@
 | **DeepCode**<br>`lessweb/deepcode-cli` | • `packages/core/session.ts`: 会话状态机<br>• `packages/core/prompt.ts`: 提示词结构<br>• 支持 `thinkingEnabled` 与 `reasoningEffort` | • **原生适配 DeepSeek 系列**：深度适配 R1 思考流展示与参数调优<br>• 针对 DeepSeek 的 Prompt Cache 前缀优化与上下文压缩 | • 缺乏严格的沙箱隔离（Path Jail），代码中工具扩展体系较重 |
 | **OpenCode**<br>`anomalyco/opencode` | • `packages/ai/`: 75+ 多模型统一适配<br>• `packages/protocol/`: 跨进程/跨端协议契约<br>• `packages/tui/`: 多会话并行终端界面 | • **极度开放自由**：多模型即插即用，分发体验极佳（一键安装）<br>• 双 Agent 模式（Build vs Plan/Explore）架构清晰 | • 为兼容 75+ 模型导致提示词采用“最大公约数”，对具体模型的调优深度不足，幻觉率高于 ZCode |
 | **Kimi Code**<br>`MoonshotAI/kimi-code` | • `packages/tree-sitter-bash/`: 纯 TS Tree-sitter<br>• `packages/agent-core-v2/`: select_tools 动态按需加载、RWLock 调度、端侧媒体压缩<br>• `packages/remote-control/`: WSS 穿透中继控制通道<br>• `packages/minidb/`: 纯 TS LSM-Tree/WAL 数据库<br>• `packages/pi-tui/` & `packages/transcript/`: CJK 宽字符排版与同构 Transcript<br>• `packages/acp-server/`: Agent Client Protocol | • **清华系月之暗面现代重构标杆 (MIT)**：<br>• **100% 纯 TypeScript 零 Native C 依赖**：手写 Bash 语法树、纯 TS 嵌入式 LSM 数据库，Bun 单文件编译 0 崩溃；<br>• **Tool-on-Demand**：select_tools 动态激活工具，压降 80% Token；<br>• **细粒度 RWLock 调度**：多工具读并发、写互斥与全局屏障；<br>• **CJK 终端排版与同构 Transcript**：消除错位塌陷，历史与导出 100% 对齐；<br>• **多模态与客户端压缩**：终端图片就地无损压缩，保护视窗 | • 侧重通用软件工程编码，未内置宏观经济统计勾稽与部委政策长文档抽取的专业插件模板 |
+| **DeepSeek Harness**<br>`deepseek-ai/deepseek-harness` | • `packages/llm/llm-deepseek/`: 原生 Messages 与思考流<br>• `packages/ptc-runtime/`: 程序化工具调用 (PTC Mode)<br>• `packages/compaction/compaction-tool-result-pruner/`: 结果中间剪枝<br>• `packages/guard/repeat-tool-reminder/`: 重复调用卫生守卫<br>• `packages/goal/`: 会话持久目标与自动续行<br>• `benchmarks/`: 官方抗压评测套件 | • **深度求索官方基座标准 (MIT)**：<br>• **DeepSeek Wire 协议与思考流签名回放**：原生支持 thinking 块、signature_delta 无损持久化与 reasoning_content，推理强度四档可控；<br>• **官方 v41 视觉 Token 几何网格算法**：14px 补丁、3:1 降采样、1024 Token 上限确定性求解；<br>• **In-History 提示词与工具更新**：保留前缀缓存，Cache 命中率 85%+；<br>• **PTC 程序化工具调用**：生成 TS/Python 脚本单轮运行多工具，往返 Token 压降 80%；<br>• **流式 CPU 补丁**：消除每 chunk 重复 JSON.parse 的 O(N^2) 暴击 | • 采用 Cordis 微内核与复杂 Profile 依赖注入体系，外层框架偏重（对抗成本：坚决不吸收 Cordis，仅原子提取纯净算法与协议逻辑） |
 
 ### 2. 清华大学 ZCode 实验室官方源码十四大黄金模块与工业级算法图谱
 
@@ -297,6 +298,107 @@
    - 基于 Node.js/Bun 原生的 `node:vm` 模块与独立 Worker 线程，构建了带有上下文注入与 API 绑定的轻量级 JavaScript/TypeScript 执行环境；
    - 启动延迟 < 1ms，内存开销 < 5MB，完美胜任高频的轻量级数据清洗、JSON 模式转换与数学校验；
    - **对 `bi` 价值**：作为 `BI-16.1`，与基于系统的 Python 沙箱（`BI-16`，专司重量级 `pandas`/`openpyxl` 政策表格审计）形成黄金互补，兼顾轻量秒级转换与重度数据精算。
+
+### 6. 深度求索 DeepSeek 官方 Harness 原生全景剖析与可吸收技术资产清单
+
+深度求索官方开源的 `deepseek-ai/deepseek-harness`（本地检出于 `/home/yupeng/references/deepseek-harness`，16,225 个源文件全量就绪）是 DeepSeek 团队专为大模型智能体自主执行、代码生成与多轮工具调用量身定制的官方工程脚手架。
+
+#### (1) 框架定位与 Zero-Conflict（零冲突）吸收边界
+
+DeepSeek Harness 在系统顶层基于 Cordis 依赖注入与插件树框架构建，按 Profile（`web`、`headless`、`sdk`、`acp`）组织分发。
+- **Zero-Conflict 顶层约束**：`bi` 坚决**不吸收 Cordis 框架微内核**。Cordis 带有沉重的 IoC 依赖注入总线与隐式插件声明，与 `bi` 的 TypeScript + Bun 极简单体微内核、零黑盒、极致冷启动设计哲学存在不可调和的对抗成本；
+- **精准吸收策略**：`bi` **仅原子级提取其针对 DeepSeek 系列模型（V3、R1、V4）的核心通信协议、思考流解析、前缀缓存保持、视窗剪枝、PTC 程序化工具调用与官方抗压基准**，以纯净的函数式与服务类方式融入 `packages/core` 与 `packages/workflow`。
+
+#### (2) DeepSeek Harness 十大原子级核心技术资产全景清单
+
+##### 1. DeepSeek Messages 原生 Wire 协议与双模态适配器 (`packages/llm/llm-deepseek/`)
+- **核心痛点**：DeepSeek 官方服务端支持 Anthropic Messages 规范子集（兼容 `thinking` 块、`signature` 签名保留、`defer_loading`）以及 OpenAI Chat Completions 协议（`reasoning_content`）。普通开源 Agent 仅当成标准 OpenAI 接口调用，丢失思考流签名，导致多轮回放校验失败；
+- **官方实现**：
+  - 在 `src/wire-types.ts` 与 `src/serialize.ts` 中定义了完整的 DeepSeek Messages 协议：`WireBlock` 原生区分 `text`、`thinking`、`tool_use`、`tool_result`；
+  - 推理强度四档可控：`thinking: { type: 'enabled' | 'disabled' }`，`output_config: { effort: 'low' | 'high' | 'max' }`；
+  - 思考流与签名无损回放：在 `src/translate.ts` 中监听 `thinking_delta` 与 `signature_delta`，流终止时在 `ReplayEnvelope` 中封存由 DeepSeek 签发的密码学签名 `signature`。在后续轮次回放该 Assistant 消息时，将签名原样带回，保证服务端缓存与防篡改校验 100% 通过；
+  - 终态防御：流式解析识别 `EMPTY_RESPONSE`（空内容且 finish 为 stop），转化为可重试失败（`dsh-llm-retry`），杜绝静默假成功；统一捕获 `CONTEXT_WINDOW_EXCEEDED` 规范错误码。
+- **对 bi 的落地价值**：直接作为 `BI-04.2` 的核心通信层，使 `bi` 原生兼容 DeepSeek-V3 与 DeepSeek-R1 官方协议。
+
+##### 2. DeepSeek 官方 v41 视觉 Token 几何网格投影算法 (`src/image-tokens.ts`)
+- **核心痛点**：多模态研报图表、政策红头文件扫描件输入 DeepSeek 时，如果不按照官方视觉编码器的切片网格进行精确定价，会导致 Token 计数严重漂移，引发视窗意外撑爆或请求被拒；
+- **官方算法**：
+  - 严谨实现 DeepSeek 官方公布的 `v41` 视觉 Token 计算器：
+    - 图像分块与下采样常量：`PATCH_SIZE = 14` 像素，`DOWNSAMPLE_RATIO = 3`，最小像素底限 `MIN_PIXELS = 544 * 544`，单元格尺寸 `CELL_SIZE = 42` 像素，单图 Token 硬顶 `MAX_IMAGE_TOKENS = 1024`；
+    - 单元格与分块换算：`gridCells(paddedLength) = ceilDiv(intDiv(paddedLength, 14), 3)`；
+    - 网格 Token 计算公式：`gridTokens(H, W) = H * (W + 1) + 2`（每行附加一个分隔符，整图附加两枚取帧 Token）；
+    - 保宽高比网格求解器：`solveResizeRatio(height, width, budget)` 封闭求解，在 1024 Token 预算内求解最大几何网格，并通过 `resizeOnce` 循环迭代至不动点（Fixpoint）。
+- **对 bi 的落地价值**：融入 `BI-04.2` 与 `BI-08`，为带有政策图表、上市公司财报截图的会话提供 100% 与官方物理服务端对齐的 Token 预测与视窗预算。
+
+##### 3. Pi-AI 关键性能补丁：流式工具调用 O(N²) CPU 暴击消除 (`patches/@earendil-works__pi-ai@1.1.0.patch`)
+- **核心痛点**：上游 `@earendil-works/pi-ai` 与 `@mariozechner/pi-agent-core` 在流式接收长工具调用（如大段 Bash 脚本、复杂 JSON）时，每个 token delta 到达都会无谓执行一次 `parseStreamingJson(partialJson)`。对数千 Token 的工具参数，逐字符反序列化导致累积计算量高达 O(N²)，瞬间吃满单个 CPU 核心并导致 Node.js 事件循环完全卡死，终端 TUI 剧烈掉帧；
+- **官方补丁**：
+  - DeepSeek Harness 团队向 pi-ai 注入了经过严苛生产验证的底层补丁；
+  - 在 `anthropic-messages.js`、`openai-completions.js`、`openai-responses-shared.js`、`pi-messages.js` 等所有流解析器中，移除了增量 delta 阶段的 `parseStreamingJson`；
+  - 仅做字符串拼接 `block.partialJson += event.delta`，将反序列化推迟到 `toolcall_end` 块终止事件一次性完成；
+- **对 bi 的落地价值**：`bi` 的 TUI 底座基于 Pi-TUI 与 Pi-Agent 协议，直接合入该补丁可彻底根除长工具调用流式卡死隐患，确保 60FPS 极速响应。
+
+##### 4. In-History 系统提示词与工具增量更新协议 (`serialize.ts` & `agent-loop`)
+- **核心痛点**：传统 Agent 每当工作区指令、长期记忆或可用工具发生微调时，都粗暴地改写请求消息列表第 0 项的 `system` 消息。在支持前缀缓存（Prompt Cache）的服务端（如 DeepSeek-V3），这会导致从第 0 个 token 起的所有 KV Cache 彻底失效，使多轮会话的延迟暴增 3 至 5 倍，调用成本飙升；
+- **官方设计**：
+  - 模型声明能力 `systemPromptUpdate: 'in-history'` 与 `toolUpdate: 'addition-only'`；
+  - 系统提示词更新不再覆盖第 0 号节点，而是将非空的变更提示词作为 `role: 'system'` 节点追加在已缓存的用户轮次之后、下一轮 assistant 之前；
+  - 工具动态增删通过 `role: 'developer'` 消息中的 `tool_addition` 与 `tool_removal` 块表达，引用新请求头的声明；
+  - 保持已有历史字节级不变，使 DeepSeek 前缀缓存命中率稳定维持在 85% 以上。
+- **对 bi 的落地价值**：直接融入 `BI-04.1` 与 `BI-04.2`，实现长流程政策调研场景下最大化复用 DeepSeek KV Cache。
+
+##### 5. 超大工具结果中间剪枝算法 (`compaction-tool-result-pruner`)
+- **核心痛点**：工具输出往往呈现“头部是配置与启动信息，尾部是执行结果或退出码，中间是海量重复日志”的特征。若完整保留，迅速耗尽视窗；若直接全量丢弃，模型丢失关键退出状态；
+- **官方算法**：
+  - 在 `src/index.ts` 中实现纯确定性的中间剪枝器：
+    - 配置字符阈值：`thresholdChars = 8192`，头部保留 `headChars = 4096`，尾部保留 `tailChars = 1024`；
+    - 基于 Unicode 码点安全切片，杜绝切断 UTF-16 代理项对与 Emoji；
+    - 超限工具输出自动重构为：`[保留前 4096 字符] + "\n\n[... tool result middle pruned ...]\n\n" + [保留后 1024 字符]`；
+    - 原始完整结果完整写入 Append-only 磁盘会话日志，视窗内结果仅占用固定码点预算；
+  - 零 LLM 模型调用：纯数学字符串切片，耗时 < 0.1ms，在不消耗任何 Token 的前提下即时释放 60% 至 75% 的上下文压力。
+- **对 bi 的落地价值**：作为 `BI-08.1`，与 64KB 有界截断（BI-08）和 Microcompact 脱水（BI-09）形成纵深递进的工具输出防膨胀体系。
+
+##### 6. 大文本溢出转储与按需索引句柄 (`spill` + `spill-local`)
+- **核心机制**：
+  - 当工具输出或文件内容超过内联 Token 安全预算（`maxInlineTokens`）时，自动触发 Spill 溢出策略；
+  - `spill-local` 将完整正文写入本地 `.bi/spill/<session-id>/<spill-id>.txt`；
+  - 视窗中仅向模型返回结构化引用句柄（`SpillRef`），声明文件哈希、总行数、字节尺寸与安全提取指引；
+  - 模型在研判需要深入研读时，通过 `read_file(path, offset, limit)` 按需分块窥探。
+- **对 bi 的落地价值**：与 `BI-08.1` 配合，彻底封死单次海量输出（如几万行政策汇编全量导出）冲垮上下文窗口的任何可能性。
+
+##### 7. 重复工具调用卫生守卫与死循环防范 (`repeat-tool-reminder`)
+- **核心痛点**：大模型在受挫时容易陷入死循环——使用完全相同的参数反复调用同一工具（如反复 `grep` 同一个不存在的文件，或反复执行失败的命令）；
+- **官方算法**：
+  - 在 `tools/post-execute` 阶段挂载轻量卫士，为每个 Agent 维护 `WeakMap<Agent, Chain>`；
+  - 精确规范化匹配：参数通过深度键排序后 `JSON.stringify` 形成确定性签名；
+  - 阶梯式建议提醒：
+    - 连续重复达 3 次：向模型追加温和提醒，要求模型仔细审视上一次结果，换用不同参数或方法；
+    - 连续重复达 5 次与 8 次：注入详细告警，列出重复工具名称、重复次数与参数截断预览，建议终止无效尝试；
+  - 软引导而非硬拦截：不强行阻止调用，保持决策权在模型手中，新用户消息即刻重置计数器；排除 `todo_write` 等正当的幂等工具。
+- **对 bi 的落地价值**：作为 `BI-07.5`，使 `bi` 在执行无人类看管的长时间政策调研推演时具备极强的自省与跳出死循环能力。
+
+##### 8. 程序化工具调用模式 (PTC Mode / Programmatic Tool Calling - `ptc-runtime`)
+- **核心突破**：传统 Agent 调用工具走“单步 JSON 调用 → 服务端往返 → 中间结果污染上下文 → 下一步”的低效回路。DeepSeek Harness 创新性推出了 **PTC Mode**：
+  - 工具编译：自动将所有已挂载工具（如搜索、读文件、精算）的 JSON Schema 编译生成 TypeScript `.d.ts` / Python 类型声明文件，作为静态指导注入 System Prompt；
+  - 暴露保留通道：模型在提示词中仅看到保留工具 `run_code({ code, description })`；
+  - 代码化流水线：模型针对生成的 `tools.<name>(args)` 接口编写一段脚本，支持变量暂存、`for` 循环批量处理、`if` 条件分支判断以及 `Promise.all` 批量并发调用；
+  - 沙箱执行与结果精简：脚本在受控隔离沙箱中执行，中间数据全在内存中流转，仅将模型显式 `return` 或 `console.log` 的最终提纯结果返回给模型视窗；
+  - 收益：模型往返次数降低 80%，中间结果造成的 Token 浪费降低 85% 以上。
+- **对 bi 的落地价值**：作为 `BI-16.2`，与 Python 沙箱数据审计（BI-16）及 JS 内存秒算（BI-16.1）结合，形成“原生工具 + 内存秒算 + PTC 批量脚本”的三态工具执行体系。
+
+##### 9. 会话目标自驱与长流程自动续行引擎 (`goal` + `goal-round-driver`)
+- **核心机制**：
+  - 领域状态机：每会话持久化一个结构化完成目标，提供 `get_goal`、`create_goal`、`update_goal` 三大工具，支持目标创建、暂停、恢复、阻塞标记与最终达成；
+  - 自动续行驱动器（`goal-round-driver`）：当会话设置了活动目标且前序轮次尚未标记 `completed` 时，在无用户新输入的情况下，驱动器自动将进行中的工作转化为连续的执行轮次（Rounds），跨网络抖动与空闲等待无缝自愈推进。
+- **对 bi 的落地价值**：作为 `BI-07.5` 的长程任务引擎，与 `bi` 的 Workflow DAG 编排（BI-14）及任务完工自验看门狗（BI-21.1）无缝契合，提供单会话内完全自主推进到底的攻坚力。
+
+##### 10. Agent 基准评测体系与极限内存压测套件 (`benchmarks/`)
+- **核心价值**：DeepSeek 官方在 `benchmarks/` 中为 Agent 设计了工业级回归门禁套件：
+  - 长会话折叠测试（`conversation-fold`）：检验万级历史事件折叠成当前视窗时的 CPU 与内存消耗；
+  - 流式重连弹性测试（`active-stream-reconnect`）：模拟网络断流时 SSE 增量恢复与重放；
+  - 终端 IO 伸缩测试（`terminal-io`）：大密度字符输出时的无阻塞排队能力；
+  - 极限内存硬顶约束：在无 Swap 的 4GiB 与 8GiB cgroup 容器中对 Agent 全流程运行峰值 RSS 设硬顶门禁。
+- **对 bi 的落地价值**：为 `bi` 提供了可直接借鉴的端到端质量验收基准，确保在 2C2G / 4C8G 规格主机上稳定生产运行。
 
 ---
 
@@ -940,15 +1042,18 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 落地 BI-02.4 智谱与 ZCode 官方赠送 Token 申领与免费加速抽卡引擎 (Benefit & Highspeed Draw)
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
   ├── 接入 GLM、DeepSeek 等统一 SSE 流式驱动与单模型插槽路由 (Model Slot Router)
+  ├── 落地 BI-04.2 DeepSeek-V3/R1 官方原生适配器、思考流解析与 v41 视觉 Token 几何网格算法
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
   ├── 实现基于 Linux PGID 进程组看门狗的受控 Bash 执行器 (杜绝孤儿进程)
   ├── 落地多工具调用并行并发流水线 (Promise.allSettled)
   ├── 落地 BI-07.3 本地 Sub-agent 视窗沙箱与 Fork Subagent 字节级 Prompt Cache 继承
   ├── 落地 BI-07.4 双向信令协调 (SendMessage/RespondToCoordinator) 与只镜不落库 Mirror Sink
+  ├── 落地 BI-07.5 重复工具调用卫生守卫与自主目标自动续行引擎 (Repeat Tool Reminder & Goal Driver)
   └── 接入二段式优雅抢占与取消状态机 (Ctrl+C / Esc 保留上下文即时纠偏)
 
-[Phase 2] Git Worktree 并发隔离与完整 MCP 引擎 (Days 4~5)
+[Phase 2] Git Worktree 并发隔离、三层上下文与完整 MCP 引擎 (Days 4~5)
   ├── 实现 packages/worktree，落地子智能体工作区物理隔离与自动擦除
+  ├── 落地 BI-08.1 超大工具输出中间修剪器 (Tool Result Pruner) 与磁盘 Spill 溢出隔离
   ├── 落地 BI-12.1 工作区与临时目录自动修剪器 (StorageCatalog & CleanPlan)
   ├── 实现 packages/mcp，支持 Stdio 与 SSE 双通道 (实测接驳 Logbook)
   ├── 落地 BI-13.1 Tool-on-Demand 动态按需加载器 (select_tools)
@@ -959,6 +1064,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 落地 packages/a2a 通用容器、事实黑板与证据一致性核验协议 (AuditProtocol)
   ├── 落地 BI-15.4 A2A 穿透式 WebSocket 中继控制通道 (remote-control)
   ├── 落地 BI-16.1 CodeMode 零依赖内存 JS 精算沙箱与 Worker 线程池
+  ├── 落地 BI-16.2 程序化工具调用执行模式 (PTC Mode / Programmatic Tool Calling)
   └── 跑通“单模型自洽闭环：主协调官 -> 探针搜集 -> 沙箱精算 -> 事实黑板合流”流程
 
 [Phase 4] 官方插件体系吸收与防幻觉强化 (Days 9~10)
