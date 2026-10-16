@@ -155,7 +155,7 @@
 月之暗面（Moonshot AI）技术团队同源于清华大学计算机系与交叉信息研究院。其最新开源的 `MoonshotAI/kimi-code`（位于本地只读参考库 `/home/yupeng/references/kimi-code`）代表了纯 TypeScript 技术栈下 Agent CLI 极简解耦架构的最高工程水平。系统深入审查后，提炼出其 **十大独特黄金资产与底层算法**，与 ZCode 形成强力互补：
 
 #### (1) 纯 TypeScript 版 Tree-Sitter Bash 语法分析器 (`packages/tree-sitter-bash`)
-- **核心痛点**：传统 CLI 执行 Bash 命令鉴权与安全审计（如检测 `rm -rf /`、拦截偷窃 `.env` / `~/.ssh` 凭据）时，若使用正则表达式极易被引号嵌套、变量替换（`eval` / `$()`）绕过；若引入 C++ 编译的 `tree-sitter.node`，则彻底破坏 Bun 单文件独立二进制（`bun build --compile`）与跨发行版便携性。
+- **核心痛点**：传统 CLI 执行 Bash 命令鉴权与安全审计（如检测 `rm -rf /`、拦截偷窃 `.env` / `~/.ssh` 凭据）时，若使用正则表达式极易被引号嵌套、变量替换（`eval` / 子 Shell 命令替换）绕过；若引入 C++ 编译的 `tree-sitter.node`，则彻底破坏 Bun 单文件独立二进制（`bun build --compile`）与跨发行版便携性。
 - **Kimi 突破**：月之暗面手写了 **100% 纯 TypeScript 实现的 Tree-sitter Bash AST 解析器**：
   - 零原生 C/C++ 依赖，语法树节点类型 1:1 严格对齐官方 `tree-sitter-bash 0.25.0`；
   - 硬预算熔断机制：默认限制 `maxNodes = 50,000`、`timeoutMs = 50ms`，遇到病态递归或超长单行脚本立即安全返回 `{ ok: false, reason: 'aborted' }`，绝不卡死主事件循环；
@@ -1207,11 +1207,11 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 ### 1. 三级 TOML 配置拓扑与优先级裁决引擎
 
 为彻底解决生产环境下多项目、多环境、多模型配置混乱问题，吸收 Kimi Code 工业级三级 TOML 拓扑结构：
-1. **全局运行配置 (`~/.bi/config.toml` 或 `$BI_CODE_HOME/config.toml`)**：定义全局 LLM 提供商、模型参数重写（Overrides）、默认工具白名单、权限策略与外部生命周期钩子（Hooks）；
+1. **全局运行配置 (`~/.bi/config.toml` 或环境变量 `BI_CODE_HOME/config.toml`)**：定义全局 LLM 提供商、模型参数重写（Overrides）、默认工具白名单、权限策略与外部生命周期钩子（Hooks）；
 2. **终端外观首选项 (`~/.bi/tui.toml`)**：定义主题颜色、CJK 字符宽度补丁、终端蜂鸣、行号渲染与通知看门狗；
 3. **工作区私有覆盖 (`.bi/local.toml`)**：定义当前仓库专属的 `additional_dir` 挂载路径、工作区私有模型覆盖，且被 Git 严格忽略，杜绝团队协作时本地配置外泄；
 4. **多源优先级裁决阶梯**：
-   `CLI 启动参数 (Flags)` > `环境变量 ($BI_*)` > `工作区私有配置 (.bi/local.toml)` > `全局用户配置 (~/.bi/config.toml / tui.toml)` > `内置基线默认值 (Built-in Defaults)`。
+   `CLI 启动参数 (Flags)` > `环境变量 (BI_*)` > `工作区私有配置 (.bi/local.toml)` > `全局用户配置 (~/.bi/config.toml / tui.toml)` > `内置基线默认值 (Built-in Defaults)`。
 
 ### 2. 语法树级注释保留原子回写与结构化密钥脱敏
 
@@ -1337,3 +1337,76 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   1. 终端 TUI 原生支持 `Ctrl+V` 图片就地粘贴：通过底层轻量子进程探测跨平台剪贴板（Linux 原生优先 `wl-paste`，回退 `xclip`；macOS 原生优先 `pngpaste`，回退 AppleScript；Windows 调用 PowerShell）；
   2. 探测到剪贴板包含图片数据时，自动提取二进制流并以 SHA-256 哈希安全持久化至 `~/.bi/attachments/<hash>.png`，在输入框渲染附件徽标卡片；
   3. 提供 `/copy` 快捷指令，自动提取上一轮 Assistant 最终回复文本，清除 ANSI 控制符后格式化写入系统剪贴板，打通“终端交互 ↔ 桌面生态”的极速无缝流转。
+
+
+---
+
+## 十九、 Pi Agent 与 DeepSeek Harness 核心架构深度对齐与 9 大高价值子系统吸收
+
+在对清华系 ZCode 与 Kimi Code 实施全面逐模块对照后，为确保 `bi cli` 在底层稳定性、极端并发、多轮交互心流以及大工程代码导航领域达到顶级水准，项目组进一步对海外与国内标杆智能体实现：**Pi Agent**（[references/pi](file:///home/yupeng/references/pi)）与 **DeepSeek Harness**（[references/deepseek-harness](file:///home/yupeng/references/deepseek-harness)）开展了全模块拉网式代码审查。
+
+通过审查 Pi Agent 的全部 11 个核心包（`agent`, `ai`, `chord`, `codemode`, `coding-agent`, `durable`, `env`, `evals`, `mcp`, `telemetry`, `tui`）以及 DeepSeek Harness 的全部 54 个微服务包（涵盖 `lsp`, `jobs`, `context`, `shell`, `interaction`, `guard`, `compaction`, `credentials`, `workflow`, `deliverables` 等），共挖掘并吸收 9 项顶级工程架构与核心算法设计：
+
+### 1. 主动式 Prompt KV 缓存保活看门狗与成本监控器 (Proactive Prompt Cache Warmer & Miss Tracker / BI-04.3)
+- **问题根因**：主流大模型服务商（Anthropic Claude、DeepSeek 等）的 KV Cache 拥有严格的存活生命周期（通常为 5 分钟滑动窗口）。当终端人类用户处于阅读、思考或离开座位的空闲间隙时，数万至数十万 Token 的长上下文 KV Cache 会在服务端静默失效；下一次交互时将触发冷启动重算，不仅导致响应延迟骤增数倍，更造成高昂的 Token 费用浪费。
+- **机制原理**：吸收 Pi Agent [cache-warmer.ts](file:///home/yupeng/references/pi/packages/coding-agent/src/core/cache-warmer.ts)（16.8KB）与 [cache-stats.ts](file:///home/yupeng/references/pi/packages/coding-agent/src/core/cache-stats.ts)：
+  1. 建立空闲计时看门狗：在用户等待输入期间，精确追踪上一轮交互时间戳与模型服务端 KV Cache 的 TTL（如 5 分钟）；
+  2. 经济性自适应决策门：当会话上下文超过保活阈值（如预估下一次 Cache Miss 重算成本大于 0.05 美元），且距离 Cache 过期达到 90% 窗口期（如 4.5 分钟）时，看门狗自动触发极轻量级保活心跳；
+  3. 极小代价心跳保活：向服务端发起仅包含 1 个 Token 输出限制的轻量探测请求，服务端仅需微秒级命中已存 KV 缓存即刷新 5 分钟 TTL，以 0.0001 美元的极微小开销锁定数美元的缓存收益；
+  4. Cache Miss 诊断统计器：实时跟踪每一轮调用的缓存命中率（Cache Read / Cache Write），在 Token 监控仪表盘上呈现累计节省成本。
+
+### 2. 时钟上下文与时区自适应感知器 (Turn & Step Time Context & Timezone-Adaptive Sensor / BI-05.4)
+- **问题根因**：纯文本大语言模型缺乏物理时间流逝感知能力。如果仅在系统提示词开头静态声明一次时间，模型在长达数小时或数天的连续长程任务中，会出现严重的时间认知漂移（如误判“昨天”、“上周”、“刚才”的相对时序，或无法准确感知工具运行实际消耗的时长）。
+- **机制原理**：吸收 DeepSeek Harness [time-context](file:///home/yupeng/references/deepseek-harness/packages/context/time-context/)（7.5KB）：
+  1. 建立时区自适应感知器：启动时自动探测宿主机 IANA 时区（如 `Asia/Shanghai`）与本地 UTC 偏移量；
+  2. Step 级动态时钟注入：在模型思考循环的每一个 Step 开始前，通过前置拦截器向当前回合上下文中动态注入精确的 ISO 8601 时间戳；
+  3. 步进耗时差分感知：记录上一轮工具执行与模型生成的绝对耗时（如 `step_duration_ms: 3420`），赋予模型对现实物理时间开销的精确感知与自省能力，彻底根除相对时间幻觉。
+
+### 3. 规范化文件写入互斥队列 (Canonical File Mutation Queue / BI-06.6)
+- **问题根因**：在多 Agent 并发或者复杂长程自动化流水线中，多个子智能体或同一回合内的并行工具可能由于软链接、相对路径解析差异（如 `./src/index.ts` 与 `src/../src/index.ts`）同时触发针对同一物理文件的写操作，引发文件内容截断、内容覆盖与竞态脏写。
+- **机制原理**：吸收 Pi Agent [file-mutation-queue.ts](file:///home/yupeng/references/pi/packages/coding-agent/src/core/tools/file-mutation-queue.ts) 与 `durable/src/tools/`：
+  1. 路径物理规范化：通过 `node:fs/promises` 的 `realpath` 解析绝对规范路径，消除符号链接与路径格式混淆；
+  2. 按文件串行化链条：维护全局 WeakMap 粒度的 Promise 队列（`withFileMutationQueue`）。针对同一物理文件的并发写入请求自动挂载至该文件的尾部串行排队执行；
+  3. 跨文件并行非阻塞：对不同物理文件的读写操作保持完全异步并发执行，既保障了文件写操作的原子完整性，又最大化并发吞吐率。
+
+### 4. 持久化 PTY 交互式 Shell 会话 (Persistent PTY Bash Shell Session / BI-06.7)
+- **问题根因**：常规 Agent 的 Bash 工具通常采用单次无状态的 `child_process.exec`。每次调用都是崭新的子进程，导致 `cd` 切换目录、`export` 设置环境变量、`source .venv/bin/activate` 激活 Python 虚拟环境以及自定义 Shell 函数在调用结束后立刻丢失，无法支撑真实的复杂交互式调试。
+- **机制原理**：吸收 DeepSeek Harness [tool-bash-persistent](file:///home/yupeng/references/deepseek-harness/packages/shell/tool-bash-persistent/)（9.9KB）与 `terminal/` 架构：
+  1. 常驻伪终端（PTY）生命周期：为当前会话维护常驻后台 PTY 进程（node-pty），状态、工作目录与虚拟环境在轮次间全局延续；
+  2. 标记锚定提取机制：命令发送时自动包裹独创的开始/结束边界标记与退出状态码指令，PTY 输出由滚动缓冲区（Scrollback）精确捕获并切分，彻底消除 Shell Prompt 提示符、输入回显与颜色控制码对输出内容的污染；
+  3. 超时安全熔断与重置：遇到死循环、前台挂起或异常中断时，支持发送 SIGINT/SIGTERM 中断信号，或自动重置为干净环境并通知模型。
+
+### 5. 交互式用户提问门与计时挂起恢复器 (Interactive User Questions Modal & Timed Resumption / BI-07.10)
+- **问题根因**：在长程任务攻坚期间，模型经常遇到方案分歧或缺少关键凭据，必须向人类用户澄清；但若采用简单的阻塞式同步提问，如果用户暂时离开终端，会导致整个自动化流水线无限期死锁挂起。
+- **机制原理**：吸收 DeepSeek Harness [tool-ask-user](file:///home/yupeng/references/deepseek-harness/packages/interaction/tool-ask-user/) 与 `user-questions`：
+  1. 结构化多选题与文本提问契约：向模型暴露 `ask_user_question` 工具，支持预设单选/多选选项与补充说明；
+  2. 计时自愈模式（`mode: 'timed'`）：允许模型指定等待超时间隔。若用户在设定时间内未应答，工具安全返回 `{ pending: true, callId }`，允许智能体暂挂该支线、继续推进其他不依赖该决策的独立子任务；
+  3. 异步回执投递通道：当人类用户随后返回并在终端给出答复时，系统以异步消息信箱方式将用户决断送达智能体下一轮思考上下文，实现真正的异步人机协同。
+
+### 6. 异步后台任务运行时与生命周期管理器 (Background Jobs Runtime & Asynchronous Lifecycle Manager / BI-07.11)
+- **问题根因**：在开发和数据处理场景中，存在大量长耗时操作（如启动本地开发服务、构建 Docker 镜像、执行大型测试套件、抓取海量数据）。若强制前台同步等待，不仅浪费模型思考时间，更极易触发工具调用超时。
+- **机制原理**：吸收 DeepSeek Harness [tool-jobs](file:///home/yupeng/references/deepseek-harness/packages/jobs/tool-jobs/)（13.5KB）与 `jobs-local`：
+  1. 暴露标准后台作业工具集：`job_output`（查看日志增量）、`job_list`（列出存活作业）、`job_kill`（终止进程）；
+  2. 环形输出缓冲队列：后台进程输出接入 RingBuffer，支持分页与游标拉取，防爆内存；
+  3. 智能事件投递机制：作业状态变更与退出码自动排入事件队列。智能体繁忙时静默注入下一 Step，智能体处于空闲等待时通过自驱唤醒触发后续处理，并受到 `maxConsecutiveWakes` 频控保护，杜绝死循环唤醒。
+
+### 7. Language Server Protocol (LSP) 符号级代码导航引擎 (LSP Symbol Navigation Engine & Stdio Client / BI-13.2)
+- **问题根因**：纯文本级关键词匹配（如 `grep`、`ripgrep`）在大型单体仓库中存在严重的同名符号混淆（如多个类都有 `init()`、`handle()`、`render()`），模型容易读错文件、找错调用链路并产生严重的逻辑幻觉。
+- **机制原理**：吸收 DeepSeek Harness [tool-lsp](file:///home/yupeng/references/deepseek-harness/packages/lsp/tool-lsp/)（8.8KB）与 [lsp-stdio](file:///home/yupeng/references/deepseek-harness/packages/lsp/lsp-stdio/)（17.2KB）：
+  1. 工业级 LSP Stdio 客户端：以 JSON-RPC 2.0 协议标准连接各类主流语言服务器（如 TypeScript `tsserver`、Python `pyright`、Golang `gopls`、Rust `rust-analyzer`）；
+  2. 高阶符号导航工具：向模型暴露 `goToDefinition`（定义跳转）、`findReferences`（全局查找引用）、`goToImplementation`（接口实现查找）、`hover`（查看类型与文档说明）；
+  3. 结果边界与字符熔断：内置 `maxLocations: 100` 与 `maxResultChars: 16000` 保护门禁，以编译级精确度彻底消灭代码搜索歧义。
+
+### 8. 外部编辑器唤醒与长提示词交互微调桥 (External Editor Bridge for Complex Prompts / BI-19.5)
+- **问题根因**：在终端 TUI 交互中，当用户需要输入长达数百行的大型重构需求、复杂规格说明书或详细业务逻辑时，终端多行输入往往受限于终端光标移动、回车换行与排版撕裂，编辑体验极差。
+- **机制原理**：吸收 Pi Agent [external-editor.ts](file:///home/yupeng/references/pi/packages/coding-agent/src/modes/interactive/external-editor.ts) 与 `text.ts`：
+  1. 外部编辑器指令流：支持快捷键或 `/edit` 指令，将当前输入框内容写入临时工作文件 `prompt.md`；
+  2. 终端事件循环安全挂起：释放 TUI 的原始终端模式（Raw Mode），拉起操作系统环境变量中指定的首选外部编辑器（优先读取 EDITOR / VISUAL，如 vim、nvim、code、nano）；
+  3. 文本清洗与热重载：用户在外部图形或终端编辑器中保存并退出后，自动读取文件内容、自动剔除 UTF-8 BOM 头，并热重载回 TUI 输入缓冲区，彻底解放人类在长文本需求下的编辑心流。
+
+### 9. 独立 HTML 会话报告生成器与工具渲染引擎 (Standalone Session HTML Exporter with Tool Renderers / BI-20.3)
+- **问题根因**：研发与审计场景需要将会话全流程记录、代码 Diff、图表与执行结果完整归档并对外分享。纯文本或 Markdown 格式无法保留终端 ANSI 高亮色彩，且难以交互式折叠超长工具输出。
+- **机制原理**：吸收 Pi Agent [export-html](file:///home/yupeng/references/pi/packages/coding-agent/src/core/export-html/)（11KB）与 `ansi-to-html.ts`：
+  1. 零依赖单文件 HTML 导出：通过 `bi export --format html` 输出包含全部 CSS 样式的独立 HTML 文件，无需依赖任何外部 CDN 或静态资源服务器；
+  2. 精确 ANSI 转 CSS：将终端各级色彩、粗体与下划线精准转译为内联 CSS 样式，并原生支持 Dark/Light 主题切换；
+  3. 专有工具渲染器接口（`ToolHtmlRenderer`）：针对 Diff 文件比对、Python 统计图表、执行日志与 Markdown 表格提供专有折叠卡片渲染器，实现专业级研报与会话归档交付。
