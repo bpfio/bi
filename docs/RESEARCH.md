@@ -1,7 +1,7 @@
-# raw CLI Agent 架构全景调研与细颗粒度设计蓝图 (Architecture Research & Detailed Blueprint)
+# bi CLI Agent 架构全景调研与细颗粒度设计蓝图 (Architecture Research & Detailed Blueprint)
 
-> 本文档是 `raw` 项目（`bpfio/raw`）的权威架构调研与技术设计报告，基于对 **Pi Agent**、**zcode-app-cli**、**ZCode 官方开源仓库 (`zai-org/ZCode`)**、**DeepSeek Harness (`deepcode-cli`)** 与 **OpenCode (`opencode.ai`)** 的全量代码走读，确立了项目的核心设计原则、防幻觉机制、**A2A 跨智能体协议与红蓝对抗机制**、**完整 MCP 兼容引擎**、**工业级会话管理体系 (Session Engine)**、**Git Worktree 并发隔离机制**、**Workflow 动态工作流编排引擎** 与全阶段工程落地蓝图。
-> 同步归档于 Logbook 知识中枢：`project: "raw"`, `research_id: 24`。
+> 本文档是 `bi` 项目（`bpfio/bi`）的权威架构调研与技术设计报告，基于对 **Pi Agent**、**zcode-app-cli**、**ZCode 官方开源仓库 (`zai-org/ZCode`)**、**DeepSeek Harness (`deepcode-cli`)** 与 **OpenCode (`opencode.ai`)** 的全量代码走读，确立了项目的核心设计原则、防幻觉机制、**A2A 跨智能体协议与红蓝对抗机制**、**完整 MCP 兼容引擎**、**工业级会话管理体系 (Session Engine)**、**Git Worktree 并发隔离机制**、**Workflow 动态工作流编排引擎** 与全阶段工程落地蓝图。
+> 同步归档于 Logbook 知识中枢：`project: "bi"`, `research_id: 25`。
 
 ---
 
@@ -13,7 +13,7 @@
 3. **并发写入污染工作区**：多 Agent 并行运行时直接改脏用户的当前工作目录（`cwd`），缺乏**物理级 Git Worktree 隔离**；
 4. **长流程不可控与会话脆弱**：几十步的深度调研缺乏**声明式 Workflow DAG 编排与步骤检查点（Checkpoint）**，中途断开即前功尽弃；缺乏 DAG 分叉与时光倒流。
 
-**`raw` 的使命**：
+**`bi` 的使命**：
 打造一个**100% 白盒开源、零数据外泄、极低幻觉、极高并发执行力**的现代化 Agent CLI。
 - **双擎核心**：深度整合 **GLM**（敏捷信息流探针）与 **DeepSeek**（长链因果逻辑推演）；
 - **主攻领域**：**政策深度调研**（条文比对、脉络追溯、博弈推演）与 **严密数据分析**（指标穿透、勾稽核验、产能良率事实审计）；
@@ -32,7 +32,7 @@
 |---|---|---|---|
 | **Pi Agent**<br>`@earendil-works/pi` | • `packages/coding-agent/src/core/session-manager.ts` (单文件 2,014 行)<br>• `packages/tui/`: 双缓冲差分渲染引擎<br>• `packages/mcp/`: 独立白盒 MCP 客户端<br>• `packages/agent/`: 4 大原子工具 | • **DAG 会话树体系**：每一条消息携带 `id` (UUIDv7) 与 `parentId`，天然支持分支分叉与 Rewind 时光倒流<br>• **错误作为一等公民**：抛异常自动转化为 `isError: true` 促使模型自愈<br>• 架构解耦：TUI 与内核彻底分离，依赖极少 | • 偏向单 Agent 通用编码，缺乏针对 DeepSeek-R1 思考流的特定处理与多智能体分流 |
 | **ZCode 官方版**<br>`zai-org/ZCode` | • `packages/core/src/subagent/runner.ts` (68KB 多智能体协调器)<br>• `packages/dynamic-workflow/` (工作流编译器与引擎)<br>• `packages/dynamic-workflow-runtime/harness.ts` (30KB 运行时)<br>• `packages/spreadsheets-plugin/` & `pdf-plugin/` | • **极低幻觉率**：经过数百万次调优的 System Prompt、Tool Schema 与先读后写门禁<br>• **完整工作流引擎**：包含 Workflow 状态机、检查点与子单元隔离<br>• **开箱即用的专业数据/研报分析插件** | • 官方 CLI 前端采用 React+OpenTUI，较为臃肿且构建链庞大（巨石 Monorepo） |
-| **zcode-app-cli**<br>`bpfio/raw` 前身 | • `runtime-tui-bridge.ts`: 进程内函数级桥接<br>• `runtime-sqlite-recovery.ts`: SQLite 并发自愈<br>• `bounded-tool-text.ts`: 64KB 工具输出有界保护<br>• `file-diff-budget.ts`: 2000 行 Diff 预算限制 | • **同进程零拷贝直连（Zero IPC）**：彻底消灭 Localhost Socket 延迟与重连断连隐患<br>• 极高的工程鲁棒性与内存防泄漏 | • **混淆二进制黑盒**（`vendor/zcode.cjs`），供应链不可审计<br>• 27 个 AST/字符串补丁在版本升级中极易漂移 |
+| **zcode-app-cli**<br>`bpfio/bi` 前身 | • `runtime-tui-bridge.ts`: 进程内函数级桥接<br>• `runtime-sqlite-recovery.ts`: SQLite 并发自愈<br>• `bounded-tool-text.ts`: 64KB 工具输出有界保护<br>• `file-diff-budget.ts`: 2000 行 Diff 预算限制 | • **同进程零拷贝直连（Zero IPC）**：彻底消灭 Localhost Socket 延迟与重连断连隐患<br>• 极高的工程鲁棒性与内存防泄漏 | • **混淆二进制黑盒**（`vendor/zcode.cjs`），供应链不可审计<br>• 27 个 AST/字符串补丁在版本升级中极易漂移 |
 | **DeepCode**<br>`lessweb/deepcode-cli` | • `packages/core/session.ts`: 会话状态机<br>• `packages/core/prompt.ts`: 提示词结构<br>• 支持 `thinkingEnabled` 与 `reasoningEffort` | • **原生适配 DeepSeek 系列**：深度适配 R1 思考流展示与参数调优<br>• 针对 DeepSeek 的 Prompt Cache 前缀优化与上下文压缩 | • 缺乏严格的沙箱隔离（Path Jail），代码中工具扩展体系较重 |
 | **OpenCode**<br>`anomalyco/opencode` | • `packages/ai/`: 75+ 多模型统一适配<br>• `packages/protocol/`: 跨进程/跨端协议契约<br>• `packages/tui/`: 多会话并行终端界面 | • **极度开放自由**：多模型即插即用，分发体验极佳（一键安装）<br>• 双 Agent 模式（Build vs Plan/Explore）架构清晰 | • 为兼容 75+ 模型导致提示词采用“最大公约数”，对具体模型的调优深度不足，幻觉率高于 ZCode |
 
@@ -40,7 +40,7 @@
 
 ## 三、 多 Agent 协同机制与 A2A 协议规范
 
-在架构设计上，`raw` 坚决杜绝“把角色、提示词或物理模型写死在 TypeScript 源码中”的低级硬编码反模式。系统严格贯彻**三权分立的解耦架构**：
+在架构设计上，`bi` 坚决杜绝“把角色、提示词或物理模型写死在 TypeScript 源码中”的低级硬编码反模式。系统严格贯彻**三权分立的解耦架构**：
 1. **引擎运行时（Engine Runtime - `packages/a2a` & `packages/core`）**：100% 领域中立、角色中立、模型中立，仅提供通用的智能体生命周期容器、消息路由、辩论协议原语与事实黑板；
 2. **声明式角色资产（Declarative Persona Assets - `presets/agents/`）**：完全由 YAML / Markdown 声明定义，支持三级覆盖与运行时动态生成；
 3. **逻辑模型插槽路由（Model Slot Router - `packages/core/src/model-router.ts`）**：角色仅绑定逻辑语义插槽（如 `reasoner`, `fast`, `auditor`），物理厂商与模型 ID 由用户配置动态解析，支持零代码热切换。
@@ -86,13 +86,13 @@
 
 #### (1) 三级覆盖发现机制 (Priority Discovery)
 1. **引擎内置预设**：`presets/agents/*.yaml`（开箱即用的政策、审计与代码分析角色）；
-2. **全局用户配置**：`~/.raw/agents/*.yaml`（用户跨项目复用的个性化自定义角色）；
-3. **项目工作区配置**：`.raw/agents/*.yaml`（针对当前工程特化的专职角色，优先级最高）；
+2. **全局用户配置**：`~/.bi/agents/*.yaml`（用户跨项目复用的个性化自定义角色）；
+3. **项目工作区配置**：`.bi/agents/*.yaml`（针对当前工程特化的专职角色，优先级最高）；
 4. **运行时即时定义（Ephemeral Ad-hoc Subagent）**：主协调官或用户可在交互中通过 A2A 协议动态生成临时子角色。
 
 #### (2) 角色定义 Schema 示例 (`presets/agents/scout.yaml`)
 ```yaml
-schema_version: "raw/v1"
+schema_version: "bi/v1"
 name: scout
 title: 政策与信息搜集探针
 description: 高频、敏捷的信息捕获探针，专精于公开公报抓取与条文结构化提取
@@ -118,7 +118,7 @@ system_prompt: |
 角色声明 (slot: "reasoner")
        │
        ▼
-Model Slot Router (解析 ~/.raw/config.yaml 或环境变量)
+Model Slot Router (解析 ~/.bi/config.yaml 或环境变量)
        │
        ├─► 默认解析: deepseek / deepseek-reasoner (R1)
        ├─► 生产可切: siliconflow / deepseek-ai/DeepSeek-R1
@@ -132,7 +132,7 @@ Model Slot Router (解析 ~/.raw/config.yaml 或环境变量)
   - `auditor`：严谨表格函数计算与统计检验（默认 DeepSeek-V3）；
   - `general`：日常指令协调与交互总结。
 * **零侵入 CLI 动态覆写**：
-  - 命令行即时热插拔：`raw --slot reasoner=claude-3-7-sonnet --slot fast=qwen-2.5-coder`；
+  - 命令行即时热插拔：`bi --slot reasoner=claude-3-7-sonnet --slot fast=qwen-2.5-coder`；
   - 零代码重编，模型升级无缝透明。
 
 ### 4. A2A 消息封套契约 (Message Envelope Specification)
@@ -174,7 +174,7 @@ export type A2AMessageType =
 
 ## 四、 Git Worktree 隔离与并发工作区引擎
 
-在多 Agent 并行执行数据演练或政策报告生成时，**严禁多 Agent 同时修改用户当前工作目录（`cwd`）**。`raw` 原生内置 Git Worktree 物理隔离：
+在多 Agent 并行执行数据演练或政策报告生成时，**严禁多 Agent 同时修改用户当前工作目录（`cwd`）**。`bi` 原生内置 Git Worktree 物理隔离：
 
 ```
                     用户主工作区 (/home/yupeng/project)
@@ -182,8 +182,8 @@ export type A2AMessageType =
          ┌─────────────────┴─────────────────┐
          ▼                                   ▼
 [临时 Worktree A]                     [临时 Worktree B]
-~/.raw/worktrees/scout-8a2f/         ~/.raw/worktrees/audit-9b1c/
-├── 挂载独立分支 raw-agent-A          ├── 挂载独立分支 raw-agent-B
+~/.bi/worktrees/scout-8a2f/         ~/.bi/worktrees/audit-9b1c/
+├── 挂载独立分支 bi-agent-A          ├── 挂载独立分支 bi-agent-B
 └── 政策探针下载、清洗 HTML/PDF       └── 数据审计员跑 Python 勾稽脚本
          │                                   │
          └─────────────────┬─────────────────┘
@@ -193,7 +193,7 @@ export type A2AMessageType =
 ```
 
 1. **自动生命周期管理**：
-   - 派生子任务时：`git worktree add -b raw-task-<id> ~/.raw/worktrees/<task-id> HEAD`，毫秒级开辟纯净沙箱；
+   - 派生子任务时：`git worktree add -b bi-task-<id> ~/.bi/worktrees/<task-id> HEAD`，毫秒级开辟纯净沙箱；
    - 零磁盘冗余：多个工作区复用同一套底层 Git 对象库，不产生额外体积；
    - 任务合入：经审查通过后，通过 `git cherry-pick` 原子合并至主工作区；
    - 任务销毁：`git worktree remove --force` 即刻擦除临时目录，保证用户日常目录绝对纯净。
@@ -246,18 +246,18 @@ export type A2AMessageType =
 2. **硬指标质量断言门禁（Verification Gates）**：
    - 步骤间设置严格的拦截断言（Assertion Gate）。例如：Step 2 到 Step 3 必须满足“多方数据矛盾数为 0”；若断言失败，工作流自动进入自我反思修正分支，直到通过才放行。
 3. **人机协作断点（Human-in-the-Loop Gate）**：
-   - 在工作流文件（如 `.raw/workflows/policy-audit.yaml`）中支持定义 `pause_for_human: true`，在关键敏感决策点自动挂起，弹窗由人类专家裁决后继续推演。
+   - 在工作流文件（如 `.bi/workflows/policy-audit.yaml`）中支持定义 `pause_for_human: true`，在关键敏感决策点自动挂起，弹窗由人类专家裁决后继续推演。
 
 ---
 
 ## 六、 完整 MCP (Model Context Protocol) 兼容架构
 
-`raw` 内置完整的 MCP Client 子系统，既支持本地轻量工具，又无缝接驳远程私有工具中枢。
+`bi` 内置完整的 MCP Client 子系统，既支持本地轻量工具，又无缝接驳远程私有工具中枢。
 
 ### 1. 传输层双通道驱动 (Dual-Channel Transports)
 
 ```
-raw MCP Client Engine
+bi MCP Client Engine
   ├── StdioClientTransport (本地管道)
   │     ├── 基于 child_process.spawn 派生受控子进程
   │     ├── 进程看门狗 (Watchdog) 监控内存与心跳
@@ -276,7 +276,7 @@ raw MCP Client Engine
    - 接收服务端初始化载荷并确认 `notifications/initialized`。
 2. **三元要素动态发现**：
    - **`tools/list`**：拉取外部工具清单（如 Logbook 的 `task_query`, `devlog_record`，以及自研数据工具），自动合并至 Agent 的可用工具注册表中；
-   - **`resources/list` & `resources/read`**：允许模型直接以 URI 形式读取本地或远程的上下文文件（如 `logbook://raw/tasks`）；
+   - **`resources/list` & `resources/read`**：允许模型直接以 URI 形式读取本地或远程的上下文文件（如 `logbook://bi/tasks`）；
    - **`prompts/list` & `prompts/get`**：动态拉取预置的宏观政策分析提示词模版。
 3. **安全参数前置审计 (Tool Preflight)**：
    - 外部 MCP 工具调用前，必须经过本地 Schema 校验；
@@ -289,7 +289,7 @@ raw MCP Client Engine
 ```
                     ┌──────────────────────────────────────────────┐
                     │        会话交互命令与入口 (CLI / TUI)        │
-                    │  raw -c (继续) | raw -r <id> | /rewind | /fork│
+                    │  bi -c (继续) | bi -r <id> | /rewind | /fork│
                     └──────────────────────┬───────────────────────┘
                                            │
                     ┌──────────────────────▼───────────────────────┐
@@ -303,23 +303,23 @@ raw MCP Client Engine
               ▼                                         ▼
 ┌──────────────────────────────┐          ┌──────────────────────────────┐
 │  不可变事件流 (Append-only)   │          │  元数据快速索引 (SQLite)     │
-│  ~/.raw/sessions/<id>.jsonl  │          │  ~/.raw/sessions.db          │
-│ • 每步实时追加，抗强杀 0 损坏 │          │ • 毫秒级列表检索 (raw -l)    │
+│  ~/.bi/sessions/<id>.jsonl  │          │  ~/.bi/sessions.db          │
+│ • 每步实时追加，抗强杀 0 损坏 │          │ • 毫秒级列表检索 (bi -l)    │
 │ • 包含 UUIDv7 + parentId 指针 │          │ • 记录 Token 消耗与时间戳    │
 └──────────────────────────────┘          └──────────────────────────────┘
 ```
 
-1. **主体存储（Append-only JSONL）**：会话保存在 `~/.raw/sessions/<session-id>.jsonl` 中，原子追加，抗机器掉电与强制中断；
-2. **元数据索引（SQLite WAL）**：维护 `~/.raw/sessions.db` 索引表，支撑秒开历史列表；
+1. **主体存储（Append-only JSONL）**：会话保存在 `~/.bi/sessions/<session-id>.jsonl` 中，原子追加，抗机器掉电与强制中断；
+2. **元数据索引（SQLite WAL）**：维护 `~/.bi/sessions.db` 索引表，支撑秒开历史列表；
 3. **DAG 树状分支与时光倒流**：节点携带 `id` (UUIDv7) 与 `parentId`，支持 `/rewind` 撤回上步与 `/fork` 原地平行分支；
 4. **两级长会话无损紧缩**：一级压缩 Tool Output（立省 70% Token），二级生成《阶段调研底账》Anchor 重置上下文；
-5. **断点续连与环境自愈**：`raw -c` 秒级接续当前工作区最近活跃会话。
+5. **断点续连与环境自愈**：`bi -c` 秒级接续当前工作区最近活跃会话。
 
 ---
 
 ## 八、 智谱 BigModel 官方双轨鉴权与 ZCode 客户端特权折扣体系
 
-用户在调用 GLM-5.3、GLM-4 等模型时，`raw` 原生支持**双轨鉴权模式**（浏览器免密 OAuth 与 手工配置 API Key），且**两条链路均能被智谱服务端 100% 识别为合法官方 ZCode 客户端，享受 Coding Plan 专属套餐抵扣、客户端折扣费率与 Ultra VIP 专线加速**。
+用户在调用 GLM-5.3、GLM-4 等模型时，`bi` 原生支持**双轨鉴权模式**（浏览器免密 OAuth 与 手工配置 API Key），且**两条链路均能被智谱服务端 100% 识别为合法官方 ZCode 客户端，享受 Coding Plan 专属套餐抵扣、客户端折扣费率与 Ultra VIP 专线加速**。
 
 ### 1. 双轨特权识别原理
 
@@ -330,10 +330,10 @@ raw MCP Client Engine
 
 ### 2. 通道一：浏览器免密 OAuth 2.0 PKCE / Poll 授权通道
 
-用户无需手动去开放平台申请、充值并复制繁琐的 API Key。`raw` 原生内置官方同款的 **OAuth 2.0 PKCE / Poll 授权通道**（位于 `packages/core/src/auth/cli-oauth.ts`），与智谱 BigModel Coding Plan 高速通道 100% 体验对齐。
+用户无需手动去开放平台申请、充值并复制繁琐的 API Key。`bi` 原生内置官方同款的 **OAuth 2.0 PKCE / Poll 授权通道**（位于 `packages/core/src/auth/cli-oauth.ts`），与智谱 BigModel Coding Plan 高速通道 100% 体验对齐。
 
 ```
-用户终端 (raw login)               浏览器端 (智谱开放平台)           官方 OAuth 授权服务
+用户终端 (bi login)               浏览器端 (智谱开放平台)           官方 OAuth 授权服务
       │                                    │                                 │
       ├────── 1. 生成 32 字节 PollToken ───┼────────────────────────────────►│ POST /oauth/cli/init
       │                                    │                                 │
@@ -348,20 +348,20 @@ raw MCP Client Engine
       │                                    │                                 │ (返回 status: "ready" + Token)
       │◄───── 5. 换取 accessToken、refreshToken 与短期 Project Token ────────┤
       │
-      └────── 6. 安全存入 ~/.raw/credentials.json (加密保护，零明文暴露)
+      └────── 6. 安全存入 ~/.bi/credentials.json (加密保护，零明文暴露)
 ```
 
 1. **零配置秒级登录**：
-   - 终端输入 `raw login`（或 `raw login bigmodel`），系统自动调用默认浏览器唤醒智谱官方授权页；
+   - 终端输入 `bi login`（或 `bi login bigmodel`），系统自动调用默认浏览器唤醒智谱官方授权页；
    - 用户确认后，终端后台静默捕获授权结果，直接将短期项目令牌（Project Access Token）写入本地凭据库；
    - 后续所有模型调用均可满速直连 GLM-5.3、GLM-4 等模型服务与 Coding Plan 专属通道。
 2. **远程与无图形环境保底**：
    - 在纯终端/服务器无 GUI 环境下，系统自动打印高亮授权链接与扫码指引；
-   - 同时支持传统的 `BIGMODEL_API_KEY` 环境变量与 `raw login --api-key`，满足全自动化 CI/CD 与离线演练需求。
+   - 同时支持传统的 `BIGMODEL_API_KEY` 环境变量与 `bi login --api-key`，满足全自动化 CI/CD 与离线演练需求。
 
 ### 3. 通道二：GLM API Key 二阶段换票与特权标头注入 (API Key 优惠生效机理)
 
-当用户通过环境变量 `BIGMODEL_API_KEY` 或 `raw login --api-key` 输入普通 API Key 时，`raw` 同样不会盲目裸发该 Key，而是完整复用官方 `CodingPlanApiKeyResolver` 流程：
+当用户通过环境变量 `BIGMODEL_API_KEY` 或 `bi login --api-key` 输入普通 API Key 时，`bi` 同样不会盲目裸发该 Key，而是完整复用官方 `CodingPlanApiKeyResolver` 流程：
 
 ```
 用户输入普通 API Key (BIGMODEL_API_KEY)
@@ -396,7 +396,7 @@ raw MCP Client Engine
 
 ## 九、 ZCode 官方桌面版插件体系与 Marketplace 兼容架构
 
-`raw` 坚决摒弃民间 `zcode-app-cli` 的脆弱 AST 补丁与混淆黑盒，**100% 规范兼容官方开源版（`zai-org/ZCode`）桌面端与 CLI 的插件标准**。该标准本质是对 Claude 开放插件协议（`.claude-plugin`）的超集扩展（`.zcode-plugin`），属于纯声明式资产体系。
+`bi` 坚决摒弃民间 `zcode-app-cli` 的脆弱 AST 补丁与混淆黑盒，**100% 规范兼容官方开源版（`zai-org/ZCode`）桌面端与 CLI 的插件标准**。该标准本质是对 Claude 开放插件协议（`.claude-plugin`）的超集扩展（`.zcode-plugin`），属于纯声明式资产体系。
 
 ```text
 my-plugin/
@@ -427,23 +427,23 @@ my-plugin/
    - **`browser-use-plugin`**：无头浏览器复杂交互与政务动态数据爬取。
 
 3. **三大降维增强（解决原版插件痛点）**：
-   - **Git Worktree 隔离运行**：插件 Python 脚本运行全部分流至 `~/.raw/worktrees/<task-id>` 独立沙箱，杜绝生成临时垃圾文件污染用户当前工作区；
+   - **Git Worktree 隔离运行**：插件 Python 脚本运行全部分流至 `~/.bi/worktrees/<task-id>` 独立沙箱，杜绝生成临时垃圾文件污染用户当前工作区；
    - **DeepSeek-R1 双擎对抗审校**：插件生成的报表与提取的数据，必须经由 Critic 角色根据证据一致性规则严查勾稽关系，根除指标幻觉；
    - **生态双通**：同时识别 `.zcode-plugin` 与 `.claude-plugin`，一键通吃两大开源社区插件生态。
 
 4. **Marketplace 市场分发机制**：
    - 支持解析 `marketplace.json` 目录索引；
-   - 支持通过 Git URL 或本地目录安装：`raw plugins install <source>`；
+   - 支持通过 Git URL 或本地目录安装：`bi plugins install <source>`；
    - 支持 `user`（全局）与 `project`（项目）双重作用域。
 
 ---
 
 ## 十、 吸收 Claude Code 与 Codex 顶尖工程机制 (Advanced Ergonomics & Safeguards)
 
-深度解构 **Claude Code** 与 **OpenAI Codex CLI** 的生产级实践，`raw` 正式吸纳以下七大顶尖工程机制：
+深度解构 **Claude Code** 与 **OpenAI Codex CLI** 的生产级实践，`bi` 正式吸纳以下七大顶尖工程机制：
 
-### 1. 项目长期记忆中枢与自适应规范 (RAW.md Specification)
-- 启动时自动搜索当前工作区根目录的 `RAW.md` 或 `.raw/rules.md`；
+### 1. 项目长期记忆中枢与自适应规范 (BI.md Specification)
+- 启动时自动搜索当前工作区根目录的 `BI.md` 或 `.bi/rules.md`；
 - 秒级将该项目的**政策源官方地址、特定指标统计口径（如良率对比基准、同比口径）、禁用词汇与特定 Python 环境**静态固化在 System Prompt 前缀中；
 - 杜绝每次开启新会话向大模型重复宣贯背景，实现项目级“开箱即懂”。
 
@@ -474,7 +474,7 @@ my-plugin/
 ### 7. 全链路一键环境体检与自愈系统 (`/doctor`)
 - 提供内置 `/doctor` 命令，执行全链路健康检查：
   - **网络连通**：智谱 OAuth 授权服务、DeepSeek API 与 QNAP Logbook 延迟；
-  - **凭据有效性**：`~/.raw/credentials.json` 剩余有效期；
+  - **凭据有效性**：`~/.bi/credentials.json` 剩余有效期；
   - **数据依赖**：`git`、`python3`、`pandas`、`openpyxl` 运行环境完备性；
   - 输出体检报告并附带单行自动修复建议。
 
@@ -517,7 +517,7 @@ packages/
 │   ├── src/
 │   │   ├── agent.ts       # 核心循环状态机 (二段式抢占、多工具并发执行)
 │   │   ├── model-router.ts# 逻辑模型插槽路由器 (Slot -> Provider/Model)
-│   │   ├── rules.ts       # RAW.md 项目长期记忆与领域规范自适应加载器
+│   │   ├── rules.ts       # BI.md 项目长期记忆与领域规范自适应加载器
 │   │   ├── doctor.ts      # /doctor 全链路网络、凭据与环境健康体检引擎
 │   │   ├── auth/          # 智谱 BigModel 官方双轨鉴权与 PAT 换票器
 │   │   │   ├── cli-oauth.ts      # 官方 OAuth init 与 poll 状态机
@@ -601,7 +601,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 ---
 
-## 十五、 raw 项目演进里程碑 (Milestones)
+## 十五、 bi 项目演进里程碑 (Milestones)
 
 ```
 [Phase 1] 白盒内核、沙箱、会话持久化与官方双轨认证 (Days 1~3)
@@ -610,7 +610,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
   ├── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动与模型插槽路由 (Model Slot Router)
-  ├── 落地 RAW.md 项目级长期记忆与领域规范自适应注入
+  ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
   ├── 实现基于 Linux PGID 进程组看门狗的受控 Bash 执行器 (杜绝孤儿进程)
   ├── 落地多工具调用并行并发流水线 (Promise.allSettled)
   └── 接入二段式优雅抢占与取消状态机 (Ctrl+C / Esc 保留上下文即时纠偏)
@@ -637,5 +637,5 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 接入交互式 Git Unified Diff 审查门与一键撤销
   ├── 实现 /doctor 全链路网络连通性、凭据有效性与 Python 依赖一键体检
   ├── 挂载 DAG 工作流看板、A2A 看板与思考流折叠视图
-  └── 端到端宏观政策与数据审计实战验收，发布 bpfio/raw v1.0
+  └── 端到端宏观政策与数据审计实战验收，发布 bpfio/bi v1.0
 ```
