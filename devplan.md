@@ -50,12 +50,13 @@
 
 ---
 
-### 2. 五大标杆能力全景吸收规范 (Benchmark Synthesis)
+### 2. 六大标杆能力全景吸收规范 (Benchmark Synthesis)
 
-任何开发 Agent 在实现具体模块时，必须对齐以下五大标杆的最优实践：
+任何开发 Agent 在实现具体模块时，必须对齐以下六大标杆的最优实践：
 
 | 标杆工程 | 吸收模块与落位 | 核心实现机制与代码契约 |
 |---|---|---|
+| **清华 ZCode** | `packages/core/src/tool/edit-matchers.ts`<br>`packages/core/src/tool/read-file-state.ts`<br>`packages/core/src/memory/dream.ts`<br>`presets/plugins/superpowers/` | 1. **8 级阶梯弹性文件匹配**：自动归一化中英弯引号、剥离行号前缀、弹性缩进、相似度块锚点（0.8），彻底消灭 TargetContent 找不到的痛点，编辑成功率提升至 99.5%；<br>2. **Read-Before-Write 门禁与 mtime 防脏写**：未读文件禁止修改，基于真实 mtime 检测外部进程改动并拦截 stale write；<br>3. **Dream Cycle 仿生记忆沉淀**：后台空闲期基于文件锁自动提炼会话精华为长期记忆；<br>4. **清华顶级 Agent SOP**：吸收 `using-git-worktrees` 与 `verification-before-completion` 强制自验纪律。 |
 | **Claude Code** | `packages/core/src/prompt.ts`<br>`packages/core/src/agent.ts`<br>`packages/core/src/tools/bash.ts` | 1. **Prompt Cache 黄金排布**：严格遵循 `[静态 System + BI.md] → [静态 Tools] → [Anchor] → [历史消息]` 顺序，保证 GLM/DeepSeek 缓存命中率 ≥ 85%；<br>2. **二段式抢占取消**：单击 Esc / Ctrl+C 暂停并保留上下文，连续双击才退出；<br>3. **Linux PGID 组杀**：子进程派生独立 `setsid()`，超时发射 `-PGID` 信号彻底杀绝孤儿进程。 |
 | **OpenAI Codex** | `packages/core/src/sandbox/path-jail.ts`<br>`packages/tui/src/diff-view.ts` | 1. **Credential Guard 凭据防御**：严禁模型读取 `~/.ssh`、`~/.bash_history`、`.env` 等高危路径；<br>2. **交互式 Unified Diff**：对所有文件修改在终端高亮渲染 Diff，人类敲击 `y/n` 审查门放行。 |
 | **Qwen CLI** | `packages/core/src/parser.ts`<br>`packages/a2a/src/audit.ts` | 1. **Fuzzy Tool Parser**：模型输出的工具 JSON 遇到缺少括号或包裹在 Markdown 中时，自动进行 AST/正则容错修补；<br>2. **Self-Healing Traceback**：Python 脚本报错时自动捕获堆栈回溯，模型自主打补丁重试，杜绝求助人类。 |
@@ -110,9 +111,12 @@
 | **BI-04** | 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/model-router.ts`<br>`packages/core/src/drivers/sse-driver.ts` | 统一抽象 OpenAI / Anthropic SSE 事件流；实现 `ModelSlotRouter`，将逻辑语义插槽（`fast`, `reasoner`, `auditor`）默认解析映射至用户单一主力模型 | P1 |
 | **BI-04.1** | Prompt Cache 黄金排布与 Fuzzy 工具解析器 | `packages/core/src/prompt.ts`<br>`packages/core/src/parser.ts` | 1. 严格锁定 `System + BI.md + Tools` 前缀顺序，确保服务端 Cache 命中率 ≥ 85%；<br>2. 引入 Qwen 风格容错解析器，对缺失闭合符或包裹代码块的畸形 JSON 自动 AST 修复 | P1 |
 | **BI-05** | `BI.md` 项目长期记忆自适应注入器 | `packages/core/src/rules.ts` | 启动时自动向上递归检索当前工程根目录的 `BI.md` 或 `.bi/rules.md`，将政策信源、统计口径与禁用词静态注入 System Prompt 前缀 | P1 |
+| **BI-05.1** | Dream Cycle 仿生做梦记忆沉淀中枢 | `packages/core/src/memory/dream.ts` | 借鉴清华认知神经科学设计：利用 `evaluateAutoDreamTiming` 与 `.consolidate-lock` 文件锁，在后台空闲期自动扫描会话精华，沉淀固化入项目级长期记忆 | P1 |
 | **BI-06** | 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/core/src/tools/bash.ts` | 派生独立子进程并调用 `setsid()` 赋予独立 PGID；超时（默认 120s）或被取消时向 `-PGID` 发送 `SIGTERM → (等待1.5s) → SIGKILL`，彻底杜绝僵尸进程 | P0 |
 | **BI-06.1** | Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/sandbox/path-jail.ts` | 借鉴 Codex，内核与路径层严密拦截对 `~/.ssh`、`~/.gnupg`、`~/.bash_history`、`/etc/` 以及项目外 `.env` 文件的读取尝试，违规直接阻断 | P0 |
 | **BI-07** | 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/agent.ts` | 1. 支撑只读工具并发执行（`Promise.allSettled`）；<br>2. 落地二段式取消：单击 Esc/Ctrl+C 暂停并保留上下文，连续双击才真正退出 | P1 |
+| **BI-07.1** | 8 级阶梯弹性文件匹配引擎 | `packages/core/src/tool/edit-matchers.ts` | 吸收清华核心算法：实现 exact、quote_normalized（中英弯引号）、line_number_stripped、indentation_flexible 与 block_anchor（0.8 相似度）等 8 级阶梯匹配，消灭匹配失败 | P0 |
+| **BI-07.2** | Read-Before-Write 门禁与 mtime 防脏写看门狗 | `packages/core/src/tool/read-file-state.ts` | 吸收清华防御机制：维护 `ReadFileStateMap`，未读文件严禁编辑修改；校验磁盘真实 `mtime`，一旦发生外部并发改动立即阻断并强制重新读取 | P0 |
 
 ---
 
@@ -144,6 +148,7 @@
 | 任务编号 | 任务名称 | 责任模块 / 文件路径 | 细化设计与验收指标 | 优先级 |
 |---|---|---|---|---|
 | **BI-14** | 声明式 DAG 工作流调度引擎 | `packages/workflow/src/engine.ts`<br>`packages/workflow/src/checkpoint.ts` | 1. 解析 YAML 格式 DAG 步骤（并行拓扑与前置依赖）；<br>2. 每一步完成自动持久化 Checkpoint，发生网络断线或进程重启秒级断点自愈续跑 | P1 |
+| **BI-14.1** | 因果拓扑图与 Taint 污点分析编译器 | `packages/workflow/src/analysis/` | 吸收清华理论算法：实现 `causality-graph.ts`（因果拓扑排序）与 `taint.ts`（数据污染分析），静态检测死锁并自动输出 Mermaid 流程图 | P1 |
 | **BI-15** | A2A 跨角色分工与共享事实黑板 | `packages/a2a/src/host.ts`<br>`packages/a2a/src/blackboard.ts` | 统一管理 Coordinator（编排）、Scout（搜集）、Auditor（精算）、Reporter（起草）；统一往 `Blackboard` 共享事实底账，所有角色基于单模型按需派生 | P1 |
 | **BI-15.1** | A2A 邮件私密信令网关 (Control Plane) | `packages/a2a/src/transports/a2a-email-gateway.ts` | 落地 SMTP/IMAP 跨网通信驱动：支持 TLS 465/993、HMAC-SHA256 签名校验、IMAP IDLE 秒级唤醒与发件人白名单；100% 穿透物理防火墙，支持人类抄送介入 | P1 |
 | **BI-15.2** | GitHub A2A 任务中枢 (Data & Task Plane) | `packages/a2a/src/transports/github-a2a-hub.ts` | 落地基于 Git 分支与 PR 的分布式任务中枢：任务专属分支派发（`bi-task-<id>`）、数据清洗脚本同步、Unified Diff 渲染与 PR 自动化审查合并 | P1 |
@@ -159,6 +164,7 @@
 |---|---|---|---|---|
 | **BI-17** | 官方插件双协议加载器 (.zcode & .claude) | `packages/plugins/src/loader.ts`<br>`packages/plugins/src/marketplace.ts` | 纯声明式解析 `.zcode-plugin` 与 `.claude-plugin` 标准（`plugin.json`, `skills/`, `mcpServers/`）；支持 Marketplace 目录索引与本地安装 | P1 |
 | **BI-18** | 官方核心数据研报插件全量吸收移植 | `presets/plugins/spreadsheets/`<br>`presets/plugins/pdf/` | 全量吸收移植官方 `spreadsheets-plugin`（全套金融与宏观统计 Python 勾稽模板）与 `pdf-plugin`（部委公报双栏排版与长篇抽取脚本） | P1 |
+| **BI-18.1** | 清华顶尖 Agent SOP 技能集吸收 | `presets/plugins/superpowers/` | 全量吸收 `using-git-worktrees`（沙箱隔离规范）、`verification-before-completion`（完工自验铁律）与 `systematic-debugging`（系统化排查法） | P1 |
 | **BI-19** | Pi-TUI 双缓冲差分无闪烁渲染终端 | `packages/tui/src/app.ts`<br>`packages/tui/src/thinking.ts` | 移植 `@earendil-works/pi-tui` 双缓冲字符矩阵差分引擎；终端流式打字 0 闪烁，CPU < 1%；支持 DeepSeek-R1 思考流卡片动态折叠收起/展开 | P1 |
 | **BI-20** | 交互式 Git Unified Diff 审查门与 /doctor | `packages/tui/src/diff-view.ts`<br>`packages/core/src/doctor.ts` | 1. 文件变更弹出 Unified Diff 供人类确认；<br>2. `/doctor` 一键全链路体检智谱网络、凭据有效期、Python 环境（`pandas`/`openpyxl`）并附带修复建议 | P1 |
 | **BI-21** | 宏观政策与数据审计端到端实战演练验收 | 测试套件与场景演练 | 选取真实部委产业公报与上市公司财报，全流程演练政策比对、良率勾稽、Worktree 隔离与研报生成，指标误差 0 容忍 | P0 |
