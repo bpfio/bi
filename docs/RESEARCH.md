@@ -562,6 +562,8 @@ packages/
 │   ├── src/
 │   │   ├── host.ts        # 通用智能体生命周期容器 (AgentHost)
 │   │   ├── registry.ts    # 声明式角色资产注册表 (三级覆盖加载器)
+│   │   ├── auth.ts        # HMAC-SHA256 签名、防重放与发件人白名单验签
+│   │   ├── permissions.ts # 角色最小特权能力矩阵与人类审查门禁
 │   │   ├── audit.ts       # 领域中立的事实一致性核验协议 (AuditProtocol)
 │   │   ├── blackboard.ts  # 结构化共享事实黑板 (Blackboard)
 │   │   ├── router.ts      # 动态 A2A 消息路由器与生命周期总线

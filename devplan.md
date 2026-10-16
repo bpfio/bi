@@ -86,6 +86,12 @@
 [分歧场景 4: 跨网络协作]
   ├─ 需要跨越 NAT / 防火墙进行轻量控制？走 A2A 邮件私密信令网关 (a2a-email-gateway)！
   └─ 需要交付复杂代码、数据表与大篇幅研报？走 GitHub A2A 任务中枢 (github-a2a-hub) 的 PR 审查门！
+
+[分歧场景 5: 跨网 A2A 鉴权与安全防御]
+  ├─ 任何跨网络 A2A 封套必须经过 HMAC-SHA256 签名 + 5分钟时间戳防重放 + 发件人白名单校验！
+  ├─ 严禁任何未经密码学验签的外部指令直接进入本地 Agent 执行流，彻底阻断远程代码执行 (RCE) 后门；
+  ├─ 本地各角色严格受限：Scout 禁写、Auditor 仅限沙箱运行 Python 并由 Path Jail 阻断窃取凭据；
+  └─ 高危动作（修改本地代码、合并主分支、执行 rm/kill 命令）无论来自何方，必须弹 Unified Diff 人类审查门！
 ```
 
 ---
@@ -141,6 +147,7 @@
 | **BI-15** | A2A 跨角色分工与共享事实黑板 | `packages/a2a/src/host.ts`<br>`packages/a2a/src/blackboard.ts` | 统一管理 Coordinator（编排）、Scout（搜集）、Auditor（精算）、Reporter（起草）；统一往 `Blackboard` 共享事实底账，所有角色基于单模型按需派生 | P1 |
 | **BI-15.1** | A2A 邮件私密信令网关 (Control Plane) | `packages/a2a/src/transports/a2a-email-gateway.ts` | 落地 SMTP/IMAP 跨网通信驱动：支持 TLS 465/993、HMAC-SHA256 签名校验、IMAP IDLE 秒级唤醒与发件人白名单；100% 穿透物理防火墙，支持人类抄送介入 | P1 |
 | **BI-15.2** | GitHub A2A 任务中枢 (Data & Task Plane) | `packages/a2a/src/transports/github-a2a-hub.ts` | 落地基于 Git 分支与 PR 的分布式任务中枢：任务专属分支派发（`bi-task-<id>`）、数据清洗脚本同步、Unified Diff 渲染与 PR 自动化审查合并 | P1 |
+| **BI-15.3** | A2A 三级鉴权体系与角色能力矩阵 | `packages/a2a/src/auth.ts`<br>`packages/a2a/src/permissions.ts` | 1. 落地 HMAC-SHA256 签名与常量时间验签（`crypto.timingSafeEqual`），拦截重放（5分钟时钟偏斜）与发件人白名单；<br>2. 落地角色能力矩阵（Scout 禁写，Auditor 仅限沙箱，禁止窃取凭据）；<br>3. 高危动作强制人类在环 Unified Diff 审查门 | P0 |
 | **BI-16** | Python 沙箱代码运行即验与 Traceback 自愈 | `packages/a2a/src/audit.ts` | 严禁口算！调用沙箱 Python 脚本计算良率与勾稽指标；若抛出异常，自动捕获 Traceback 并在当前轮次内自动打补丁纠偏重跑，直到输出合规底表 | P0 |
 
 ---
