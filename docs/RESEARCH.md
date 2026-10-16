@@ -188,10 +188,36 @@
 
 ## 四、 多 Agent 协同机制与 A2A 协议规范
 
-在架构设计上，`bi` 坚决杜绝“把角色、提示词或物理模型写死在 TypeScript 源码中”的低级硬编码反模式。系统严格贯彻**三权分立的解耦架构**：
+在架构设计上，`bi` 坚决杜绝“把角色、提示词或物理模型写死在 TypeScript 源码中”的低级硬编码反模式。系统严格贯彻**三权分立与两层协同的解耦架构**：
 1. **引擎运行时（Engine Runtime - `packages/a2a` & `packages/core`）**：100% 领域中立、角色中立、模型中立，仅提供通用的智能体生命周期容器、消息路由、辩论协议原语与事实黑板；
 2. **声明式角色资产（Declarative Persona Assets - `presets/agents/`）**：完全由 YAML / Markdown 声明定义，支持三级覆盖与运行时动态生成；
 3. **逻辑模型插槽路由（Model Slot Router - `packages/core/src/model-router.ts`）**：角色仅绑定逻辑语义插槽（如 `reasoner`, `fast`, `auditor`），物理厂商与模型 ID 由用户配置动态解析，支持零代码热切换。
+
+### 0. 协同分层拓扑：本地进程内视窗沙箱 (Sub-agents) vs. 分布式跨网协同 (A2A)
+
+为了彻底解决单体会话“搜索海量文件冲垮主视窗”与“跨网络协作安全风险”两大矛盾，`bi` 吸收清华 ZCode 与 Kimi Code 的工程精髓，确立了严格的两层分流体系：
+
+```
+[用户输入任务]
+       │
+       ▼
+【Main Agent（主对话视窗）】 ── 保持干净底账，承载最终决策与交互
+       │
+       ├─ [Layer 1: 本地任务分流 (In-Process Sub-agents / BI-07.3)] ── 零网络开销、同进程视窗沙箱
+       │     ├─ subagent_type: 'explore' (只读探索，搜 100 个文件，仅向主视窗返回 500 字结论)
+       │     ├─ subagent_type: 'coder'   (独立代码修改，在 Worktree 沙箱中自验通过后回传 Diff)
+       │     └─ subagent_type: 'plan'    (只读高阶规划与依赖因果拓扑分析)
+       │
+       └─ [Layer 2: 跨网络协作 (Distributed A2A / BI-15)] ── 跨电脑、跨防火墙、带密码学鉴权
+             ├─ SMTP/IMAP 私密邮件控制总线 (a2a-email-gateway)
+             └─ GitHub PR 分布式任务中枢 (github-a2a-hub)
+```
+
+#### Layer 1 核心机制：本地多角色子智能体分流与上下文断路器 (Context Firebreak)
+- **同进程轻量上下文**：Sub-agent 绝非 OS 外部子进程，而是在当前 Node/Bun 进程内实例化独立的 `ChildExecutionContext`，派生独立的 Query Loop，零进程切换开销；
+- **双层会话历史物理隔离**：子 Agent 在执行深层代码或政策探索时，产生的几十次 `Grep`/`Read`/`Bash` 调用与数十万字符输出，全部写入独立的 `childSessionId` 持久化存储中；
+- **主视窗只接收提炼 Summary**：子 Agent 同步完成时仅向主 Agent 提交其最后一条文本块（Summary）与 Token Usage 元数据（异步后台任务则通过 `<task-notification>` 回传）。主对话视窗历史 0 污染，Token 视窗彻底免疫冲垮，单次复杂探索的主视窗 Token 消耗压减 95% 以上；
+- **防递归死锁与 MCP 快照借用**：子 Agent 工具池被物理剥离 `Agent` 与 `AskUserQuestion` 工具，彻底阻断无限递归派生；通过借用父级 MCP 快照端口（`borrowed-mcp-port.ts`），子 Agent 结束退出时绝不触碰或销毁父级 MCP 连接。
 
 ### 1. 跨智能体角色拓扑与事实黑板 (预置资产参考流)
 
