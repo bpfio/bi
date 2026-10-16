@@ -1,6 +1,6 @@
 # bi CLI Agent 架构全景调研与细颗粒度设计蓝图 (Architecture Research & Detailed Blueprint)
 
-> 本文档是 `bi` 项目（`bpfio/bi`）的权威架构调研与技术设计报告，基于对 **Pi Agent**、**zcode-app-cli**、**ZCode 官方开源仓库 (`zai-org/ZCode`)**、**DeepSeek Harness (`deepcode-cli`)** 与 **OpenCode (`opencode.ai`)** 的全量代码走读，确立了项目的核心设计原则、防幻觉机制、**A2A 跨智能体协议与红蓝对抗机制**、**完整 MCP 兼容引擎**、**工业级会话管理体系 (Session Engine)**、**Git Worktree 并发隔离机制**、**Workflow 动态工作流编排引擎** 与全阶段工程落地蓝图。
+> 本文档是 `bi` 项目（`bpfio/bi`）的权威架构调研与技术设计报告，基于对 **Pi Agent**、**zcode-app-cli**、**ZCode 官方开源仓库 (`zai-org/ZCode`)**、**DeepSeek Harness (`deepcode-cli`)** 与 **OpenCode (`opencode.ai`)** 的全量代码走读，确立了项目的核心设计原则、防幻觉机制、**A2A 跨智能体协议与分工协同机制**、**完整 MCP 兼容引擎**、**工业级会话管理体系 (Session Engine)**、**Git Worktree 并发隔离机制**、**Workflow 动态工作流编排引擎** 与全阶段工程落地蓝图。
 > 同步归档于 Logbook 知识中枢：`project: "bi"`, `research_id: 25`。
 
 ---
@@ -9,13 +9,13 @@
 
 在政策调研与数据分析场景中，传统的通用 Coding Agent 常常面临四大结构性缺陷：
 1. **安全性与黑盒困境**：许多轻量工具采用二进制混淆包或依赖多层脆弱的 AST 补丁，代码无法白盒审计，存在供应链投毒与未授权数据外泄（Telemetry）风险；
-2. **幻觉率与执行力脱节**：同为先进模型，在不同脚手架（Harness）下表现天差地别——缺乏严格闭环约束的 Agent 常常产生严重幻觉（捏造数据、指标前后矛盾、虚构文件），缺乏**审校对抗（Critic/Debate）机制**；
+2. **幻觉率与执行力脱节**：同为先进模型，在不同脚手架（Harness）下表现天差地别——缺乏严格闭环约束的 Agent 常常产生严重幻觉（捏造数据、指标前后矛盾、虚构文件），缺乏**代码确定性验证（Code-backed Grounding）与证据一致性核验**；
 3. **并发写入污染工作区**：多 Agent 并行运行时直接改脏用户的当前工作目录（`cwd`），缺乏**物理级 Git Worktree 隔离**；
 4. **长流程不可控与会话脆弱**：几十步的深度调研缺乏**声明式 Workflow DAG 编排与步骤检查点（Checkpoint）**，中途断开即前功尽弃；缺乏 DAG 分叉与时光倒流。
 
 **`bi` 的使命**：
 打造一个**100% 白盒开源、零数据外泄、极低幻觉、极高并发执行力**的现代化 Agent CLI。
-- **双擎核心**：深度整合 **GLM**（敏捷信息流探针）与 **DeepSeek**（长链因果逻辑推演）；
+- **单模型全自洽与即插即用（Single-Model First）**：原生支持 GLM、DeepSeek、Claude 等任意主流单模型驱动，用户仅需配置一个主力模型，零强制异构依赖，零多模型账单负担；
 - **主攻领域**：**政策深度调研**（条文比对、脉络追溯、博弈推演）与 **严密数据分析**（指标穿透、勾稽核验、产能良率事实审计）；
 - **协议完备**：内置**工业级 MCP 客户端**（兼容 Stdio/SSE 远程与本地服务）与 **A2A 跨智能体通信协议**；
 - **并发与编排**：内置 **Git Worktree 临时隔离引擎** 与 **声明式 Workflow DAG 编排引擎**；
@@ -45,24 +45,23 @@
 2. **声明式角色资产（Declarative Persona Assets - `presets/agents/`）**：完全由 YAML / Markdown 声明定义，支持三级覆盖与运行时动态生成；
 3. **逻辑模型插槽路由（Model Slot Router - `packages/core/src/model-router.ts`）**：角色仅绑定逻辑语义插槽（如 `reasoner`, `fast`, `auditor`），物理厂商与模型 ID 由用户配置动态解析，支持零代码热切换。
 
-### 1. 跨智能体角色拓扑与红蓝对抗 (预置资产参考流)
+### 1. 跨智能体角色拓扑与事实黑板 (预置资产参考流)
 
-下图展示系统内置的政策研判预置流水线（由声明式配置装配，非硬编码逻辑）：
+下图展示系统内置的政策研判分工流水线（由声明式配置装配，非硬编码逻辑；所有子角色默认基于用户当前配置的单一主力模型按需派生，零额外 Key 依赖）：
 
 ```
                     ┌──────────────────────────────────────────────┐
                     │  主协调官预设 (The Architect / Coordinator)   │
-                    │         (绑定 slot: reasoner，全局战略推演)   │
+                    │         (全局战略推演、任务拆解与结果编排)       │
                     └───────┬──────────────┬──────────────┬────────┘
                             │              │              │
            ┌────────────────┘              │              └────────────────┐
            ▼                               ▼                               ▼
 ┌──────────────────────┐      ┌──────────────────────┐      ┌──────────────────────┐
-│  政策探针预设         │      │   数据精算预设       │      │   红队挑刺预设       │
-│  (The Scout Persona) │      │  (The Auditor Persona│      │  (The Critic Persona)│
-│  (绑定 slot: fast)   │      │  (绑定 slot: auditor)│      │ (绑定 slot: reasoner)│
-│ - 爬取部委公告与公报 │      │ - 执行 CSV/表格运算  │      │ - 交叉检验良率与产能 │
-│ - 提取关键条文摘要   │      │ - 校验勾稽计算与偏差 │      │ - 严厉审查逻辑矛盾   │
+│  政策探针预设         │      │   数据精算预设       │      │   研报撰写预设       │
+│  (The Scout Persona) │      │  (The Auditor Persona│      │  (The Reporter Persona│
+│ - 爬取部委公告与公报 │      │ - 执行 CSV/表格运算  │      │ - 综合事实梳理脉络   │
+│ - 提取关键条文原文   │      │ - 运行 Python 严格勾稽│      │ - 产出规范 Markdown 研报│
 └──────────┬───────────┘      └──────────┬───────────┘      └──────────┬───────────┘
            │                             │                             │
            └─────────────────────────────┼─────────────────────────────┘
@@ -73,10 +72,10 @@
                     └──────────────────────────────────────────────┘
 ```
 
-* **红蓝对抗审校闭环（Debate Loop 原语）**：
-  - 引擎提供通用的 `DebateProtocol` 状态机（Proposer 提案者 vs Challenger 质疑者 vs Arbiter 仲裁者）；
-  - 在政策研判流水线中，Scout/Auditor 产出初稿后，由 Critic 依据“证据一致性铁律”强行审查，一旦发现“有良率数据却推导无产能”、“引用文件与结论不符”，直接触发 `debate_challenge` 驳回初稿并附带反向证据；
-  - 必须由 Critic 签署放行（`debate_accept`），成果方可合入最终研报。
+* **运行即验与确定性审计闭环（Code-backed Grounding）**：
+  - 严禁模型凭空“脑补/口算”统计数据与良率指标；涉及财税勾稽、良率对比、产能推算，必须调用 Python（`pandas`/`openpyxl`）在独立沙箱中实际执行运算，以代码运行的真实输出作为唯一事实底账；
+  - 严格贯彻“证据一致性铁律”（有良率数据即承认存在产线、0/1 与 1-100 维度分离），自动拦截前后矛盾逻辑；
+  - 所有子智能体基于用户配置的单一主力大模型按需派生，零额外 Key 依赖、零异构模型开销。
 * **共享事实黑板模式（Blackboard Pattern 原语）**：
   - 子智能体将各自核验无误的关键事实发布至共享黑板，其他智能体即时可见，杜绝重复计算与信息孤岛。
 
@@ -428,7 +427,7 @@ my-plugin/
 
 3. **三大降维增强（解决原版插件痛点）**：
    - **Git Worktree 隔离运行**：插件 Python 脚本运行全部分流至 `~/.bi/worktrees/<task-id>` 独立沙箱，杜绝生成临时垃圾文件污染用户当前工作区；
-   - **DeepSeek-R1 双擎对抗审校**：插件生成的报表与提取的数据，必须经由 Critic 角色根据证据一致性规则严查勾稽关系，根除指标幻觉；
+   - **代码沙箱运行即验与勾稽校验**：插件生成的报表与提取的数据，必须经由 Python 脚本在沙箱中真实执行运算并交叉核验勾稽关系，根除指标幻觉；
    - **生态双通**：同时识别 `.zcode-plugin` 与 `.claude-plugin`，一键通吃两大开源社区插件生态。
 
 4. **Marketplace 市场分发机制**：
@@ -502,7 +501,7 @@ my-plugin/
 ## 十三、 如何提高执行效率与吞吐？（极速调优方案）
 
 1. **KV Cache 前缀锁定**：固定 System Prompt 与 Tool Schemas 前缀，确保服务端 Cache 命中率维持在 80%+，首字延迟压制在 300ms 以内；
-2. **GLM + DeepSeek 快慢双擎流水线**：GLM 负责高通量抓取清洗，DeepSeek 负责深度因果推理；
+2. **单模型流水线与上下文紧缩**：基于用户配置的单一主力模型，通过清晰的 Prompt 步骤切分（搜集 → 运算 → 起草）流水线作业，结合两级上下文紧缩，零跨模型网络开销；
 3. **终端差分双缓冲渲染**：仅对变动的终端字符矩阵输出 ANSI Escape 码，CPU 占用低于 1%。
 
 ---
@@ -563,7 +562,7 @@ packages/
 │   ├── src/
 │   │   ├── host.ts        # 通用智能体生命周期容器 (AgentHost)
 │   │   ├── registry.ts    # 声明式角色资产注册表 (三级覆盖加载器)
-│   │   ├── debate.ts      # 领域中立的辩论与裁决协议状态机 (DebateProtocol)
+│   │   ├── audit.ts       # 领域中立的事实一致性核验协议 (AuditProtocol)
 │   │   ├── blackboard.ts  # 结构化共享事实黑板 (Blackboard)
 │   │   ├── router.ts      # 动态 A2A 消息路由器与生命周期总线
 │   │   └── envelope.ts    # A2A 强类型消息封套规范与序列化
@@ -589,13 +588,13 @@ packages/
         └── pdf-extractor/ # 官方长篇政策 PDF 结构化抽取核心
 
 presets/                   # 开箱即用声明式资产 (数据/配置层，零代码入侵)
-├── agents/                # 预置角色模版 (YAML 声明式定义)
-│   ├── coordinator.yaml   # 主协调官预设 (slot: reasoner)
-│   ├── scout.yaml         # 敏捷信息探针预设 (slot: fast)
-│   ├── auditor.yaml       # 数据精算师预设 (slot: auditor)
-│   └── critic.yaml        # 红队挑刺官预设 (slot: reasoner)
-└── workflows/             # 预置工作流 DAG (声明式编排拓扑与对抗逻辑)
-    ├── policy-audit.yaml  # 政策调研红蓝对抗闭环流水线
+├── agents/                # 预置角色模版 (YAML 声明式定义，基于单模型按需派生)
+│   ├── coordinator.yaml   # 主协调官预设 (全局编排)
+│   ├── scout.yaml         # 敏捷信息探针预设 (条文搜集)
+│   ├── auditor.yaml       # 数据精算师预设 (Python 勾稽)
+│   └── reporter.yaml      # 政策研报撰写预设 (研报起草)
+└── workflows/             # 预置工作流 DAG (声明式编排拓扑与核验逻辑)
+    ├── policy-audit.yaml  # 政策调研与证据一致性闭环流水线
     └── data-check.yaml    # 数据勾稽与一致性验证流水线
 ```
 
@@ -609,7 +608,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 实现智谱 BigModel 双轨特权认证 (OAuth 免密 + API Key 二阶段 PAT 换票与 Ultra 专线重定向)
   ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
-  ├── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动与模型插槽路由 (Model Slot Router)
+  ├── 接入 GLM、DeepSeek 等统一 SSE 流式驱动与单模型插槽路由 (Model Slot Router)
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
   ├── 实现基于 Linux PGID 进程组看门狗的受控 Bash 执行器 (杜绝孤儿进程)
   ├── 落地多工具调用并行并发流水线 (Promise.allSettled)
@@ -620,15 +619,15 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 实现 packages/mcp，支持 Stdio 与 SSE 双通道 (实测接驳 Logbook)
   └── 验证工作区零污染与外部工具动态注册
 
-[Phase 3] A2A 协议、红蓝对抗与 DAG 工作流编排 (Days 6~8)
+[Phase 3] A2A 协议、分工协作与 DAG 工作流编排 (Days 6~8)
   ├── 落地 packages/workflow 声明式 DAG 步骤调度与 Checkpoint 检查点自愈
-  ├── 落地 packages/a2a 通用容器、事实黑板与红蓝对抗审查协议 (DebateProtocol)
-  └── 跑通“主协调官(R1) -> 探针(GLM) -> 精算师(V3) -> 审校员(R1)审查放行”闭环
+  ├── 落地 packages/a2a 通用容器、事实黑板与证据一致性核验协议 (AuditProtocol)
+  └── 跑通“单模型自洽闭环：主协调官 -> 探针搜集 -> 沙箱精算 -> 事实黑板合流”流程
 
 [Phase 4] 官方插件体系吸收与防幻觉强化 (Days 9~10)
   ├── 落地 packages/plugins 官方插件双协议加载器 (.zcode-plugin & .claude-plugin)
   ├── 全量移植官方 spreadsheets-plugin 与 pdf-plugin 核心库
-  ├── 挂接 Git Worktree 隔离运行沙箱与 DeepSeek-R1 逆向勾稽审校
+  ├── 挂接 Git Worktree 隔离运行沙箱与 Python 逆向勾稽核验
   └── 落实多轮思考流剥离 (CoT Stripping) 与 KV Cache 锁定调优
 
 [Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
