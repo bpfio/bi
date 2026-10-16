@@ -1161,6 +1161,10 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 [Phase 2] Git Worktree 并发隔离、三层上下文与完整 MCP 引擎 (Days 4~5)
   ├── 实现 packages/worktree，落地子智能体工作区物理隔离与自动擦除
   ├── 落地 BI-08.1 超大工具输出中间修剪器 (Tool Result Pruner) 与磁盘 Spill 溢出隔离
+  ├── 落地 BI-08.2 多模态历史图像渐进式卸载与文本占位器 (Image Offloading)
+  ├── 落地 BI-10.1 历史回溯定位指针与断点自恢复协议 (Context Recovery Pointer)
+  ├── 落地 BI-10.2 工具调用原子配对门禁与语法树级消息修整器 (Strict Tool Pairing)
+  ├── 落地 BI-10.3 有效视窗输出预留折减与缓存连续性保护 (Cache Continuity & Reserve Cap)
   ├── 落地 BI-12.1 工作区与临时目录自动修剪器 (StorageCatalog & CleanPlan)
   ├── 实现 packages/mcp，支持 Stdio 与 SSE 双通道 (实测接驳 Logbook)
   ├── 落地 BI-13.1 Tool-on-Demand 动态按需加载器 (select_tools)
@@ -1231,3 +1235,47 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 - **自主探测与模式识别**：提供 `bi init` 子命令与 `/init` 交互指令，派生只读探测子智能体全面递归解析工程根目录的构建工具链（`package.json`、`Cargo.toml`、`pyproject.toml`、`go.mod`、`Makefile` 等）；
 - **自适应规则起草**：自动提炼代码风格、包管理器指令、单测运行规程与核心架构路径，结合交互预览与人类确认，一键生成高质量初始 `BI.md` 项目长期记忆文件。
+
+---
+
+## 十七、 长程任务上下文管理与视窗生命周期深度架构
+
+在长程自主任务（Long-Horizon Tasks）中，会话可能持续数小时并执行成百上千次工具调用，上下文膨胀与视窗打爆是导致智能体崩溃的最主要根因。吸收 ZCode、Kimi Code、DeepSeek-Harness 与 Pi Agent 四大体系的最优实践，`bi` 构建起四层自愈型上下文防御纵深：
+
+### 1. 历史回溯定位指针与断点自恢复协议 (Context Recovery Pointer / BI-10.1)
+
+在长程任务压缩后，最常见的痛点是“压缩摘要丢失了早期关键命令输出或代码原文字符串”，导致后续步骤模型产生幻觉或胡乱猜测。
+吸收 Kimi Code 独创的自恢复指针体系：
+- **持久化日志行号区间化索引**：压缩摘要生成后，在尾部自动追加 `## Context Recovery` 块：
+  ```markdown
+  ## Context Recovery
+  wire_path: ~/.bi/sessions/<id>/wire.jsonl
+    window 1: lines 1–150
+    window 2: lines 151–300   ← the conversation this note summarizes
+    window 3 (current): starts at line 301...
+  ```
+- **精确检索指引协议**：明确指示模型：“在此之前的全部原始事件（命令输出、文件全文、报错堆栈、用户原话）均只读保存在磁盘上的追加型日志中。当需要获取精准细节时，严禁自行推测，请使用 grep 检索关键词获取行号，再通过 Read 精确按行读取（或在 Bash 中使用 sed + jq 提取）”。这彻底构筑了压缩后信息完整性防线，使长程记忆兼具紧凑性与无限精细回溯能力。
+
+### 2. 多模态历史图像渐进式卸载 (Image Offloading / BI-08.2)
+
+多模态图像/截屏在会话中每张消耗 1,000 至 4,000 Visual Tokens。在涉及前端 UI 验证、文档扫描与图表生成的长程任务中，即便单次截图被端侧压缩至 25KB，积累 10 张以上也会严重挤占文本推理视窗。
+吸收 DeepSeek Harness 官方 `compaction-image-offload`：
+- **确定性最早图像标记**：当视窗承压时，运行纯函数 `offloadOldestImages` 扫描历史输入事件中所有类型为 `image` 的内容块，按时间顺序将最早的图片标记为 `offloaded: true`；
+- **请求线缆轻量文本投射**：在向模型 API 发送请求前，将已标记 offloaded 的媒体块无缝替换为结构化占位文本 `[Image omitted to conserve context window]`；
+- **会话 DAG 事件树绝对稳定**：由于只在消息内容块层面进行惰性投射，整个底层 Session 事件树的 Sequence ID、消息节点身份与事件因果链条保持 100% 不变，零破坏性回写。
+
+### 3. 工具调用原子配对门禁与语法树级消息修整器 (Strict Tool Pairing / BI-10.2)
+
+所有主流大模型 API（Anthropic Messages、DeepSeek、OpenAI）对工具交互均有铁律：助手消息中的每一个 `tool_use`（或 `tool_call`）块，紧随其后的用户消息中必须包含对应的 `tool_result`，二者 ID 必须严格一一匹配。
+如果 Microcompact 脱水、消息滑动窗口切片或 Auto-Compaction 截断时不慎切断了配对，或者遗留了孤立的 tool_result，API 会立即返回致命的 400 Bad Request（`tool_use ids must match tool_result ids`）导致会话暴毙。
+吸收 DeepSeek Harness `tool-pairing.ts` 算法：
+- **前缀和状态机平衡校验 (`balanceCache`)**：对会话表面事件维护增量配对平衡缓存：遇到 `assistant/message` 累加 tool-call 计数，遇到 `tool/result` 递减；
+- **物理切点门禁判定 (`toolPairingBalancedBefore` / `After`)**：严格要求任何压缩切割、历史切片或脱水操作，其截断边界必须满足 `inProgressToolCalls === 0`。若当前切点处于未闭环状态，自动向前或向后滑动至最近的安全平衡点，从数学机制上彻底杜绝 API 400 异常。
+
+### 4. 有效视窗输出预留折减与 Provider 缓存保活 (Cache Continuity & Reserve Cap / BI-10.3)
+
+- **有效视窗硬顶折减 (Output Reserve Capping)**：吸收 ZCode 规范，针对提供商过大的 output 标称值，锁定算法为 `outputReserve = min(maxOutputTokens, 64_000)`，`effectiveContextWindow = contextWindow - outputReserve`，在高水位触及 80%~90% 时触发自动压缩，消除输入侧预算比实际请求更宽松的盲区；
+- **压缩请求 tools 列表全量保留 (Prompt Cache Continuity)**：在请求模型生成 Compact Summary 压缩摘要时，**严禁向模型传递 `tools: []`**。因为主流服务商将 tools 签名哈希视作前缀 KV 缓存的一部分，传空 tools 会瞬间击穿 Prompt Cache 导致缓存命中率归零。必须保留原样 tools 列表，并通过系统指令与 Tool-Choice 设置静默拒绝工具调用；
+- **思考流剥离与序列化截断**：生成摘要请求时剥离历史 Assistant 消息中的 Thinking/Reasoning 思考块，并将历史单次工具输出统一压减至 2000 字符内，杜绝摘要生成请求自身出现视窗超限；
+- **400 视窗溢出紧急自愈与自动重试**：吸收 Pi Agent `context-overflow.test.ts`，一旦 API 返回上下文超限异常，捕获 `isContextOverflow(error)` 并自动以 `reason: "overflow"` 触发紧急压缩，并在压缩重构完成后携带 `willRetry: true` 自动重试当前中断的回合，确保长程任务坚不可摧。
+
