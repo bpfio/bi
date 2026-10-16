@@ -394,7 +394,49 @@ my-plugin/
 
 ---
 
-## 十、 核心设计原则 (Design Principles)
+## 十、 吸收 Claude Code 与 Codex 顶尖工程机制 (Advanced Ergonomics & Safeguards)
+
+深度解构 **Claude Code** 与 **OpenAI Codex CLI** 的生产级实践，`raw` 正式吸纳以下七大顶尖工程机制：
+
+### 1. 项目长期记忆中枢与自适应规范 (RAW.md Specification)
+- 启动时自动搜索当前工作区根目录的 `RAW.md` 或 `.raw/rules.md`；
+- 秒级将该项目的**政策源官方地址、特定指标统计口径（如良率对比基准、同比口径）、禁用词汇与特定 Python 环境**静态固化在 System Prompt 前缀中；
+- 杜绝每次开启新会话向大模型重复宣贯背景，实现项目级“开箱即懂”。
+
+### 2. 二段式优雅抢占与非破坏性取消 (Dual-Phase Cancellation)
+- **单击 `Ctrl+C` 或 `Esc`（任务抢占）**：立即通过 `AbortController` 斩断流式输出或杀停当前卡死子任务，保留已有推演上下文，向事件流推入 `[User Interrupted: Operation aborted by user]`，终端立即恢复输入光标，允许用户即时打字纠偏；
+- **1 秒内连续双击 `Ctrl+C`（物理退出）**：触发退出看门狗，安全回写会话 JSONL 与临时 Worktree 分支后，退出终端进程。
+
+### 3. Linux 进程组看门狗与孤儿进程彻底熔断 (PGID Process Group Kill)
+- 执行 Bash 工具或运行 Python 数据分析/爬虫时，通过 `{ detached: true }` 派生独立的 Linux **进程组（Process Group）**；
+- 发生超时（默认 30s 阈值）或用户中断时，执行 `process.kill(-subprocess.pid, "SIGTERM")`（负号代表杀死整组），连坐斩断所有派生出的子进程与无头浏览器，零僵尸进程残留。
+
+### 4. 工具多路并行并发流水线 (Parallel Tool Pipelining)
+- 当大模型在同一轮中返回多个原子工具调用（如同时并发爬取 5 个公报 URL 或读取 3 张财务报表）时；
+- 引擎端直接利用 `Promise.allSettled` 并行并发打出；
+- 一次性聚合成多条 `tool_result` 回传给模型，将数据采集耗时从 15 秒压缩至 2~3 秒。
+
+### 5. 交互式结构化 Unified Diff 审查门 (Interactive Diff Inspector)
+- 修改数据文件或更新重要研报时，在落盘前在内存中生成标准 Git Unified Diff；
+- 终端通过彩色 ANSI 语法高亮直观呈现绿色的新增行与红色的删除行；
+- 支持三级权限控制（Safe / Confirm / Auto-apply），核心文件必须经由用户键盘确认（`y/n`），并提供一键回滚。
+
+### 6. Token 消耗与 KV Cache 命中率实时仪表盘 (Token HUD)
+- TUI 底部状态栏实时显化四大关键指标：
+  - **Cache Read 命中率**：智谱与 DeepSeek 服务端前缀缓存命中比例（维持 80%+）；
+  - **Tokens Accounting**：当前轮次与累计消耗总计；
+  - **Latency / TTFT**：首字延迟（ms）与生成速率（tokens/s）。
+
+### 7. 全链路一键环境体检与自愈系统 (`/doctor`)
+- 提供内置 `/doctor` 命令，执行全链路健康检查：
+  - **网络连通**：智谱 OAuth 授权服务、DeepSeek API 与 QNAP Logbook 延迟；
+  - **凭据有效性**：`~/.raw/credentials.json` 剩余有效期；
+  - **数据依赖**：`git`、`python3`、`pandas`、`openpyxl` 运行环境完备性；
+  - 输出体检报告并附带单行自动修复建议。
+
+---
+
+## 十一、 核心设计原则 (Design Principles)
 
 1. **状态所有权单一（Single State Owner）**：运行时为唯一单一事实源，TUI 为无状态投影；
 2. **原子工具极简化（Minimalist Primitives）**：收敛于 4 大原子工具（`read`, `write`, `edit`, `bash`）+ 轻量 `fetch`；
@@ -403,7 +445,7 @@ my-plugin/
 
 ---
 
-## 十一、 如何防止幻觉？（防幻觉工程体系）
+## 十二、 如何防止幻觉？（防幻觉工程体系）
 
 1. **信息流完整性与有界截断（Bounded IO）**：工具输出超 64KB 时保留首尾结构，绝不断开 JSON 闭合；
 2. **真实退出码与错误反馈（Error as Feedback）**：执行出错必须返回真实 Stderr 包装为 `isError: true` 迫使模型自愈；
@@ -413,7 +455,7 @@ my-plugin/
 
 ---
 
-## 十二、 如何提高执行效率与吞吐？（极速调优方案）
+## 十三、 如何提高执行效率与吞吐？（极速调优方案）
 
 1. **KV Cache 前缀锁定**：固定 System Prompt 与 Tool Schemas 前缀，确保服务端 Cache 命中率维持在 80%+，首字延迟压制在 300ms 以内；
 2. **GLM + DeepSeek 快慢双擎流水线**：GLM 负责高通量抓取清洗，DeepSeek 负责深度因果推理；
@@ -421,7 +463,7 @@ my-plugin/
 
 ---
 
-## 十三、 细颗粒度工程落地方案（六大核心包设计）
+## 十四、 细颗粒度工程落地方案（六大核心包设计）
 
 项目采用现代化 TypeScript + Bun Monorepo 架构（收敛至 `packages/`）：
 
@@ -429,12 +471,20 @@ my-plugin/
 packages/
 ├── core/                  # 状态机内核、沙箱、会话引擎、模型路由与 OAuth 认证
 │   ├── src/
-│   │   ├── agent.ts       # 核心循环状态机 (Planning -> Tool -> Reflection)
+│   │   ├── agent.ts       # 核心循环状态机 (二段式抢占、多工具并发执行)
 │   │   ├── model-router.ts# 逻辑模型插槽路由器 (Slot -> Provider/Model)
+│   │   ├── rules.ts       # RAW.md 项目长期记忆与领域规范自适应加载器
+│   │   ├── doctor.ts      # /doctor 全链路网络、凭据与环境健康体检引擎
 │   │   ├── auth/          # 智谱 BigModel 官方 OAuth 2.0 PKCE / Poll 授权通道
 │   │   │   ├── cli-oauth.ts      # 官方 OAuth init 与 poll 状态机
 │   │   │   ├── credentials.ts    # 本地凭据安全存储与项目令牌刷新
 │   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与兜底处理
+│   │   ├── tools/         # 受控原子工具集
+│   │   │   ├── bash.ts    # 带 Linux PGID 进程组治理的受控 Bash 执行器
+│   │   │   ├── edit.ts    # 结构化 Diff 生成与原子替换
+│   │   │   ├── read.ts    # 边界限制读取 (Bounded IO)
+│   │   │   ├── write.ts   # 安全写入
+│   │   │   └── fetch.ts   # 轻量双通道抓取
 │   │   ├── history.ts     # 消息历史管理与 CoT 思考流自动切除
 │   │   ├── session.ts     # JSONL Append-only 树状会话引擎 (DAG Fork & Rewind)
 │   │   ├── compaction.ts  # 两级长会话无损紧缩与记忆蒸馏
@@ -472,7 +522,9 @@ packages/
 │
 ├── tui/                   # 终端交互层 (基于 @earendil-works/pi-tui)
 │   ├── src/
-│   │   ├── app.ts         # TUI 主生命周期与差分渲染循环
+│   │   ├── app.ts         # TUI 主生命周期与差分渲染循环 (处理 SIGINT 与按键)
+│   │   ├── hud.ts         # Token 消耗、TTFT 延迟与 Cache 命中率状态栏
+│   │   ├── diff-view.ts   # 交互式 Git Unified Diff 预览与批准门
 │   │   ├── thinking.ts    # R1 思考流动态收起/展开折叠卡片
 │   │   ├── workflow-view.ts# DAG 工作流步骤与检查点可视化看板
 │   │   ├── subagent-view.ts# A2A 多子智能体并行执行看板
@@ -501,14 +553,18 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 ---
 
-## 十四、 raw 项目演进里程碑 (Milestones)
+## 十五、 raw 项目演进里程碑 (Milestones)
 
 ```
 [Phase 1] 白盒内核、沙箱、会话持久化与官方 OAuth 认证 (Days 1~3)
   ├── 初始化 packages/core，编写纯白盒 Agent Loop 与 Path Jail 沙箱
   ├── 实现智谱 BigModel 官方浏览器 OAuth 2.0 PKCE / Poll 在线登录与凭据存储
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
-  └── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动与模型插槽路由 (Model Slot Router)
+  ├── 接入 GLM 与 DeepSeek 统一 SSE 流式驱动与模型插槽路由 (Model Slot Router)
+  ├── 落地 RAW.md 项目级长期记忆与领域规范自适应注入
+  ├── 实现基于 Linux PGID 进程组看门狗的受控 Bash 执行器 (杜绝孤儿进程)
+  ├── 落地多工具调用并行并发流水线 (Promise.allSettled)
+  └── 接入二段式优雅抢占与取消状态机 (Ctrl+C / Esc 保留上下文即时纠偏)
 
 [Phase 2] Git Worktree 并发隔离与完整 MCP 引擎 (Days 4~5)
   ├── 实现 packages/worktree，落地子智能体工作区物理隔离与自动擦除
@@ -527,7 +583,10 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   └── 落实多轮思考流剥离 (CoT Stripping) 与 KV Cache 锁定调优
 
 [Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
-  ├── 接入 @earendil-works/pi-tui 差分渲染界面
+  ├── 接入 @earendil-works/pi-tui 差分渲染界面 (消除终端跳字闪烁)
+  ├── 挂载 Token HUD 实时仪表盘 (显化 Cache Read 命中率 %、TTFT 延迟与 Token 消耗)
+  ├── 接入交互式 Git Unified Diff 审查门与一键撤销
+  ├── 实现 /doctor 全链路网络连通性、凭据有效性与 Python 依赖一键体检
   ├── 挂载 DAG 工作流看板、A2A 看板与思考流折叠视图
   └── 端到端宏观政策与数据审计实战验收，发布 bpfio/raw v1.0
 ```
