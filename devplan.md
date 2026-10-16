@@ -72,8 +72,14 @@
 | 任务编号 | 任务名称 | 责任包 / 模块 | 核心交付物与验收标准 | 优先级 |
 |---|---|---|---|---|
 | **BI-14** | 声明式 DAG 工作流调度引擎 | `packages/workflow/` | 1. 解析 YAML 格式 DAG 步骤（依赖解析、并行拓扑）；<br>2. 每一步落盘 Checkpoint，中断后支持秒级断点自愈续跑 | P1 |
-| **BI-15** | A2A 跨角色分工与事实黑板 | `packages/a2a/` | 统一管理 Coordinator（编排）、Scout（搜集）、Auditor（精算）、Reporter（起草）；统一往 `Blackboard` 共享事实底账 | P1 |
+| **BI-15** | A2A 跨角色分工与事实黑板中枢 | `packages/a2a/` | 统一管理 Coordinator（编排）、Scout（搜集）、Auditor（精算）、Reporter（起草）；统一往 `Blackboard` 共享事实底账 | P1 |
+| **BI-15.1** | A2A 邮件私密信令网关 (Control Plane) | `packages/a2a/src/transports/a2a-email-gateway.ts` | 落地 SMTP/IMAP 跨网通信驱动：支持 TLS 465/993、HMAC-SHA256 验签、IMAP IDLE 秒级唤醒与发件人白名单，100% 穿透物理防火墙，支持人类抄送介入 | P1 |
+| **BI-15.2** | GitHub A2A 任务中枢 (Data & Task Plane) | `packages/a2a/src/transports/github-a2a-hub.ts` | 落地基于 Git 分支与 PR 的分布式任务中枢：任务专属分支派发（`bi-task-<id>`）、数据清洗脚本同步、Unified Diff 渲染与 PR 自动化审查合并 | P1 |
 | **BI-16** | Python 沙箱代码运行即验与审计闭环 | `packages/a2a/src/audit.ts` | 严禁口算；内置 Python 脚本运行门禁，强制执行勾稽对比，并依据证据一致性铁律自动纠偏 | P0 |
+
+> **跨网 A2A 双总线架构设计（控制面与数据面分离）**：
+> - **私密控制面（A2A 邮件私密信令网关）**：负责跨网 Agent 间的加密握手、静默唤醒、指令调度与进度汇报。依托邮件天然的 Store-and-Forward（离线存储转发）机制，100% 穿透企业局域网与物理防火墙，人类可直接抄送查阅或回复介入；
+> - **任务数据面（GitHub A2A 任务中枢）**：负责任务代码、重型数据表与研报的分发与交付。以 Git 分支作为任务隔离沙箱，以 Pull Request 作为最终验收门禁，实现全链路版本化不可篡改审计留痕。
 
 ---
 

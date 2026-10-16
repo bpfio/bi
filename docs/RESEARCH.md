@@ -565,7 +565,11 @@ packages/
 │   │   ├── audit.ts       # 领域中立的事实一致性核验协议 (AuditProtocol)
 │   │   ├── blackboard.ts  # 结构化共享事实黑板 (Blackboard)
 │   │   ├── router.ts      # 动态 A2A 消息路由器与生命周期总线
-│   │   └── envelope.ts    # A2A 强类型消息封套规范与序列化
+│   │   ├── envelope.ts    # A2A 强类型消息封套规范与序列化
+│   │   └── transports/    # 多模式 A2A 传输驱动层
+│   │       ├── eventbus.ts            # L1: 本地进程内极速事件总线 (<0.1ms)
+│   │       ├── a2a-email-gateway.ts   # L3: A2A 邮件私密信令网关 (SMTP/IMAP 跨物理墙控制面)
+│   │       └── github-a2a-hub.ts      # L3: GitHub A2A 任务中枢 (任务分支与 PR 交付数据面)
 │
 ├── tui/                   # 终端交互层 (基于 @earendil-works/pi-tui)
 │   ├── src/
