@@ -184,9 +184,35 @@
   - 视窗安全底线：强制保留最近 4 轮完整消息（`maxRecentMessages: 4`），且未压缩部分上限锁定为视窗的 20%（`maxRecentSizeRatio: 0.2`）；
   - `undoService.ts`：基于逻辑时间戳（`turnKey`）计算 `computeUndoCut`，支持精确回滚上下文与状态。
 
+### 4. ZCode 全量工程底座（桌面宿主、CUA 视觉反爬与视觉裁判）资产解包深度发现
+
+随着 ZCode 官方仓库 19 个包（11,855 个源文件）全量检出至本地只读参考库，我们对清华官方的桌面形态、服务层与视觉判定进行了深度代码走读，提炼出三大核心资产：
+
+#### (1) 官方桌面应用架构与核心宿主解耦 (`packages/desktop`)
+- **架构解耦**：官方桌面版基于 Electron 41 + React 19 + Tailwind CSS，但其内核严格划分为：
+  - `packages/desktop/src/main/`：原生窗口与宿主生命周期管理；
+  - `packages/desktop/src/renderer/`：高交互 React 视图；
+  - `packages/desktop/src/host/`：与内核引擎（`packages/core`）的零拷贝直接桥接。
+- **对 bi 的指导**：验证了内核引擎完全独立于表现层，`bi` 采用相同的微内核设计，可在极简 Pi-TUI 终端与未来桌面形态之间零成本复用同一个引擎。
+
+#### (2) 视觉核验判定器闭环 (Visual Judge - `apps/zcode-cli/packages/visualize-plugin/skills/visualize/visual-judge.md` 与 `packages/services/src/gen-ui/`)
+- **核心痛点**：在数据分析与宏观研报场景中，Agent 自动编写 Python/ECharts/SVG 脚本生成的可视化图表，极易出现文字穿模重叠、坐标轴刻度过密挤压截断、图例溢出或配色反差缺失等“代码语法正确但视觉体验灾难”的问题。
+- **清华算法**：
+  - 在图表渲染后，通过 Headless 浏览器自动将 HTML/SVG 图表快照转换为图片；
+  - 启动 Visual Judge 多模态专用视觉评判智能体，执行 5 维度严苛视力体检：文字重叠率（0 重叠）、坐标轴标签完整度（0 截断）、图例可见性、图表边缘留白与暗黑/明亮色阶自适应；
+  - 判定不通过时，即时生成带有具体 CSS/配置参数的微调指令，回灌给绘图智能体自愈重绘，形成“生成 → 截图 → 视觉评判 → 自愈重绘”的闭环，确保交付 0 瑕疵的商业级研报图表。
+- **对 bi 的价值**：直接吸收为 `bi` 的 `BI-18.2` 视觉核验判定器，彻底拉开与普通开源 Agent 的专业度差距。
+
+#### (3) Computer Use Agent (CUA) 动态反爬兜底体系 (`packages/zcode-cua/`)
+- **核心痛点**：官方统计局公报、行业协会高频数据往往部署在反爬虫、Cloudflare 人机验证盾或复杂动态 SPA 网页背后，传统只读 HTTP `curl`/`fetch` 频繁返回 403 Forbidden 或空白挂载点。
+- **清华方案**：
+  - 官方实现独立的 `packages/zcode-cua/`，内置 `broker-server.ts` 与 `pip-session-node.ts`；
+  - 支持视窗画中画（PiP）受控视觉交互，模拟真实用户浏览、点击翻页与等待网络请求排空；
+- **对 bi 的价值**：为 `bi` 的政策探针（Scout）提供最强兜底。当标准抓取被强反爬拦截时，平滑降级至受控 Headless/CUA 机制获取数据，杜绝数据盲区。
+
 ---
 
-## 四、 多 Agent 协同机制与 A2A 协议规范
+## 三、 多 Agent 协同机制与 A2A 协议规范
 
 在架构设计上，`bi` 坚决杜绝“把角色、提示词或物理模型写死在 TypeScript 源码中”的低级硬编码反模式。系统严格贯彻**三权分立与两层协同的解耦架构**：
 1. **引擎运行时（Engine Runtime - `packages/a2a` & `packages/core`）**：100% 领域中立、角色中立、模型中立，仅提供通用的智能体生命周期容器、消息路由、辩论协议原语与事实黑板；
@@ -250,6 +276,11 @@
   - 严禁模型凭空“脑补/口算”统计数据与良率指标；涉及财税勾稽、良率对比、产能推算，必须调用 Python（`pandas`/`openpyxl`）在独立沙箱中实际执行运算，以代码运行的真实输出作为唯一事实底账；
   - 严格贯彻“证据一致性铁律”（有良率数据即承认存在产线、0/1 与 1-100 维度分离），自动拦截前后矛盾逻辑；
   - 所有子智能体基于用户配置的单一主力大模型按需派生，零额外 Key 依赖、零异构模型开销。
+* **研报视觉裁判门禁 (Visual Judge Gate - BI-18.2)**：
+  - 研报起草子智能体（Reporter）或绘图工具生成的 ECharts / SVG 图表，必须强制流经 Visual Judge 判定门禁；
+  - 基于 Headless 渲染快照与多模态反查，自动核验 0 文字穿模重叠、0 坐标轴标签截断，未达标触发当前轮自愈重绘，确保最终研报交付达到顶级咨询机构水准。
+* **探针防爬动态兜底 (CUA Anti-Scraping Fallback)**：
+  - 政策探针（Scout）面对部委动态反爬、Cloudflare 盾或复杂 SPA 站点时，支持平滑降级至受控 Headless/CUA 机制（参考清华 `packages/zcode-cua/` 架构），模拟真实视窗交互获取公告全文，杜绝数据盲区。
 * **共享事实黑板模式（Blackboard Pattern 原语）**：
   - 子智能体将各自核验无误的关键事实发布至共享黑板，其他智能体即时可见，杜绝重复计算与信息孤岛。
 
@@ -765,7 +796,8 @@ packages/
     │   └── runner.ts      # 插件 Python/Node 隔离运行看门狗 (结合 Worktree)
     └── presets/           # CLI 开箱即用内置的官方精选插件
         ├── spreadsheets/  # 官方 XLSX 专业勾稽计算与模板库
-        └── pdf-extractor/ # 官方长篇政策 PDF 结构化抽取核心
+        ├── pdf-extractor/ # 官方长篇政策 PDF 结构化抽取核心
+        └── visualize/     # 官方数据可视化插件与 Visual Judge 视觉核验自愈 (BI-18.2)
 
 presets/                   # 开箱即用声明式资产 (数据/配置层，零代码入侵)
 ├── agents/                # 预置角色模版 (YAML 声明式定义，基于单模型按需派生)
@@ -813,6 +845,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 [Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
   ├── 接入 @earendil-works/pi-tui 差分渲染界面 (消除终端跳字闪烁)
   ├── 挂载 Token HUD 实时仪表盘 (显化 Cache Read 命中率 %、TTFT 延迟与 Token 消耗)
+  ├── 实装 BI-18.2 Visual Judge 视觉核验判定器与图表渲染自愈闭环
   ├── 接入交互式 Git Unified Diff 审查门与一键撤销
   ├── 实现 /doctor 全链路网络连通性、凭据有效性与 Python 依赖一键体检
   ├── 挂载 DAG 工作流看板、A2A 看板与思考流折叠视图
