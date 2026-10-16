@@ -108,12 +108,14 @@
 | **BI-02** | 智谱 BigModel 官方双轨特权认证引擎 | `packages/core/src/auth/cli-oauth.ts`<br>`packages/core/src/auth/coding-plan-key.ts` | 1. **通道一**：OAuth 2.0 PKCE/Poll 状态机，生成 32 字节 PollToken 并唤醒浏览器，捕获 Project Access Token (PAT)；<br>2. **通道二**：API Key 二阶段换票器（换取 `token_use: "project_access"` 的短期 PAT）；<br>3. 凭据加密落盘于 `~/.bi/credentials.json` (0600 权限) | P0 |
 | **BI-02.1** | Ultra VIP 专线路由与特权指纹标头注入 | `packages/core/src/gateway/ultra-gateway.ts`<br>`packages/core/src/gateway/fingerprint.ts` | 1. 请求标头注入 `X-Coding-Plan-Api-Key`、`User-Agent: zcode-cli/0.1.8`、`x-zcode-trace-id`；<br>2. 自动重定向至专线 `/api/v1/ultra/anthropic/v1/messages`；实测触发官方 Coding Plan 计费抵扣与客户端费率 | P0 |
 | **BI-03** | Append-only JSONL 树状会话引擎 | `packages/core/src/session/manager.ts`<br>`packages/core/src/session/types.ts` | 1. 会话落盘至 `~/.bi/sessions/<id>.jsonl`，原子追加，抗机器掉电；<br>2. 每条记录携带 UUIDv7 `id` 与 `parentId`，天然支持分支与时光倒流；<br>3. SQLite WAL 索引表（`~/.bi/sessions.db`）实现历史列表毫秒级检索 | P0 |
+| **BI-03.1** | 会话时光倒流与物理文件差分回滚引擎 | `packages/core/src/session/file-rewind.ts` | 吸收清华核心算法：实现 `file-rewind.ts`（21KB）与 `workspace-checkpoints.ts`，基于 `diff` 逆向补丁与 SHA256 哈希校验，支持会话回退时工作区文件的物理级无损恢复与撤销 | P1 |
 | **BI-04** | 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/model-router.ts`<br>`packages/core/src/drivers/sse-driver.ts` | 统一抽象 OpenAI / Anthropic SSE 事件流；实现 `ModelSlotRouter`，将逻辑语义插槽（`fast`, `reasoner`, `auditor`）默认解析映射至用户单一主力模型 | P1 |
 | **BI-04.1** | Prompt Cache 黄金排布与 Fuzzy 工具解析器 | `packages/core/src/prompt.ts`<br>`packages/core/src/parser.ts` | 1. 严格锁定 `System + BI.md + Tools` 前缀顺序，确保服务端 Cache 命中率 ≥ 85%；<br>2. 引入 Qwen 风格容错解析器，对缺失闭合符或包裹代码块的畸形 JSON 自动 AST 修复 | P1 |
 | **BI-05** | `BI.md` 项目长期记忆自适应注入器 | `packages/core/src/rules.ts` | 启动时自动向上递归检索当前工程根目录的 `BI.md` 或 `.bi/rules.md`，将政策信源、统计口径与禁用词静态注入 System Prompt 前缀 | P1 |
 | **BI-05.1** | Dream Cycle 仿生做梦记忆沉淀中枢 | `packages/core/src/memory/dream.ts` | 借鉴清华认知神经科学设计：利用 `evaluateAutoDreamTiming` 与 `.consolidate-lock` 文件锁，在后台空闲期自动扫描会话精华，沉淀固化入项目级长期记忆 | P1 |
 | **BI-06** | 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/core/src/tools/bash.ts` | 派生独立子进程并调用 `setsid()` 赋予独立 PGID；超时（默认 120s）或被取消时向 `-PGID` 发送 `SIGTERM → (等待1.5s) → SIGKILL`，彻底杜绝僵尸进程 | P0 |
 | **BI-06.1** | Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/sandbox/path-jail.ts` | 借鉴 Codex，内核与路径层严密拦截对 `~/.ssh`、`~/.gnupg`、`~/.bash_history`、`/etc/` 以及项目外 `.env` 文件的读取尝试，违规直接阻断 | P0 |
+| **BI-06.2** | 嵌入式原生快速搜索加速器 | `packages/core/src/sandbox/embedded-search.ts` | 吸收清华执行加速设计：透明注入 `embedded-search-prelude.ts`（7.3KB），将模型的 `find`/`grep` 命令透明劫持路由至预编译静态 `bfs` 与 `ugrep` 二进制，搜索性能提升 20 至 50 倍且自动过滤 .git 目录 | P1 |
 | **BI-07** | 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/agent.ts` | 1. 支撑只读工具并发执行（`Promise.allSettled`）；<br>2. 落地二段式取消：单击 Esc/Ctrl+C 暂停并保留上下文，连续双击才真正退出 | P1 |
 | **BI-07.1** | 8 级阶梯弹性文件匹配引擎 | `packages/core/src/tool/edit-matchers.ts` | 吸收清华核心算法：实现 exact、quote_normalized（中英弯引号）、line_number_stripped、indentation_flexible 与 block_anchor（0.8 相似度）等 8 级阶梯匹配，消灭匹配失败 | P0 |
 | **BI-07.2** | Read-Before-Write 门禁与 mtime 防脏写看门狗 | `packages/core/src/tool/read-file-state.ts` | 吸收清华防御机制：维护 `ReadFileStateMap`，未读文件严禁编辑修改；校验磁盘真实 `mtime`，一旦发生外部并发改动立即阻断并强制重新读取 | P0 |
@@ -168,11 +170,57 @@
 | **BI-19** | Pi-TUI 双缓冲差分无闪烁渲染终端 | `packages/tui/src/app.ts`<br>`packages/tui/src/thinking.ts` | 移植 `@earendil-works/pi-tui` 双缓冲字符矩阵差分引擎；终端流式打字 0 闪烁，CPU < 1%；支持 DeepSeek-R1 思考流卡片动态折叠收起/展开 | P1 |
 | **BI-20** | 交互式 Git Unified Diff 审查门与 /doctor | `packages/tui/src/diff-view.ts`<br>`packages/core/src/doctor.ts` | 1. 文件变更弹出 Unified Diff 供人类确认；<br>2. `/doctor` 一键全链路体检智谱网络、凭据有效期、Python 环境（`pandas`/`openpyxl`）并附带修复建议 | P1 |
 | **BI-21** | 宏观政策与数据审计端到端实战演练验收 | 测试套件与场景演练 | 选取真实部委产业公报与上市公司财报，全流程演练政策比对、良率勾稽、Worktree 隔离与研报生成，指标误差 0 容忍 | P0 |
+| **BI-21.1** | 任务完工前置自验看门狗 | `packages/core/src/verifier/target-verifier.ts` | 吸收清华闭环校验机制：实现 `target-completion-verification.ts`（14.7KB），在 Agent 自行声称任务完成前进行目标契约严格核验，未通过时阻断退出并返回差距清单自愈续跑 | P0 |
 | **BI-22** | Bun Compile 独立单文件原生二进制构建发布 | `scripts/build-bin.ts` | 通过 `bun build --compile` 打包输出免安装、零依赖的单一独立可执行文件 `bi`，跨平台支持 Linux x64 与 macOS arm64 | P0 |
 
 ---
 
-## 三、 开发智能体实战决策指引 (FAQ & Self-Correction)
+## 三、 开源轮子全景资产图谱与代码映射矩阵 (SSOT)
+
+> **开发铁律**：开发智能体在执行具体任务时，必须**严禁从零重复造轮子**！首选从清华大学 ZCode 官方仓库（`/home/yupeng/references/zcode`）中提取并适配工业级成熟源码；次选从 Pi Agent、DeepCode、OpenCode 或成熟社区库中吸收。下表为各任务的权威资产映射清单：
+
+| 任务编号与名称 | 首选 ZCode 官方源码轮子 (清华大学工业级资产) | 其它标杆 / 社区成熟轮子 (备选与互补) | 代码复用率与自研量估算 | 核心算法与复用收益 |
+|---|---|---|---|---|
+| **BI-01** Bun Monorepo 骨架与多包拓扑初始化 | `apps/zcode-cli/packages/contracts/`<br>`apps/zcode-cli/packages/shared-types/`<br>`turbo.json`, `pnpm-workspace.yaml` | `@earendil-works/pi-agent-core`<br>`opencode/packages/core/` | 90% 轮子<br>10% 胶水配置 | 完整复用契约定义、类型签名与多包编译流水线，消灭接口歧义。 |
+| **BI-02** 智谱 BigModel 官方双轨特权认证引擎 | `packages/core/src/runtime/methods/model-runtime-headers.ts`<br>`packages/adapters/src/model/off-peak-request-auth.ts`<br>`packages/adapters/src/model/failure-classifier.ts` | Node `node:crypto` (生成安全 32 字节 PollToken) | 85% 轮子<br>15% 适配 | 复用官方 OAuth PKCE 轮询与二阶段换票机制，凭据加密落盘。 |
+| **BI-02.1** Ultra VIP 专线路由与特权指纹标头注入 | `packages/adapters/src/model/runner-network-headers.ts`<br>`packages/adapters/tests/provider-endpoint-routing-fetch.test.ts` | `opencode/packages/ai/src/providers/` | 95% 轮子<br>5% 胶水 | 复用 `X-Coding-Plan-Api-Key` 标头注入与 `/api/v1/ultra/` 专线 URL 重写，触发折扣。 |
+| **BI-03** Append-only JSONL 树状会话引擎 | `packages/core/src/runtime/methods/message-persistence.ts`<br>`packages/core/src/runtime/methods/session-fork.ts` (53KB)<br>`packages/core/src/runtime/methods/timeline-persistence.ts` | `pi/packages/coding-agent/src/core/session-manager.ts` (UUIDv7) | 90% 轮子<br>10% 适配 | 复用 53KB 会话分叉树算法，掉电不丢记录，毫秒级分支检索。 |
+| **BI-03.1** 会话时光倒流与物理文件差分回滚引擎 | `packages/core/src/runtime/methods/file-rewind.ts` (21KB)<br>`packages/core/src/runtime/methods/workspace-checkpoints.ts` (11KB) | `diff` npm package (`applyPatch`, `StructuredPatch`) | 90% 轮子<br>10% 适配 | 复用 21KB 逆向补丁恢复算法，时光倒流时物理工作区自动差分自愈。 |
+| **BI-04** 单模型统一 SSE 流式驱动与插槽路由器 | `packages/core/src/runtime/methods/turn-model-step.ts` (32KB)<br>`packages/core/src/runtime/methods/streaming-recovery.ts`<br>`packages/adapters/src/model/runner-generate.ts` | `deepcode/packages/core/src/session.ts` (R1 流式分离)<br>`eventsource-parser` | 85% 轮子<br>15% 适配 | 复用 32KB 流式 Step 状态机与断线自愈恢复，支持 R1 思考流无缝分离。 |
+| **BI-04.1** Prompt Cache 黄金排布与 Fuzzy 工具解析器 | `packages/core/src/context/builder.ts` (12KB, `ephemeral` 标记)<br>`packages/core/src/tool/input-normalization.ts`<br>`packages/core/src/tool/tool-input-validation-issues.ts` | Qwen CLI 畸变 JSON 自动修复 AST | 90% 轮子<br>10% 适配 | 严格锁定前缀顺序，Cache 命中率 ≥ 85%；自动清洗修复畸变 JSON。 |
+| **BI-05** `BI.md` 项目长期记忆自适应注入器 | `packages/core/src/memory/extraction.ts` (10KB)<br>`packages/core/src/memory/memory-file-path.ts`<br>`packages/core/src/context/sections/memory.ts` | Claude Code `CLAUDE.md` 注入规范 | 90% 轮子<br>10% 适配 | 向上递归检索定位 `BI.md`，事实与口径静态注入 System Prompt 前缀。 |
+| **BI-05.1** Dream Cycle 仿生做梦记忆沉淀中枢 | `packages/core/src/memory/dream.ts` (9.9KB, `evaluateAutoDreamTiming`)<br>`packages/core/src/memory/memory-agent-loop.ts` | 无 (清华大学 ZCode 独创认知算法) | 95% 轮子<br>5% 胶水 | REM 做梦机制，后台空闲期自动扫描会话精华，增量沉淀固化入长期记忆。 |
+| **BI-06** 受控 Bash 执行器与 Linux PGID 进程组看门狗 | `packages/adapters/src/exec/process-tree.ts`<br>`packages/adapters/src/exec/node-execution-adapter-process.ts`<br>`packages/core/src/tool/bash-timeout-policy.ts`<br>`packages/adapters/src/exec/cwd-capture.ts` | `pi/packages/coding-agent/src/core/tools/bash.ts` | 90% 轮子<br>10% 适配 | 独立 PGID 进程组，`SIGTERM → SIGKILL` 强杀超时与孤儿进程，自动捕获 cwd。 |
+| **BI-06.1** Credential Guard 路径沙箱越界防御 (Path Jail) | `packages/core/src/tool/path-policy.ts`<br>`packages/core/src/tool/path-normalization.ts`<br>`packages/core/src/tool/handlers/bash-readonly-policy-*.ts` (14 文件) | OpenAI Codex CLI Path Jail 规则 | 90% 轮子<br>10% 适配 | 拦截 `~/.ssh`、`~/.gnupg`、`/etc/` 与外部 `.env` 访问，彻底封堵凭据外泄。 |
+| **BI-06.2** 嵌入式原生快速搜索加速器 | `packages/adapters/src/exec/embedded-search-prelude.ts` (7.3KB)<br>`apps/zcode-cli/dependencies/native-search/` | BurntSushi/ripgrep 官方发布包 | 95% 轮子<br>5% 胶水 | 透明劫持 `find`/`grep` 至预编译静态 `bfs`/`ugrep`，速度提升 20 至 50 倍。 |
+| **BI-07** 多工具并行流水线与二段式抢占取消状态机 | `packages/core/src/tool/scheduler.ts` (7KB)<br>`packages/core/src/runtime/methods/streaming-tool-coordinator.ts` (14KB)<br>`packages/core/src/runtime/methods/turn-tools.ts` | Pi Agent `Promise.allSettled` 并行模式 | 85% 轮子<br>15% 适配 | 只读工具安全并发，双击抢占取消且保留已有上下文。 |
+| **BI-07.1** 8 级阶梯弹性文件匹配引擎 | `packages/core/src/tool/edit-matchers.ts` (13.2KB) | 无 (清华大学 ZCode 独创弹性算法) | 100% 轮子<br>0% 自研 | 8 级阶梯（exact、quotes、line-number、indentation、block 0.8），彻底消灭编辑失败。 |
+| **BI-07.2** Read-Before-Write 门禁与 mtime 防脏写看门狗 | `packages/core/src/tool/read-file-state.ts`<br>`packages/core/src/tool/read-file-state-metadata.ts` (5.4KB)<br>`packages/core/src/tool/handlers/edit.ts` | 无 (清华大学 ZCode 独创防御机制) | 100% 轮子<br>0% 自研 | 未读严禁修改，校验磁盘真实 mtime，外部并发篡改立即阻断。 |
+| **BI-08** 单次工具输出 64KB 有界截断保护 | `packages/adapters/src/exec/bash-output-policy.ts`<br>`packages/adapters/src/exec/bash-file-output.ts` (7KB)<br>`packages/core/src/tool/executor/result-content-projection.ts` | `zcode-app-cli` `bounded-tool-text.ts` | 95% 轮子<br>5% 胶水 | 单次工具输出上限 64KB，保留头尾 200 行，完整内容通过文件描述符直接落盘。 |
+| **BI-09** 历史工具输出自动脱水修剪器 (Pruner / Microcompact) | `packages/core/src/compact/microcompact.ts` (9.3KB) | 无 (清华大学 ZCode 独创脱水算法) | 100% 轮子<br>0% 自研 | 保留最近 5 轮工具结果，历史老旧 `Read`/`Bash` 脱水为单行标记，省 70% Token。 |
+| **BI-10** 80% 高水位静默自动紧缩器 (Auto-Compactor) | `packages/core/src/compact/policy.ts` (6.2KB)<br>`packages/core/src/compact/manual.ts`<br>`packages/core/src/runtime/methods/compact-active.ts` (28KB) | Claude Code `/compact` 机制 | 90% 轮子<br>10% 适配 | 扣减输出预留后的有效视窗计算，3 击熔断器，自动摘要事实底账并重构上下文。 |
+| **BI-11** 终端 Token HUD 实时显性感知与手动控制门 | `packages/core/src/runtime/methods/context-usage.ts` (14KB)<br>`packages/core/src/runtime/methods/usage-observability.ts` | `pi/packages/tui/src/program-status.ts` | 85% 轮子<br>15% 适配 | 常驻渲染已用 Token、百分比与缓存命中率，支持 `/compact` 手动交互。 |
+| **BI-12** Git Worktree 物理并发沙箱引擎 | `packages/superpowers-plugin/skills/using-git-worktrees/SKILL.md`<br>`packages/adapters/src/context/git-snapshot.ts` | Node `child_process.execFile` | 80% 轮子<br>20% 胶水 | 任务专属独立工作树 `~/.bi/worktrees/<id>`，审查后 Merge，失败静默丢弃。 |
+| **BI-13** 完整 MCP 客户端 (Stdio + SSE 双通道) | `packages/adapters/src/mcp/stdio-transport.ts`<br>`packages/adapters/src/mcp/network.ts`<br>`packages/adapters/src/mcp/pool.ts` | `pi/packages/mcp/src/client.ts` (21KB)<br>`streamable-http.ts` | 90% 轮子<br>10% 适配 | 纯白盒 Stdio 与 SSE 客户端，无第三方黑盒依赖，直接连通 QNAP Logbook。 |
+| **BI-14** 声明式 DAG 工作流调度引擎 | `packages/dynamic-workflow/src/engine/engine.ts` (36KB)<br>`packages/dynamic-workflow/src/engine/scheduler.ts` (26KB)<br>`packages/dynamic-workflow/src/engine/journal-memory.ts` (11KB) | 无 (清华大学 ZCode 独创工作流引擎) | 90% 轮子<br>10% 适配 | 步骤并行拓扑调度，每步 Checkpoint 持久化，进程重启秒级断点自愈续跑。 |
+| **BI-14.1** 因果拓扑图与 Taint 污点分析编译器 | `packages/dynamic-workflow/src/analysis/causality-graph.ts`<br>`packages/dynamic-workflow/src/analysis/taint.ts` | Mermaid 流程图导出引擎 | 95% 轮子<br>5% 胶水 | 静态拓扑排序与数据污染分析，编译期检测死锁并生成可视化架构图。 |
+| **BI-15** A2A 跨角色分工与共享事实黑板 | `packages/core/src/subagent/runner.ts` (68KB)<br>`packages/core/src/subagent/explore.ts`<br>`packages/core/src/subagent/coordinator-response.ts` | OpenCode `protocol/` 跨端契约 | 85% 轮子<br>15% 适配 | 统一管理 Coordinator、Scout、Auditor、Reporter，单模型按需派生，事实黑板共享。 |
+| **BI-15.1** A2A 邮件私密信令网关 (Control Plane) | `packages/core/src/tool/handlers/send-message.ts` (信令封套) | `nodemailer` (SMTP 465)<br>`mailparser` / `imap-flow` (IMAP IDLE)<br>Node `node:crypto` (HMAC-SHA256) | 40% 轮子<br>60% 自研协议 | **核心创新轮子**：SMTP/IMAP 穿透防火墙跨网信令传输，HMAC 签名，人类抄送介入。 |
+| **BI-15.2** GitHub A2A 任务中枢 (Data & Task Plane) | `packages/core/src/tool/diff.ts` | `@octokit/rest` (GitHub 官方 SDK)<br>`diff` npm package | 50% 轮子<br>50% 自研编排 | **核心创新轮子**：基于分支与 PR 的分布式任务派发，Unified Diff 审查合并。 |
+| **BI-15.3** A2A 三级鉴权体系与角色能力矩阵 | `packages/core/src/permission/service.ts` (24KB)<br>`packages/core/src/subagent/tool-policy.ts` | Node `crypto.timingSafeEqual` | 85% 轮子<br>15% 适配 | L1 角色能力矩阵（Scout 禁写，Auditor 沙箱）；L2 邮件验签防重放；L3 人类审查门。 |
+| **BI-16** Python 沙箱代码运行即验与 Traceback 自愈 | `packages/node-repl-host/`<br>`packages/spreadsheets-plugin/skills/xlsx/xlsx.py` | 系统原生 `python3` + `pandas` + `openpyxl` | 80% 轮子<br>20% 适配 | 严禁口算！Python 沙箱计算良率，捕获 Traceback 并在当前轮自愈重跑。 |
+| **BI-17** 官方插件双协议加载器 (.zcode & .claude) | `packages/adapters/src/plugins/marketplace.ts`<br>`packages/adapters/src/plugins/plugin-components.ts`<br>`packages/adapters/src/plugins/markdown-frontmatter.ts` | Anthropic Claude Plugin 官方规范 | 90% 轮子<br>10% 适配 | 纯声明式解析双协议插件目录（`plugin.json`, `skills/`, `mcpServers/`）。 |
+| **BI-18** 官方核心数据研报插件全量吸收移植 | `packages/spreadsheets-plugin/`<br>`packages/pdf-plugin/`<br>`packages/documents-plugin/`<br>`packages/presentations-plugin/`<br>`packages/visualize-plugin/` | 无 (官方全套高质量插件资产) | 100% 轮子<br>0% 自研 | 全量吸收移植 Excel/CSV 审计（`xlsx.py`）、PDF 双栏解析、Word/PPT 报告生成。 |
+| **BI-18.1** 清华顶尖 Agent SOP 技能集吸收 | `packages/superpowers-plugin/skills/` | 无 (清华顶级工程学科研资产) | 100% 轮子<br>0% 自研 | 全量吸收 `using-git-worktrees`、`verification-before-completion` 与 `systematic-debugging`。 |
+| **BI-19** Pi-TUI 双缓冲差分无闪烁渲染终端 | `packages/tui/src/app-thought-components.tsx` (折叠逻辑) | `pi/packages/tui/src/tui.ts` (50KB 差分引擎)<br>`deepcode/packages/core/src/session.ts` | 90% 轮子<br>10% 适配 | 双缓冲字符矩阵差分引擎，终端打字 0 闪烁，CPU < 1%，R1 思考流动态卡片收起。 |
+| **BI-20** 交互式 Git Unified Diff 审查门与 /doctor | `packages/tui/src/app-approval.ts` (6KB)<br>`packages/core/src/tool/diff.ts` | `pi/packages/tui/src/components/diff-view.ts`<br>`shiki` (语法高亮) | 85% 轮子<br>15% 适配 | 文件变更弹出 Unified Diff 供人类确认；`/doctor` 全链路体检凭据与环境。 |
+| **BI-21** 宏观政策与数据审计端到端实战演练验收 | `packages/spreadsheets-plugin/` & `pdf-plugin/` 内置测试用例与断言 | 无 | 80% 轮子<br>20% 场景编写 | 真实部委公报与上市公司财报全流程演练，良率勾稽 0 误差验收。 |
+| **BI-21.1** 任务完工前置自验看门狗 | `packages/core/src/runtime/methods/target-completion-verification.ts` (14.7KB) | `superpowers-plugin/skills/verification-before-completion` | 95% 轮子<br>5% 胶水 | 闭环自验拦截门：模型宣布完成前强制对比目标契约，未达标阻断退出并自愈。 |
+| **BI-22** Bun Compile 独立单文件原生二进制构建发布 | `apps/zcode-cli/dependencies/native-search/` (预编译静态二进制打包) | `bun build --compile` 官方工具链 | 90% 轮子<br>10% 脚本 | 输出零依赖单一二进制 `bi`，内置静态 `ripgrep`/`ugrep`/`bfs`，支持 Linux/macOS。 |
+
+---
+
+## 四、 开发智能体实战决策指引 (FAQ & Self-Correction)
 
 在开发阶段，如果执行 Agent 遇到异常，必须按以下标准规程自愈：
 
@@ -185,3 +233,7 @@
 3. **遇到工作区冲突或改动回滚时**：
    - 严禁在当前工作区执行破坏性的 `git reset --hard`；
    - 所有实验性代码必须在 `~/.bi/worktrees/` 中进行，即便崩溃只需安全删除工作树，主工作区毫发无损。
+4. **遇到目标任务宣布完成时**：
+   - 严禁未经前置看门狗（`BI-21.1`）即直接向用户交卷；
+   - 必须通过 `TargetCompletionVerification` 严格核验原始需求契约与证据链，100% 闭环后方可汇报办结。
+
