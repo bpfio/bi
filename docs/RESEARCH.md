@@ -1279,3 +1279,61 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 - **思考流剥离与序列化截断**：生成摘要请求时剥离历史 Assistant 消息中的 Thinking/Reasoning 思考块，并将历史单次工具输出统一压减至 2000 字符内，杜绝摘要生成请求自身出现视窗超限；
 - **400 视窗溢出紧急自愈与自动重试**：吸收 Pi Agent `context-overflow.test.ts`，一旦 API 返回上下文超限异常，捕获 `isContextOverflow(error)` 并自动以 `reason: "overflow"` 触发紧急压缩，并在压缩重构完成后携带 `willRetry: true` 自动重试当前中断的回合，确保长程任务坚不可摧。
 
+
+
+---
+
+## 十八、 全面代码模块复刻深度自省与新增高价值子系统 (Full-Spectrum Modular Synthesis & New Subsystems)
+
+为了彻底满足 `/goal` 指令“对 `zcode` 与 `kimi-code` 进行全量无死角逐模块对照排查、剔除桌面端冗余包并完整吸收全部核心 CLI 与 Agent 能力”的严格要求，架构团队对两大标杆进行了地毯式递归审计，全面甄别出 7 个在会话撤销级联回滚、动态规则按需发现、模式级权限门禁、声明式技能调度、多模态局部检视、多模式互斥协调以及系统剪贴板原生互通维度的关键高价值模块，并将其无缝固化入 `bi` 核心架构体系：
+
+### 1. 会话级联撤销状态机与参与者总线 (AgentConversationUndoService & Participant Bus / BI-03.4)
+- **问题根因**：传统 Agent 的 `/undo` 命令往往只是简单在内存数组中截断最近 N 轮消息，而此前轮次中工具创建或覆写的物理磁盘文件依然残留，导致“会话回滚了但代码改脏了”，模型在新回合读取物理文件时产生逻辑撕裂与上下文幽灵状态。
+- **机制原理**：吸收 Kimi Code [undoService.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/undo/undoService.ts)（10.5KB）与 [conversationUndoParticipants.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/contextMemory/conversationUndoParticipants.ts)：
+  1. 计算 `computeUndoCut` 算法：根据目标回合 ID 严格计算事件切点，剔除已回退的交互事件；
+  2. 级联通知参与者总线 (`IAgentConversationUndoParticipantRegistry`)：向系统注册的全部参与者广播 `ContextUndone` 事件；
+  3. 联动 `fileHistoryService`（BI-03.3）：物理文件快照服务收到通知后，提取目标切点之后生成的所有二进制变更快照，反向物理恢复磁盘文件至前置状态，实现会话上下文与工作区物理文件的“双向原子级联回滚”。
+
+### 2. 动态嵌套规则探测器与路径自适应注入服务 (Dynamic Nested AGENTS.md Discovery & Path-Adaptive Reminder / BI-05.3)
+- **问题根因**：在大型单体仓库（Monorepo）或多包工程中，各子目录往往包含独立的 `AGENTS.md` 或 `BI.md` 规则。若在初始 System Prompt 中全量递归拼接所有子目录规则，将瞬间撑爆上下文前缀并击穿缓存；若完全不加载，模型进入子目录修改代码时将破坏子包开发规范。
+- **机制原理**：吸收 Kimi Code [agentsMdReminderService.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/agentsMdReminder/agentsMdReminderService.ts)：
+  1. 静态初始阶段仅加载工作区根目录规则；
+  2. 运行期间，通过 Tree-sitter Bash AST 解析与文件系统工具调用路径，动态探测模型当前轮次触达的文件绝对路径；
+  3. 沿目录树自底向上查找未被阅读过的嵌套 `AGENTS.md` / `BI.md` 文件；
+  4. 通过 `beforeStep` 钩子动态将未读规则以紧凑格式注入当前回合消息尾部，既保护了根目录静态 Prompt Cache，又实现了局部规范的“按需动态提醒与自适应生效”。
+
+### 3. 模式级工具权限匹配器与三态授权门禁 (Pattern-Based Permission Rules & Three-State Permission Gate / BI-06.5)
+- **问题根因**：粗粒度的工具权限控制要么“全部放行（极度危险）”，要么“每个调用都弹窗确认（严重阻断长流程自动化）”，缺乏基于参数正则/Glob 的细颗粒度白名单规则与会话级授权状态。
+- **机制原理**：吸收 Kimi Code [matchesRule.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/permissionRules/matchesRule.ts) 与 [permissionModeService.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/permissionMode/permissionModeService.ts)：
+  1. 规则声明采用 `ToolName(ArgPattern)` 格式（如 `Bash(git status*)`、`ReadDir(*)`、`WriteFile(tests/*)`），基于 `picomatch` 进行高性能 Glob 匹配；
+  2. 运行时维护三态模式（`manual` 人工干预、`yolo` 全自动放行、`auto` 智能按规则放行）；
+  3. 支持三级确认作用域（`scope: 'once'` 单次放行、`scope: 'session'` 本会话持久白名单）；
+  4. 拒绝干预携带结构化反馈：当用户拒绝高危动作时，允许输入 `feedback: string`，作为工具执行错误结构体返回给模型，指导模型在下一轮主动纠偏。
+
+### 4. 声明式技能动态调度与沙箱执行工具 (Skill Tool & Execution Runtime / BI-07.9)
+- **问题根因**：虽然智能体可以通过读文件方式阅读本地 Skill 说明，但在自动化调用时缺乏显式的工具契约与结构化入参校验，容易出现技能执行参数缺失或无法闭环验证。
+- **机制原理**：吸收 Kimi Code [skillTool.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/features/skill/tools/skillTool.ts)（4.4KB）：
+  1. 向模型暴露一等公民工具 `Skill({ skill: "name", input: "args" })`；
+  2. 动态扫描工程 `.bi/skills/` 与用户全局 `~/.bi/skills/` 目录，解析 Frontmatter 声明与 Schema；
+  3. 调用时执行参数合法性校验，并在隔离沙箱或子进程中按 SOP 标准规范驱动技能执行，返回结构化执行成果。
+
+### 5. 多模态富媒体就地检视器与局部高精裁剪工具 (ReadMediaFile & Region Zoom Tool / BI-08.3)
+- **问题根因**：对于大尺寸架构图、密集 UI 截图或复杂报表，整图缩放至 1024 像素后往往造成细节模糊，模型无法看清关键按钮文案或微小折线走势；若直接传入超大分辨率原图，又会打爆 Visual Token 上限。
+- **机制原理**：吸收 Kimi Code [readMediaFileTool.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/tools/read-media-file/readMediaFileTool.ts)（20.2KB）：
+  1. 向模型暴露 `read_media_file` 专用富媒体检视工具；
+  2. 首次检视返回 `<system>` 元数据（物理宽度、高度、格式与通道）；
+  3. 支持高精局部放大：模型可传入 `region: [x1, y1, x2, y2]` 相对坐标，底层调用 Sharp/Canvas 自动进行高清晰度裁切缩放，在不超 Token 预算的前提下实现微观细节微米级精准研判。
+
+### 6. 运行期高阶工作模式互斥协调器 (Operating Mode Mutex Coordinator / BI-14.4)
+- **问题根因**：在现代智能体系统中，存在多种重型运行模式：PlanMode（只读规划）、SwarmMode（子任务蜂群并发）、TowerMode（物理 Worktree 分支协同协作）、GoalMode（长程无干预攻坚）。若不同模式间状态机缺乏中央仲裁，容易出现“在 Tower 分支协同中误触发全局 Plan 只读阻断”或“在 Goal 攻坚循环中多模式并发重入”导致的死锁或分支挂起。
+- **机制原理**：吸收 Kimi Code [modeMutexService.ts](file:///home/yupeng/references/kimi-code/packages/agent-core-v2/src/agent/modeMutex/modeMutexService.ts)（14KB）：
+  1. 设立中央模式互斥总线，对全部高阶运行模式实施确定性状态转移约束矩阵；
+  2. 基于 EventBus 监听模式进入与退出信号：进入 Tower 模式时自动暂挂 Goal 循环并退出 PlanMode；进入 PlanMode 时强制阻断并发 Worker 的写权限；
+  3. 彻底消除多模式并发时的竞态条件、事件污染与悬挂孤儿进程。
+
+### 7. 系统剪贴板图文原生互通与快照提取器 (OS Clipboard Image/Text Integration & /copy Bridge / BI-19.4)
+- **问题根因**：终端 CLI 用户在遇到报错截屏或界面设计稿时，通常需要手动保存图片至本地路径再输入文件名，流程繁琐打断心流；同时，终端生成的长篇研报需要便捷一键提取回系统剪贴板。
+- **机制原理**：吸收 ZCode [clipboard-image.ts](file:///home/yupeng/references/zcode/apps/zcode-cli/packages/cli/src/clipboard-image.ts)（7.5KB）与 Kimi Code `copy.ts`：
+  1. 终端 TUI 原生支持 `Ctrl+V` 图片就地粘贴：通过底层轻量子进程探测跨平台剪贴板（Linux 原生优先 `wl-paste`，回退 `xclip`；macOS 原生优先 `pngpaste`，回退 AppleScript；Windows 调用 PowerShell）；
+  2. 探测到剪贴板包含图片数据时，自动提取二进制流并以 SHA-256 哈希安全持久化至 `~/.bi/attachments/<hash>.png`，在输入框渲染附件徽标卡片；
+  3. 提供 `/copy` 快捷指令，自动提取上一轮 Assistant 最终回复文本，清除 ANSI 控制符后格式化写入系统剪贴板，打通“终端交互 ↔ 桌面生态”的极速无缝流转。
