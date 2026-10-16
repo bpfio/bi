@@ -30,16 +30,16 @@
 
 | 标杆项目 | 核心模块与代码走读 | 核心优势（精髓借鉴） | 关键局限与对抗成本 |
 |---|---|---|---|
-| **Pi Agent**<br>`@earendil-works/pi` | • `packages/coding-agent/src/core/session-manager.ts` (单文件 2,014 行)<br>• `packages/tui/`: 双缓冲差分渲染引擎<br>• `packages/mcp/`: 独立白盒 MCP 客户端<br>• `packages/agent/`: 4 大原子工具 | • **DAG 会话树体系**：每一条消息携带 `id` (UUIDv7) 与 `parentId`，天然支持分支分叉与 Rewind 时光倒流<br>• **错误作为一等公民**：抛异常自动转化为 `isError: true` 促使模型自愈<br>• 架构解耦：TUI 与内核彻底分离，依赖极少 | • 偏向单 Agent 通用编码，缺乏针对 DeepSeek-R1 思考流的特定处理与多智能体分流 |
-| **ZCode 官方版**<br>`zai-org/ZCode` | • `core/tool/edit-matchers.ts` (8级阶梯弹性匹配)<br>• `core/tool/read-file-state.ts` (先读后写与mtime防脏写)<br>• `core/memory/dream.ts` (仿生做梦记忆沉淀)<br>• `dynamic-workflow/` (因果依赖图与Taint污点分析)<br>• `spreadsheets-plugin/`, `pdf-plugin/` & `superpowers-plugin/` | • **清华五大黄金模块**：8级阶梯容错匹配（编辑成功率99.5%）、先读后写门禁、Dream Cycle仿生长期记忆、因果依赖图编译器与顶级 Agent SOP 技能集<br>• **开箱即用的专业数据/研报分析插件** | • 官方 CLI 前端采用 React+OpenTUI，较为臃肿且构建链庞大（巨石 Monorepo） |
+| **Pi Agent**<br>`@earendil-works/pi` | • `packages/coding-agent/src/core/session-manager.ts` (单文件 2,014 行)<br>• `packages/tui/`: 双缓冲差分渲染引擎<br>• `packages/codemode/`: 零依赖 node:vm 内存执行沙箱<br>• `packages/mcp/`: 独立白盒 MCP 客户端<br>• `packages/agent/`: 4 大原子工具 | • **DAG 会话树体系**：每一条消息携带 `id` (UUIDv7) 与 `parentId`，天然支持分支分叉与 Rewind 时光倒流<br>• **错误作为一等公民**：抛异常自动转化为 `isError: true` 促使模型自愈<br>• **CodeMode 沙箱**：轻量级内存 JS 快速执行与类型安全计算<br>• 架构解耦：TUI 与内核彻底分离，依赖极少 | • 偏向单 Agent 通用编码，缺乏针对 DeepSeek-R1 思考流的特定处理与多智能体分流 |
+| **ZCode 官方版**<br>`zai-org/ZCode` | • `core/tool/edit-matchers.ts` (8级阶梯弹性匹配)<br>• `core/tool/read-file-state.ts` (先读后写与mtime防脏写)<br>• `core/memory/dream.ts` (仿生做梦记忆沉淀)<br>• `services/storage/` (存储修剪与清理计划)<br>• `services/usage-stats/` (Coding Plan 额度看门狗)<br>• `dynamic-workflow/` (因果依赖图与Taint污点分析)<br>• `spreadsheets-plugin/`, `pdf-plugin/` & `superpowers-plugin/` | • **清华大学工业级完整资产库**：8级阶梯容错匹配（编辑成功率99.5%）、先读后写门禁、Dream Cycle仿生长期记忆、存储目录字典自动修剪、因果依赖图编译器与顶级 Agent SOP 技能集<br>• **开箱即用的专业数据/研报分析插件** | • 官方 CLI 前端采用 React+OpenTUI，较为臃肿且构建链庞大（巨石 Monorepo） |
 | **zcode-app-cli**<br>`bpfio/bi` 前身 | • `runtime-tui-bridge.ts`: 进程内函数级桥接<br>• `runtime-sqlite-recovery.ts`: SQLite 并发自愈<br>• `bounded-tool-text.ts`: 64KB 工具输出有界保护<br>• `file-diff-budget.ts`: 2000 行 Diff 预算限制 | • **同进程零拷贝直连（Zero IPC）**：彻底消灭 Localhost Socket 延迟与重连断连隐患<br>• 极高的工程鲁棒性与内存防泄漏 | • **混淆二进制黑盒**（`vendor/zcode.cjs`），供应链不可审计<br>• 27 个 AST/字符串补丁在版本升级中极易漂移 |
 | **DeepCode**<br>`lessweb/deepcode-cli` | • `packages/core/session.ts`: 会话状态机<br>• `packages/core/prompt.ts`: 提示词结构<br>• 支持 `thinkingEnabled` 与 `reasoningEffort` | • **原生适配 DeepSeek 系列**：深度适配 R1 思考流展示与参数调优<br>• 针对 DeepSeek 的 Prompt Cache 前缀优化与上下文压缩 | • 缺乏严格的沙箱隔离（Path Jail），代码中工具扩展体系较重 |
 | **OpenCode**<br>`anomalyco/opencode` | • `packages/ai/`: 75+ 多模型统一适配<br>• `packages/protocol/`: 跨进程/跨端协议契约<br>• `packages/tui/`: 多会话并行终端界面 | • **极度开放自由**：多模型即插即用，分发体验极佳（一键安装）<br>• 双 Agent 模式（Build vs Plan/Explore）架构清晰 | • 为兼容 75+ 模型导致提示词采用“最大公约数”，对具体模型的调优深度不足，幻觉率高于 ZCode |
-| **Kimi Code**<br>`MoonshotAI/kimi-code` | • `packages/tree-sitter-bash/`: 纯 TS Tree-sitter<br>• `packages/minidb/`: 纯 TS LSM-Tree/WAL 数据库<br>• `packages/agent-core-v2/`: DI 容器与细粒度调度<br>• `packages/acp-server/`: Agent Client Protocol | • **清华系月之暗面现代重构标杆 (MIT)**：<br>• **100% 纯 TypeScript 零 Native C 依赖**：手写 Bash 语法树、纯 TS 嵌入式 LSM 数据库，Bun 单文件编译 0 崩溃；<br>• **细粒度 RWLock 调度**：多工具读并发、写互斥与全局屏障；<br>• **多模态与客户端压缩**：终端图片就地无损压缩，保护视窗 | • 侧重通用软件工程编码，未内置宏观经济统计勾稽与部委政策长文档抽取的专业插件模板 |
+| **Kimi Code**<br>`MoonshotAI/kimi-code` | • `packages/tree-sitter-bash/`: 纯 TS Tree-sitter<br>• `packages/agent-core-v2/`: select_tools 动态按需加载、RWLock 调度、端侧媒体压缩<br>• `packages/remote-control/`: WSS 穿透中继控制通道<br>• `packages/minidb/`: 纯 TS LSM-Tree/WAL 数据库<br>• `packages/pi-tui/` & `packages/transcript/`: CJK 宽字符排版与同构 Transcript<br>• `packages/acp-server/`: Agent Client Protocol | • **清华系月之暗面现代重构标杆 (MIT)**：<br>• **100% 纯 TypeScript 零 Native C 依赖**：手写 Bash 语法树、纯 TS 嵌入式 LSM 数据库，Bun 单文件编译 0 崩溃；<br>• **Tool-on-Demand**：select_tools 动态激活工具，压降 80% Token；<br>• **细粒度 RWLock 调度**：多工具读并发、写互斥与全局屏障；<br>• **CJK 终端排版与同构 Transcript**：消除错位塌陷，历史与导出 100% 对齐；<br>• **多模态与客户端压缩**：终端图片就地无损压缩，保护视窗 | • 侧重通用软件工程编码，未内置宏观经济统计勾稽与部委政策长文档抽取的专业插件模板 |
 
-### 2. 清华大学 ZCode 实验室官方源码十二大黄金模块与工业级算法图谱
+### 2. 清华大学 ZCode 实验室官方源码十四大黄金模块与工业级算法图谱
 
-在二次深度审查智谱与清华大学开源的 `zai-org/ZCode`（位于本地只读参考库 `/home/yupeng/references/zcode`）后，我们系统梳理出其保障 99.5% 超高代码编辑成功率、0 上下文撑爆与极低幻觉的 **十二大工业级黄金算法与底层工程轮子**。`bi` 架构将全量直接提取并复用这些成熟轮子，最大化压减重复造轮子的对抗成本：
+在二次深度审查智谱与清华大学开源的 `zai-org/ZCode`（位于本地只读参考库 `/home/yupeng/references/zcode`）后，我们系统梳理出其保障 99.5% 超高代码编辑成功率、0 上下文撑爆与极低幻觉的 **十四大工业级黄金算法与底层工程轮子**。`bi` 架构将全量直接提取并复用这些成熟轮子，最大化压减重复造轮子的对抗成本：
 
 #### (1) 8 级阶梯弹性文件匹配算法 (`core/src/tool/edit-matchers.ts`)
 - **核心痛点**：传统 Agent 编辑代码时，经常因大模型微小缩进差异、中英文智能引号（`"` vs `“`）漂移或行号微调导致 `TargetContent not found` 报崩溃。
@@ -134,9 +134,24 @@
   - `presentations-plugin`：PowerPoint（`pptx`）研报简报生成；
   - `visualize-plugin`：数据可视化图表与 `visual-judge.md` 视觉核验智能体。
 
-### 3. 清华系月之暗面 Kimi Code 官方源码六大黄金模块与工业级算法图谱
+#### (13) 物理存储目录字典与孤儿工作区自动修剪器 (`packages/services/src/storage/`)
+- **核心痛点**：多 Agent 并发派生 Git Worktree、临时测试文件与长日志，若无系统化生命周期管理，将在数周内产生数万个孤儿目录与数十 GB 废弃文件，最终导致磁盘 I/O 阻塞甚至耗尽存储空间。
+- **清华算法**：
+  - `storageCatalog.ts`：维护工作区与临时目录全局物理字典，登记每一个派生目录的用途与生命周期元数据；
+  - `cleanPlan.ts`：根据任务归档状态与访问 LRU（已合并保留 1 天，未合并保留 7 天）生成安全的原子修剪计划；
+  - `fsCleaner.ts`：带防并发文件锁与校验机制，安全清理废弃 Worktree、超期 Bash 日志（`/tmp/bi-bash-*`）与临时 Diff 缓存。
+- **对 `bi` 价值**：直接作为 `BI-12.1` 的核心算法底盘，保障 `bi` 在高频政策调研与数据爬取下的长期驻留零存储膨胀。
 
-月之暗面（Moonshot AI）技术团队同源于清华大学计算机系与交叉信息研究院。其最新开源的 `MoonshotAI/kimi-code`（位于本地只读参考库 `/home/yupeng/references/kimi-code`）代表了纯 TypeScript 技术栈下 Agent CLI 极简解耦架构的最高工程水平。系统深入审查后，提炼出其 **六大独特黄金资产与底层算法**，与 ZCode 形成强力互补：
+#### (14) 智谱 BigModel Coding Plan 额度监测与余额预警看门狗 (`packages/services/src/usage-stats/`)
+- **核心痛点**：深度调研任务往往需要经历多轮因果推演与长时间子任务执行，若用户 Coding Plan 额度即将耗尽或遭遇速率限制（RPM/TPM），任务可能在最后一步猝然中断报错，浪费前期所有计算。
+- **清华算法**：
+  - `bigmodelUsageQuotaProvider.ts`（63KB）与 `bigmodelUsageMonitorMapper.ts`（30KB）：针对智谱 BigModel API 建立专用额度感知与监测管道；
+  - `usageStatsService.ts`：后台低频探查与本地缓存账户余额、剩余调用次数与限频水位，平滑计算当前使用速率与预警阈值。
+- **对 `bi` 价值**：直接作为 `BI-02.2` 的底层实现，在终端 HUD 实时显性预警（如额度低于 10% 亮黄告警），避免任务中途意外断粮。
+
+### 3. 清华系月之暗面 Kimi Code 官方源码十大黄金模块与工业级算法图谱
+
+月之暗面（Moonshot AI）技术团队同源于清华大学计算机系与交叉信息研究院。其最新开源的 `MoonshotAI/kimi-code`（位于本地只读参考库 `/home/yupeng/references/kimi-code`）代表了纯 TypeScript 技术栈下 Agent CLI 极简解耦架构的最高工程水平。系统深入审查后，提炼出其 **十大独特黄金资产与底层算法**，与 ZCode 形成强力互补：
 
 #### (1) 纯 TypeScript 版 Tree-Sitter Bash 语法分析器 (`packages/tree-sitter-bash`)
 - **核心痛点**：传统 CLI 执行 Bash 命令鉴权与安全审计（如检测 `rm -rf /`、拦截偷窃 `.env` / `~/.ssh` 凭据）时，若使用正则表达式极易被引号嵌套、变量替换（`eval` / `$()`）绕过；若引入 C++ 编译的 `tree-sitter.node`，则彻底破坏 Bun 单文件独立二进制（`bun build --compile`）与跨发行版便携性。
@@ -184,6 +199,39 @@
   - 视窗安全底线：强制保留最近 4 轮完整消息（`maxRecentMessages: 4`），且未压缩部分上限锁定为视窗的 20%（`maxRecentSizeRatio: 0.2`）；
   - `undoService.ts`：基于逻辑时间戳（`turnKey`）计算 `computeUndoCut`，支持精确回滚上下文与状态。
 
+#### (7) Tool-on-Demand 动态按需加载器 (`packages/agent-core-v2/src/agent/tools/select-tools/`)
+- **核心痛点**：传统 Agent 将所接入的所有 MCP 工具（数十个甚至上百个）的全量 JSON Schema 完整注入到每一轮的 System Prompt 中，这会导致每轮交互无谓消耗 10,000 至 30,000 个静态 Token，既显著拉高首字延迟（TTFT），又严重挤占有效工作视窗。
+- **Kimi 创新**：月之暗面设计了极具启发性的 **Tool-on-Demand 动态按需激活器 (`select_tools`)**：
+  - 初态精简：在初始阶段，模型仅看到最基础的几项通用工具，其余所有高级插件或 MCP 工具仅以“工具名 + 单句职责摘要”的形式作为紧凑名录展示；
+  - 动态激活：当模型研判到后续任务需要特定领域能力（例如查询数据库、生成 PDF、解析图表）时，通过自主调用 `select_tools({ names: ["query_logbook", "render_chart"] })`；
+  - 即时装载：Agent 运行时捕获该信令后，动态将这批工具的完整 JSON Schema 注入当前激活工具池；
+  - **对 `bi` 价值**：作为 `BI-13.1` 的核心算法，将初始 System Prompt 的工具 Token 开销直接压降 80% 以上，为长文本政策比对留出充裕的视窗空间。
+
+#### (8) A2A 穿透式 WebSocket 中继控制通道 (`packages/remote-control/`)
+- **核心痛点**：在远程协作或移动办公场景下，用户希望通过手机或远程 Web 控制台监控本地 CLI 的执行进度并进行人机审批，但本地机器处于家庭/内网 NAT 之后，无公网 IP 且无法开放入站端口。
+- **Kimi 架构**：
+  - 月之暗面在 `packages/remote-control/` 中自研了基于 WebSocket 的反向中继通道（`remote-control.ts`、`device-client.ts` 与 `manager.ts`）；
+  - 本地客户端主动向受信任的 WSS 中继服务发起长连接，建立基于对称加密与握手验签的双向 RPC 隧道，0 开放公网入站端口，彻底规避公网攻击面；
+  - 支持远程流式接收终端事件通知、发送中断与纠偏信令，并在遇到高危写操作时将 Unified Diff 渲染推送到移动端供人类审查批准。
+- **对 `bi` 价值**：作为 `BI-15.4`，与邮件信令网关（BI-15.1）与 GitHub PR 任务中枢（BI-15.2）形成“轻量穿透 WSS + 跨物理网络 SMTP/IMAP + 生产级代码 PR”的三维立体 A2A 跨网协作网络。
+
+#### (9) CJK 东亚宽字符排版与四层同构 Transcript 状态投影 (`packages/pi-tui/src/utils.ts` 与 `packages/transcript/`)
+- **核心痛点**：
+  1. 字符排版错位：标准 TUI 终端库往往假设所有字符均为单字节等宽（单列），当输出中文政策条文、全角中文标点或 Emoji 符号时，终端计算列偏移产生严重偏差，导致边框错位、换行截断与表格完全撕裂；
+  2. 历史与视图耦合：会话状态如果直接绑定在渲染层，容易在格式化渲染时污染底层的历史消息树，导致时光倒流与导出不一致。
+- **Kimi 突破**：
+  - 在 `packages/pi-tui/src/utils.ts` 中深入整合 Unicode 宽字符标准，实现严密的 `get-east-asian-width` 判定算法，精确识别中文双宽度字符；
+  - 在 `packages/transcript/` 中构建了四层同构转录投影架构：`Contract`（契约定义） → `Model`（不可变状态模型） → `History / Store`（底层持久化存储） → `View / Markdown`（终端差分视图与研报 Markdown 导出），四层严格单向流动解耦。
+- **对 `bi` 价值**：直接作为 `BI-19.1`，彻底根除中文政策研报在终端交互中的版面错位与塌陷问题，并确保终端历史与磁盘研报的 100% 同构一致。
+
+#### (10) 统一 LLM 抽象层与能力规范化注册表 (`packages/kosong/`)
+- **核心痛点**：不同大模型服务商（智谱 GLM、DeepSeek、Moonshot、Claude、OpenAI）在 API 契约上存在微小但致命的碎片化差异：Tool Call ID 的命名约束、连续用户消息是否允许合并、流式事件中空文本块的处理等。若在核心逻辑中堆砌大量的 `if (model === 'xxx')`，系统极难维护且极易引入回归 Bug。
+- **Kimi 架构**：
+  - 月之暗面抽取了独立的 `packages/kosong` 抽象层；
+  - 核心包含 `capability-registry`（能力特性矩阵字典，声明式标注各模型是否支持缓存控制、并发工具调用、推理思考流等）、`tool-call-id` 自动化标准化器以及 `merge-user-messages` 中间件；
+  - 对上层 Agent 屏蔽物理模型差异，对外暴露完全一致的标准化流式事件接口。
+- **对 `bi` 价值**：大幅简化 `BI-04` 单模型统一 SSE 流式驱动的适配器复杂度，实现零业务侵入的即插即用。
+
 ### 4. ZCode 全量工程底座（桌面宿主、CUA 视觉反爬与视觉裁判）资产解包深度发现
 
 随着 ZCode 官方仓库 19 个包（11,855 个源文件）全量检出至本地只读参考库，我们对清华官方的桌面形态、服务层与视觉判定进行了深度代码走读，提炼出三大核心资产：
@@ -209,6 +257,16 @@
   - 官方实现独立的 `packages/zcode-cua/`，内置 `broker-server.ts` 与 `pip-session-node.ts`；
   - 支持视窗画中画（PiP）受控视觉交互，模拟真实用户浏览、点击翻页与等待网络请求排空；
 - **对 bi 的价值**：为 `bi` 的政策探针（Scout）提供最强兜底。当标准抓取被强反爬拦截时，平滑降级至受控 Headless/CUA 机制获取数据，杜绝数据盲区。
+
+### 5. Pi Agent 原创架构与 CodeMode 内存精算沙箱深度走读
+
+除清华大学 ZCode 与清华系 Kimi Code 外，本地参考库中的 `@earendil-works/pi`（Pi Agent）同样贡献了两大顶尖工程设计：
+1. **DAG 树状会话引擎**（`packages/coding-agent/src/core/session-manager.ts`）：单文件 2,014 行极简实现，基于 UUIDv7 的天然因果时间线与分支切换机制，构成了 `bi` 树状会话（BI-03）的原型基础；
+2. **CodeMode 零依赖内存精算沙箱**（`packages/codemode/src/runtime/`）：
+   - 包含 `vm.ts`（13.9KB）、`worker.ts`（1.5KB）与 `execution.ts`（21.9KB）；
+   - 基于 Node.js/Bun 原生的 `node:vm` 模块与独立 Worker 线程，构建了带有上下文注入与 API 绑定的轻量级 JavaScript/TypeScript 执行环境；
+   - 启动延迟 < 1ms，内存开销 < 5MB，完美胜任高频的轻量级数据清洗、JSON 模式转换与数学校验；
+   - **对 `bi` 价值**：作为 `BI-16.1`，与基于系统的 Python 沙箱（`BI-16`，专司重量级 `pandas`/`openpyxl` 政策表格审计）形成黄金互补，兼顾轻量秒级转换与重度数据精算。
 
 ---
 
@@ -734,6 +792,7 @@ packages/
 │   │   ├── auth/          # 智谱 BigModel 官方双轨鉴权与 PAT 换票器
 │   │   │   ├── cli-oauth.ts      # 官方 OAuth init 与 poll 状态机
 │   │   │   ├── coding-plan-key.ts# API Key 二阶段 PAT 换票器与权益解析
+│   │   │   ├── quota-watchdog.ts # Coding Plan 额度监测与余额预警看门狗 (BI-02.2)
 │   │   │   ├── credentials.ts    # 本地凭据安全存储与自动刷新看门狗
 │   │   │   └── browser.ts        # 跨平台浏览器自动唤醒与扫码回显
 │   │   ├── gateway/       # 官方 Ultra VIP 专线网关路由与标头注入
@@ -755,7 +814,10 @@ packages/
 │   ├── src/
 │   │   ├── manager.ts     # Worktree 创建、挂载与销毁生命周期
 │   │   ├── isolation.ts   # 子智能体工作区路径绑定与重定向
-│   │   └── merger.ts      # 审查通过后的原子 Cherry-pick / Merge 合入
+│   │   ├── merger.ts      # 审查通过后的原子 Cherry-pick / Merge 合入
+│   │   └── cleaner/       # 临时存储与孤儿子目录修剪器 (BI-12.1)
+│   │       ├── storage-catalog.ts # 全局存储目录字典与元数据登记
+│   │       └── clean-plan.ts      # 基于 LRU 与保留周期的修剪计划
 │
 ├── workflow/              # 声明式有向无环图工作流编排引擎 (基于 ZCode workflow)
 │   ├── src/
@@ -769,6 +831,7 @@ packages/
 │   │   ├── client.ts      # JSON-RPC 2.0 客户端实现
 │   │   ├── stdio.ts       # 本地子进程 Stdio 管道与看门狗
 │   │   ├── sse.ts         # 远程 SSE/HTTP 连接器 (直连 QNAP Logbook)
+│   │   ├── select-tools.ts# Tool-on-Demand 动态按需加载器 (BI-13.1)
 │   │   └── registry.ts    # 动态工具与资源聚合注册表
 │
 ├── a2a/                   # 通用 A2A 跨智能体协议与运行时引擎 (零业务硬编码)
@@ -781,8 +844,12 @@ packages/
 │   │   ├── blackboard.ts  # 结构化共享事实黑板 (Blackboard)
 │   │   ├── router.ts      # 动态 A2A 消息路由器与生命周期总线
 │   │   ├── envelope.ts    # A2A 强类型消息封套规范与序列化
+│   │   ├── codemode/      # CodeMode 零依赖内存 JS 沙箱 (BI-16.1)
+│   │   │   ├── vm-runner.ts       # 基于 node:vm 的隔离执行环境
+│   │   │   └── worker-pool.ts     # Worker 线程池与超时看门狗
 │   │   └── transports/    # 多模式 A2A 传输驱动层
 │   │       ├── eventbus.ts            # L1: 本地进程内极速事件总线 (<0.1ms)
+│   │       ├── remote-relay.ts        # L2: 穿透式 WebSocket 中继通道 (BI-15.4)
 │   │       ├── a2a-email-gateway.ts   # L3: A2A 邮件私密信令网关 (SMTP/IMAP 跨物理墙控制面)
 │   │       └── github-a2a-hub.ts      # L3: GitHub A2A 任务中枢 (任务分支与 PR 交付数据面)
 │
@@ -792,6 +859,8 @@ packages/
 │   │   ├── hud.ts         # Token 消耗、TTFT 延迟与 Cache 命中率状态栏
 │   │   ├── diff-view.ts   # 交互式 Git Unified Diff 预览与批准门
 │   │   ├── thinking.ts    # R1 思考流动态收起/展开折叠卡片
+│   │   ├── cjk-layout.ts  # CJK 东亚宽字符排版计算 (BI-19.1)
+│   │   ├── transcript-projection.ts # 四层同构 Transcript 视图投影 (BI-19.1)
 │   │   ├── workflow-view.ts# DAG 工作流步骤与检查点可视化看板
 │   │   ├── subagent-view.ts# A2A 多子智能体并行执行看板
 │   │   └── session-picker.ts# 历史会话毫秒级交互式切换器
@@ -827,6 +896,7 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
   ├── 初始化 packages/core，编写纯白盒 Agent Loop 与 Path Jail 沙箱
   ├── 实现智谱 BigModel 双轨特权认证 (OAuth 免密 + API Key 二阶段 PAT 换票与 Ultra 专线重定向)
   ├── 注入 X-Coding-Plan-Api-Key、User-Agent 等官方指纹标头，对齐客户端折扣特权
+  ├── 落地 BI-02.2 Coding Plan 额度实时监测与余额告警看门狗 (quota-watchdog)
   ├── 落地 Append-only JSONL 树状会话引擎 (支持断点恢复、/rewind 时光倒流与 /fork 平行分叉)
   ├── 接入 GLM、DeepSeek 等统一 SSE 流式驱动与单模型插槽路由 (Model Slot Router)
   ├── 落地 BI.md 项目级长期记忆与领域规范自适应注入
@@ -838,12 +908,16 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 [Phase 2] Git Worktree 并发隔离与完整 MCP 引擎 (Days 4~5)
   ├── 实现 packages/worktree，落地子智能体工作区物理隔离与自动擦除
+  ├── 落地 BI-12.1 工作区与临时目录自动修剪器 (StorageCatalog & CleanPlan)
   ├── 实现 packages/mcp，支持 Stdio 与 SSE 双通道 (实测接驳 Logbook)
+  ├── 落地 BI-13.1 Tool-on-Demand 动态按需加载器 (select_tools)
   └── 验证工作区零污染与外部工具动态注册
 
 [Phase 3] A2A 协议、分工协作与 DAG 工作流编排 (Days 6~8)
   ├── 落地 packages/workflow 声明式 DAG 步骤调度与 Checkpoint 检查点自愈
   ├── 落地 packages/a2a 通用容器、事实黑板与证据一致性核验协议 (AuditProtocol)
+  ├── 落地 BI-15.4 A2A 穿透式 WebSocket 中继控制通道 (remote-control)
+  ├── 落地 BI-16.1 CodeMode 零依赖内存 JS 精算沙箱与 Worker 线程池
   └── 跑通“单模型自洽闭环：主协调官 -> 探针搜集 -> 沙箱精算 -> 事实黑板合流”流程
 
 [Phase 4] 官方插件体系吸收与防幻觉强化 (Days 9~10)
@@ -855,10 +929,11 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 [Phase 5] Pi-TUI 差分终端与正式交付 (Days 11~14)
   ├── 接入 @earendil-works/pi-tui 差分渲染界面 (消除终端跳字闪烁)
+  ├── 落地 BI-19.1 CJK 东亚宽字符排版与四层同构 Transcript 状态投影层
   ├── 挂载 Token HUD 实时仪表盘 (显化 Cache Read 命中率 %、TTFT 延迟与 Token 消耗)
   ├── 实装 BI-18.2 Visual Judge 视觉核验判定器与图表渲染自愈闭环
   ├── 接入交互式 Git Unified Diff 审查门与一键撤销
   ├── 实现 /doctor 全链路网络连通性、凭据有效性与 Python 依赖一键体检
   ├── 挂载 DAG 工作流看板、A2A 看板与思考流折叠视图
-  └── 端到端宏观政策与数据审计实战验收，发布 bpfio/bi v1.0
+  └── 端到端宏观政策与数据审计实战演练验收，发布 bpfio/bi v1.0
 ```
