@@ -244,6 +244,22 @@
   - 提供了工业级终端渲染组件：`agent-swarm-progress.ts`（69KB，多 Agent 并发动态泳道进度看板）、`read-group.ts`（多文件读取折叠卡片）与 `tool-call.ts`（工具调用状态指示器）。
 - **对 `bi` 价值**：直接作为 `BI-19` 的核心底盘，复用率高达 95% 以上，彻底解决终端渲染跳字、误提交与多 Agent 协同可视化的痛点。
 
+#### (12) Plan 模式只读探索规划与用户审批门禁 (`packages/agent-core-v2/src/features/plan/`)
+- **核心痛点**：在长程复杂工程任务中，Agent 极易由于过度自信，在未摸清上下文前盲目执行破坏性写操作或连续修改关键代码，导致后期回滚灾难。
+- **Kimi 架构**：
+  - 月之暗面在 `features/plan/` 中自研了纯状态驱动的 Plan 模式（`planService.ts` 9.7KB、`exitPlanModeReview.ts` 5.7KB 与 `planOps.ts`）；
+  - 进入 Plan 模式后，系统通过动态工具降权切入只读探索沙箱，物理拦截所有文件修改与高危 Bash 命令，强制 Agent 专心进行文件搜索、代码阅读与 AST 依赖排查，并生成严密的结构化执行计划；
+  - 执行前触发交互式审查门禁（`exitPlanModeReview`），必须由用户在终端审查通过后，才赋予写操作权限并平滑过渡至执行阶段。
+- **对 `bi` 价值**：直接作为 `BI-14.2`，彻底杜绝长程复杂任务中 Agent“一上来就乱改乱撞”的反模式。
+
+#### (13) TodoList 动态清单主动注入与进度防漂移守卫 (`packages/agent-core-v2/src/features/todo/`)
+- **核心痛点**：长程多轮交互（20~50 轮）中，随着 Context 上下文膨胀，大语言模型会出现严重的注意力稀释（Attention Dilution），极易遗忘初始长程目标、跳过关键中间步骤或提前宣告完工。
+- **Kimi 架构**：
+  - 月之暗面在 `features/todo/` 中实现了基于事件状态机的待办清单系统（`todoService.ts` 6.1KB、`todoListReminder.ts` 4.6KB 与 `todoItem.ts`）；
+  - 维护会话级待办状态机（`pending`、`in_progress`、`completed` 三态，单向流转并防回退）；
+  - 通过 `todoListReminder` 在每次模型推理前（`beforeStep`）动态提取未完成待办，以轻量化结构主动注入 Context 尾部（In-History 友好排布，不破坏头部 Prompt Cache），强行校准模型注意力。
+- **对 `bi` 价值**：直接作为 `BI-14.3`，与 ZCode 的完工自验看门狗（BI-21.1）及 DeepSeek 的 Goal 自动续行（BI-07.5）形成合力，彻底消灭长程任务中的步骤跳跃与目标漂移。
+
 ### 4. ZCode 全量工程底座（桌面宿主、CUA 视觉反爬与视觉裁判）资产解包深度发现
 
 随着 ZCode 官方仓库 19 个包（11,855 个源文件）全量检出至本地只读参考库，我们对清华官方的桌面形态、服务层与视觉判定进行了深度代码走读，提炼出三大核心资产：
@@ -1061,6 +1077,8 @@ presets/                   # 开箱即用声明式资产 (数据/配置层，零
 
 [Phase 3] A2A 协议、分工协作与 DAG 工作流编排 (Days 6~8)
   ├── 落地 packages/workflow 声明式 DAG 步骤调度与 Checkpoint 检查点自愈
+  ├── 落地 BI-14.2 Plan 模式只读探索规划与用户审批门禁 (planService & exitPlanModeReview)
+  ├── 落地 BI-14.3 Todo 动态清单主动注入与进度防漂移守卫 (todoListReminder & todoItem)
   ├── 落地 packages/a2a 通用容器、事实黑板与证据一致性核验协议 (AuditProtocol)
   ├── 落地 BI-15.4 A2A 穿透式 WebSocket 中继控制通道 (remote-control)
   ├── 落地 BI-16.1 CodeMode 零依赖内存 JS 精算沙箱与 Worker 线程池
