@@ -387,4 +387,9 @@
 4. **遇到目标任务宣布完成时**：
    - 严禁未经前置看门狗（`BI-21.1`）即直接向用户交卷；
    - 必须通过 `TargetCompletionVerification` 严格核验原始需求契约与证据链，100% 闭环后方可汇报办结。
+5. **寻找开源轮子与模块实现代码时 (严禁重复遍历庞大源码树)**：
+   - 严禁在五大标杆项目（25,150 个文件、211.94 MB 源码）中全盘重复 grep/find 扫描代码，此类行为严重浪费算力与上下文；
+   - 必须以 [docs/FIVE_AGENTS_FULL_SPECTRUM_ANALYSIS.md](file:///home/yupeng/zcodecli/docs/FIVE_AGENTS_FULL_SPECTRUM_ANALYSIS.md)（165 个子包、523 万行代码全量 AST 符号字典）与第三节物理映射表为唯一速查基准，毫秒级直接定位具体文件路径与核心导出类/接口；
+   - 若需概念或算法检索，直接通过 QNAP NAS Logbook（`project: "bi"`，Research #25 ~ #31）执行向量语义召回。
+
 
