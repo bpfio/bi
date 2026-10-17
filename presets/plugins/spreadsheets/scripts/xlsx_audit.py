@@ -113,6 +113,13 @@ def _finding(rule: str, severity: str, row: int, detail: str) -> dict[str, Any]:
     return {"rule": rule, "severity": severity, "row": row, "detail": detail}
 
 
+def _fmt(value: float) -> str:
+    """金额格式化:定点的可读数字(整数不带小数点),拒绝 %.4g 的科学计数法
+    (90000 → "9e+04" 的审计明细可读性缺陷,BI-21 演练修复)。"""
+    text = f"{value:.4f}".rstrip("0").rstrip(".")
+    return text if text not in ("", "-") else "0"
+
+
 def rule_total_check(table: list[list[Any]], tolerance: float) -> list[dict[str, Any]]:
     """规则一(合计校验):合计行各数值列应等于其上方数据行同列之和。"""
     findings: list[dict[str, Any]] = []
@@ -147,7 +154,7 @@ def rule_total_check(table: list[list[Any]], tolerance: float) -> list[dict[str,
                         "total_check",
                         "error",
                         srow + 1,
-                        f"第 {srow + 1} 行第 {col + 1} 列合计不符:应为 {actual:.4g},表载 {expected_cell:.4g}",
+                        f"第 {srow + 1} 行第 {col + 1} 列合计不符:应为 {_fmt(actual)},表载 {_fmt(expected_cell)}",
                     )
                 )
     return findings
@@ -186,7 +193,7 @@ def rule_debit_credit(table: list[list[Any]], tolerance: float) -> list[dict[str
                 "debit_credit",
                 "error",
                 0,
-                f"借贷不平:∑借方={debit_sum:.4g},∑贷方={credit_sum:.4g},差额 {diff:.4g} 超容差 {tolerance}",
+                f"借贷不平:∑借方={_fmt(debit_sum)},∑贷方={_fmt(credit_sum)},差额 {_fmt(diff)} 超容差 {tolerance}",
             )
         ]
     return []
@@ -223,7 +230,7 @@ def rule_yoy_mom(table: list[list[Any]], tolerance: float) -> list[dict[str, Any
                 continue
             if abs(base) < 1e-12:
                 findings.append(
-                    _finding("yoy_mom", "error", index + 1, f"第 {index + 1} 行 {label} 分母为 0,无法勾稽但表载 {pct:.4g}")
+                    _finding("yoy_mom", "error", index + 1, f"第 {index + 1} 行 {label} 分母为 0,无法勾稽但表载 {_fmt(pct)}")
                 )
                 continue
             expected = (current - base) / abs(base) * 100.0
