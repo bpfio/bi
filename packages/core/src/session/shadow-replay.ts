@@ -27,7 +27,8 @@
  */
 import { readFileSync } from "node:fs";
 import { parseTrajectoryContent } from "./trajectory";
-import type { JsonValue, TrajectoryEntry } from "./trajectory";
+import type { TrajectoryEntry } from "./trajectory";
+import type { JsonValue } from "./types";
 
 /** 新实现在决策点给出的响应（影子模型输出）。 */
 export interface ReplayModelResponse {

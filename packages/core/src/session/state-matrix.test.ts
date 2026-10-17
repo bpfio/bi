@@ -17,7 +17,7 @@ import {
   StateMatrix,
   StateMatrixViolationError,
 } from "./state-matrix";
-import type { MatrixState, RunPhase } from "./state-matrix";
+import type { MatrixAction, MatrixState, RunPhase } from "./state-matrix";
 
 const matrix = new StateMatrix();
 
@@ -80,7 +80,8 @@ describe("状态空间正规化", () => {
     for (const work of ACTIVE_WORKS) {
       for (const authority of QUEUE_AUTHORITIES) {
         // 卡面不变量：activeWork=subagent 时 compact 拒绝 → idle/verifying 只剩 fork/cancel。
-        const idleExpected = work === "subagent" ? ["fork", "cancel"] : ["compact", "fork", "cancel"];
+        const idleExpected: MatrixAction[] =
+          work === "subagent" ? ["fork", "cancel"] : ["compact", "fork", "cancel"];
         expect(matrix.allowedActions({ phase: "idle", activeWork: work, queueAuthority: authority })).toEqual(idleExpected);
         expect(matrix.allowedActions({ phase: "verifying", activeWork: work, queueAuthority: authority })).toEqual(idleExpected);
         for (const busy of ["thinking", "tool-executing", "compacting"] as const) {
