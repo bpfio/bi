@@ -27,6 +27,7 @@ import {
   type LoopFactory,
   type SubLoopSessionCtx,
   type SubagentOutboxMessage,
+  type SubagentResultMessage,
   type SubagentRunnerDeps,
   type SubagentSessionWriter,
 } from "./runner";
@@ -239,8 +240,7 @@ describe("视窗断路器", () => {
 
     expect(h.outbox.hasSteers()).toBe(true);
     expect(h.outbox.hasInputs()).toBe(false); // 只走 steer 通道
-    const [msg] = h.outbox.takeSteers();
-    expect(msg!.kind).toBe("subagent-result");
+    const [msg] = h.outbox.takeSteers().filter((m): m is SubagentResultMessage => m.kind === "subagent-result");
     expect(msg!.profileType).toBe("coder");
     expect(msg!.summary).toBe("done:改文件");
     expect(msg!.ok).toBe(true);
@@ -469,7 +469,7 @@ describe("失败隔离", () => {
 
     const mainEntries = await h.mgr.entries("main");
     expect(textOf(mainEntries.at(-1)!)).toBe(result.summary);
-    const [msg] = h.outbox.takeSteers();
+    const [msg] = h.outbox.takeSteers().filter((m): m is SubagentResultMessage => m.kind === "subagent-result");
     expect(msg!.ok).toBe(false);
   });
 
