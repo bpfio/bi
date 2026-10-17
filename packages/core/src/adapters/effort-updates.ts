@@ -51,7 +51,7 @@ export function freezeEffort<T extends EffortMessage>(
 /** 读取尾端生效标记：从尾向前扫描，最后一个非 undefined 的 effort；全无则 null。 */
 export function lastEffortMarker<T extends EffortMessage>(messages: readonly T[]): ThinkingEffort | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const effort = messages[i].effort;
+    const effort = messages[i]!.effort;
     if (effort !== undefined) return effort;
   }
   return null;

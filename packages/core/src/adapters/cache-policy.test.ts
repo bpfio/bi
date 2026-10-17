@@ -61,8 +61,8 @@ describe('BI-04.4 · allocateBreakpoints 硬预算', () => {
     const tail = plan.positions.filter((p) => p.segment === 'message-tail');
     expect(MESSAGE_TAIL_WINDOW).toBe(8);
     expect(tail.length).toBe(1);
-    expect(tail[0].blockIndex).toBe(33); // 总块 34，末块索引 33
-    expect(tail[0].blockIndex).toBeGreaterThanOrEqual(34 - MESSAGE_TAIL_WINDOW);
+    expect(tail[0]!.blockIndex).toBe(33); // 总块 34，末块索引 33
+    expect(tail[0]!.blockIndex).toBeGreaterThanOrEqual(34 - MESSAGE_TAIL_WINDOW);
   });
 
   test('滑动尾窗余量 2 槽：末条 + 中点（floor(i×w/k) 公式）', () => {
@@ -160,15 +160,15 @@ describe('BI-04.4 · freezeEffort', () => {
 
   test('未标记消息追加当前 effort 标记（content 字节不变）', () => {
     const out = freezeEffort([msg('user', 'hi')], 'high');
-    expect(out[0].effort).toBe('high');
-    expect(out[0].content).toBe('hi');
+    expect(out[0]!.effort).toBe('high');
+    expect(out[0]!.content).toBe('hi');
   });
 
   test('已标记消息原引用返回（身份不变、标记不被改写）', () => {
     const frozen = msg('user', 'q', 'low');
     const out = freezeEffort([frozen], 'high');
     expect(out[0]).toBe(frozen);
-    expect(out[0].effort).toBe('low');
+    expect(out[0]!.effort).toBe('low');
   });
 
   test('中途切换强度：历史冻结 low、新尾部追加 high（前缀字节稳定）', () => {
@@ -178,14 +178,14 @@ describe('BI-04.4 · freezeEffort', () => {
     const out = freezeEffort([head, assistant, fresh], 'high');
     expect(out[0]).toBe(head);
     expect(out[1]).toBe(assistant);
-    expect(out[2].effort).toBe('high');
+    expect(out[2]!.effort).toBe('high');
     expect(out.map((m) => m.effort)).toEqual(['low', 'low', 'high']);
   });
 
   test('不就地变异：输入数组元素保持无标记', () => {
     const input = [msg('user', 'hi')];
     freezeEffort(input, 'max');
-    expect(input[0].effort).toBeUndefined();
+    expect(input[0]!.effort).toBeUndefined();
     expect(input.length).toBe(1);
   });
 
@@ -193,8 +193,8 @@ describe('BI-04.4 · freezeEffort', () => {
     const blocks = [{ type: 'text', text: 'hello' }];
     const input: EffortMessage[] = [{ role: 'user', content: blocks }];
     const out = freezeEffort(input, 'off');
-    expect(out[0].content).toBe(blocks);
-    expect(blocks[0].text).toBe('hello');
+    expect(out[0]!.content).toBe(blocks);
+    expect(blocks[0]!.text).toBe('hello');
   });
 
   test('空数组恒空数组', () => {
@@ -208,8 +208,8 @@ describe('BI-04.4 · freezeEffort', () => {
     const round2 = freezeEffort([...round1, m2], 'low');
     expect(round2[0]).toBe(round1[0]); // 已冻结首部：原引用恒定
     expect(round2[1]).not.toBe(m2); // 新尾部：新对象带标记
-    expect(round2[1].effort).toBe('low');
-    expect(round2[1].content).toBe('a1');
+    expect(round2[1]!.effort).toBe('low');
+    expect(round2[1]!.content).toBe('a1');
   });
 });
 

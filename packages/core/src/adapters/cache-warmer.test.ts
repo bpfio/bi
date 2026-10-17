@@ -28,7 +28,7 @@ function spyFetch(responses: Array<{ status: number } | Error>): { impl: FetchLi
     const script = responses[Math.min(i, responses.length - 1)];
     i += 1;
     calls.push({ url, body: typeof init?.body === 'string' ? init.body : '' });
-    if (script instanceof Error) throw script;
+    if (!script || script instanceof Error) throw script;
     return new Response('{"ok":true}', { status: script.status });
   };
   return { impl, calls };
@@ -135,8 +135,8 @@ describe('BI-04.3 · CacheWarmer 脉冲', () => {
     const r = await warmer.tick(0, 1_000_000);
     expect(r.decision).toBe('pulse');
     expect(calls.length).toBe(1);
-    expect(calls[0].url).toBe('https://api.deepseek.com/chat/completions');
-    const body = JSON.parse(calls[0].body) as { model: string; max_tokens: number; messages: Array<{ role: string }> };
+    expect(calls[0]!.url).toBe('https://api.deepseek.com/chat/completions');
+    const body = JSON.parse(calls[0]!.body) as { model: string; max_tokens: number; messages: Array<{ role: string }> };
     expect(body.max_tokens).toBe(1);
     expect(body.model).toBe('deepseek-chat');
     expect(body.messages.length).toBe(1);
@@ -146,8 +146,8 @@ describe('BI-04.3 · CacheWarmer 脉冲', () => {
     const { impl, calls } = spyFetch([{ status: 200 }]);
     const warmer = new CacheWarmer({ fetchImpl: impl, clock: () => TTL, url: 'http://x/y', model: 'm1' });
     await warmer.tick(0, 1_000_000);
-    expect(calls[0].url).toBe('http://x/y');
-    expect((JSON.parse(calls[0].body) as { model: string }).model).toBe('m1');
+    expect(calls[0]!.url).toBe('http://x/y');
+    expect((JSON.parse(calls[0]!.body) as { model: string }).model).toBe('m1');
   });
 
   test('非 2xx → pulse-failed（不抛出），error 记 HTTP 状态', async () => {
