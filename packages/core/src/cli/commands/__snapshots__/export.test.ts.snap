@@ -1,0 +1,69 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`BI-20.2 export：markdown 渲染 快照：user/assistant/tool 混合会话渲染稳定 1`] = `
+"# 导出演练
+
+- 会话: s-main
+- 创建: 2023-11-14T22:13:20.000Z
+- 工作目录: /w
+- 条目: 4
+
+---
+
+## [user] #1
+
+读一下 a.md
+
+---
+
+## [tool_call] read_file #2
+
+> tool: read_file({"path":"a.md"})
+
+---
+
+## [tool_result] read_file #3
+
+文件内容
+
+---
+
+## [assistant] #4
+
+答1
+"
+`;
+
+exports[`BI-20.2 export：json 直出 快照：json 直出结构稳定 1`] = `
+"{
+  "meta": {
+    "sessionId": "s-main",
+    "title": "导出演练",
+    "createdAt": 1700000000000,
+    "cwd": "/w"
+  },
+  "entries": [
+    {
+      "id": "n1",
+      "parentId": null,
+      "type": "user",
+      "payload": {
+        "text": "问1"
+      },
+      "createdAt": 1700000000000,
+      "seq": 1
+    },
+    {
+      "id": "n2",
+      "parentId": "n1",
+      "type": "assistant",
+      "payload": {
+        "text": "答1"
+      },
+      "createdAt": 1700000000000,
+      "seq": 2
+    }
+  ]
+}
+"
+`;
