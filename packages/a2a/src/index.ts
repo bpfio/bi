@@ -15,3 +15,9 @@ export * from "./codemode/vm-runner";
 
 /** BI-16.1 · 精算批量限流顺序池（v1：promise 队列并发上限，真 worker 线程并行归后续卡）。 */
 export * from "./codemode/worker-pool";
+
+/** BI-15.1 · A2aHost：跨网协作角色编排面（分布式 A2A 协议宿主、双总线接线端口）。 */
+export * from "./host";
+
+/** BI-15.2 · 共享事实黑板：跨网协作角色共享事实底账（写权限联动 BI-15.3 能力矩阵）。 */
+export * from "./blackboard";
