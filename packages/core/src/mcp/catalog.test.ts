@@ -23,10 +23,13 @@ describe("buildCatalog", () => {
     const root = buildCatalog([SRC_A, SRC_B, EMPTY_C]);
     expect(root.namespaces.length).toBe(3);
     expect(root.totalTools).toBe(4);
-    expect(root.namespaces[0].toolCount).toBe(2);
-    expect(root.namespaces[0].hasSchema).toBe(true);
-    expect(root.namespaces[1].tools[1].inputSchema).toBeUndefined();
-    expect(root.namespaces[2].toolCount).toBe(0);
+    const logbook = root.namespaces[0]!;
+    const web = root.namespaces[1]!;
+    const empty = root.namespaces[2]!;
+    expect(logbook.toolCount).toBe(2);
+    expect(logbook.hasSchema).toBe(true);
+    expect(web.tools[1]!.inputSchema).toBeUndefined();
+    expect(empty.toolCount).toBe(0);
   });
   test("空源列表", () => {
     const root = buildCatalog([]);
