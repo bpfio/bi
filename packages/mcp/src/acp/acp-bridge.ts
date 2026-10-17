@@ -185,6 +185,9 @@ function withKap<T extends object>(envelope: T, kap: unknown): T {
 	return { ...envelope, kap } as T;
 }
 
+/** 未知 id 的错误响应信封用 null id（JSON-RPC 规范允许；protocol.ts 类型面未收编，本地桥接）。 */
+const UNKNOWN_ID = null as unknown as JsonRpcId;
+
 // ---------- 会话与桥接面 ----------
 
 interface AcpSession {
@@ -384,14 +387,14 @@ export class AcpBridge {
 		} catch {
 			this.malformedCount += 1;
 			await this.sendEnvelope(
-				jsonRpcError(null, JsonRpcErrorCode.ParseError, "payload 不是合法 JSON"),
+				jsonRpcError(UNKNOWN_ID, JsonRpcErrorCode.ParseError, "payload 不是合法 JSON"),
 			);
 			return;
 		}
 		if (!isJsonRpcMessage(parsed)) {
 			this.malformedCount += 1;
 			await this.sendEnvelope(
-				jsonRpcError(null, JsonRpcErrorCode.InvalidRequest, "payload 不是合法 JSON-RPC 2.0 消息"),
+				jsonRpcError(UNKNOWN_ID, JsonRpcErrorCode.InvalidRequest, "payload 不是合法 JSON-RPC 2.0 消息"),
 			);
 			return;
 		}
