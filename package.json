@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:bin": "bun scripts/build-bin.ts"
   },
   "devDependencies": {
     "@types/bun": "~1.3.14",
