@@ -7,3 +7,5 @@ export * from "./permission-matcher";
 export * from "./permission-gate";
 export * from "./deadline";
 export * from "./timeout-policy";
+export * from "./resource-sampler";
+export * from "./workspace-trust";
