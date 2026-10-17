@@ -3,3 +3,5 @@ export * from "./branch";
 export * from "./engine";
 export * from "./cleaner/storage-catalog";
 export * from "./cleaner/clean-plan";
+export * from "./tower/tower-protocol";
+export * from "./tower/tower-service";
