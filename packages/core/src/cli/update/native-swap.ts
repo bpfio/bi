@@ -18,6 +18,7 @@
  * fs/now/pid/fetch 全部可注入；不读 references、不动既有文件。
  */
 import { createHash } from "node:crypto";
+import { unlinkSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import * as nodePath from "node:path";
 
@@ -378,7 +379,15 @@ export async function installLock(
 				return; // 幂等
 			}
 			released = true;
-			fs.unlink(path).catch(() => undefined); // 锁已被接管/清理：宽容
+			// 同步释放:unlinkSync 对紧随其后的 stat/重新加锁立即可见。
+			// (BI-21 演练修复:原 fire-and-forget fs.unlink 与 release→stat 存在竞态,
+			//  双 release 后立即 stat 可能读到已删除前夜的残影;锁文件删除属原子
+			//  元数据操作,同步面无性能负担,宽容处理已被接管/清理的情形。)
+			try {
+				unlinkSync(path);
+			} catch {
+				// 锁已被接管/清理：宽容
+			}
 		},
 	};
 
