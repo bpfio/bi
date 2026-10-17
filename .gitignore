@@ -1,4 +1,6 @@
 node_modules/
+dist/
+.bi/
 vendor/
 packages/zcode-tui/dist/
 bin/zcode.js

@@ -1,13 +1,16 @@
 {
   "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "module": "Preserve",
-    "moduleResolution": "Bundler",
-    "noEmit": true,
-    "skipLibCheck": true,
     "strict": true,
-    "target": "ES2023",
-    "types": ["bun-types"]
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "skipLibCheck": true,
+    "noEmit": true
   },
-  "include": ["bin/**/*.ts", "src/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "tsdown.config.ts"]
+  "include": ["packages/*/src"]
 }
