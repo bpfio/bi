@@ -81,6 +81,13 @@ export interface SubLoopSessionCtx {
   readonly contextSlice: JsonValue | undefined;
   /** 事件落盘口：子循环把每一笔事件写入 childSessionId（视窗断路器入口）。 */
   readonly emit: (event: SubagentEventDraft) => Promise<void>;
+  /**
+   * 父→子 steer 收件箱（BI-03.5 语义复用）：子循环在 step boundary 调
+   * takeSteers() 消费；高级接线可用 steerInbox.onWake() 门铃零轮询等待。
+   */
+  readonly steerInbox: Inbox<SubagentSteerMessage>;
+  /** 步界收割：只取走全部 steer，绝不动常规 input 箱。 */
+  readonly takeSteers: () => SubagentSteerMessage[];
 }
 
 /** 子循环运行结果。 */
@@ -103,8 +110,8 @@ export interface SubLoop {
  */
 export type LoopFactory = (profile: SubagentProfile, ctx: SubLoopSessionCtx) => SubLoop;
 
-/** 子结果经父 outbox（steer 通道）投递的载荷。 */
-export interface SubagentOutboxMessage {
+/** 子结果通知：runner 收束时投递。 */
+export interface SubagentResultMessage {
   readonly kind: "subagent-result";
   readonly childSessionId: string;
   readonly parentSessionId: string | undefined;
@@ -113,6 +120,12 @@ export interface SubagentOutboxMessage {
   readonly summary: string;
   readonly toolCalls: number;
 }
+
+/**
+ * 父 outbox 载荷（判别联合）：subagent-result 完成通知与 child-report
+ * 阶段汇报（BI-07.4）共用 BI-03.5 steer 通道。
+ */
+export type SubagentOutboxMessage = SubagentResultMessage | SubagentSteerMessage;
 
 /** 双向信令载荷（BI-07.4 coordinator 复用同一形状）。 */
 export interface SubagentSteerMessage {
@@ -210,6 +223,19 @@ function applyToolLock(kept: readonly string[], lock: readonly string[] | undefi
 }
 
 /* ------------------------------------------------------------------ */
+/* 子运行登记（BI-07.4 协调器寻址面）                                     */
+/* ------------------------------------------------------------------ */
+
+/** 一次子运行的登记项：协调器据此路由双向信令。 */
+export interface ChildRunRecord {
+  readonly childSessionId: string;
+  readonly parentSessionId: string | undefined;
+  readonly profileType: SubagentProfileType;
+  /** 父→子 steer 收件箱（step boundary 消费）。 */
+  readonly steerInbox: Inbox<SubagentSteerMessage>;
+}
+
+/* ------------------------------------------------------------------ */
 /* SubagentRunner                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -223,6 +249,8 @@ export class SubagentRunner {
   readonly #resultsByChild = new Map<string, SpawnResult>();
   /** 防递归剥离审计簿。 */
   readonly #audits: StripAudit[] = [];
+  /** 子运行登记（spawn 即登记，协调器寻址）。 */
+  readonly #runs = new Map<string, ChildRunRecord>();
 
   constructor(deps: SubagentRunnerDeps) {
     this.#deps = deps;
@@ -233,6 +261,21 @@ export class SubagentRunner {
   /** 防递归剥离审计簿（只读快照）。 */
   stripAudits(): readonly StripAudit[] {
     return [...this.#audits];
+  }
+
+  /** 父 outbox（BI-07.4 协调器子→父投递用；未接为 undefined）。 */
+  get outbox(): Inbox<SubagentOutboxMessage> | undefined {
+    return this.#deps.outbox;
+  }
+
+  /** 按子会话 id 查运行登记（协调器寻址；未知为 undefined）。 */
+  runInfo(childSessionId: string): ChildRunRecord | undefined {
+    return this.#runs.get(childSessionId);
+  }
+
+  /** 全部运行登记快照。 */
+  runInfos(): readonly ChildRunRecord[] {
+    return [...this.#runs.values()];
   }
 
   /** 某父会话下最近一次派生结果（无则 undefined）。 */
@@ -265,6 +308,15 @@ export class SubagentRunner {
     }
     const childSessionId = this.#generateSessionId();
     const parentSessionId = opts.parentSessionId;
+
+    // ---- 0. 运行登记：父→子 steer 收件箱（BI-03.5 语义）+ 协调器寻址 ----
+    const steerInbox = new Inbox<SubagentSteerMessage>();
+    this.#runs.set(childSessionId, {
+      childSessionId,
+      parentSessionId,
+      profileType: profile.type,
+      steerInbox,
+    });
 
     // ---- 1. 工具面与 system prompt 解析（fork 走克隆分支） ----
     let effectiveTools: string[];
@@ -374,6 +426,8 @@ export class SubagentRunner {
       historySlice,
       contextSlice: opts.contextSlice,
       emit,
+      steerInbox,
+      takeSteers: () => steerInbox.takeSteers(),
     };
     let outcome: SubLoopOutcome;
     try {
