@@ -5,3 +5,5 @@
 export * from "./types";
 export * from "./permission-matcher";
 export * from "./permission-gate";
+export * from "./deadline";
+export * from "./timeout-policy";
