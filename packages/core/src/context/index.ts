@@ -17,3 +17,12 @@ export * from "./window-manager";
 export * from "./compactor";
 // BI-05.4 时钟上下文与时区自适应感知器
 export * from "./time-context";
+// BI-10.1 历史回溯定位指针与断点自恢复协议
+export * from "./recovery-pointer";
+// BI-10.3 有效视窗输出预留折减与缓存连续性保护
+export * from "./cache-continuity";
+// BI-10.4 工具历史语法树安全补齐与空值规整看门狗
+export * from "./tool-history-normalizer";
+// BI-10.5 中断状态上下文自愈注入器与日期跨越感知器
+export * from "./interruption-recovery";
+export * from "./date-change-sensor";
