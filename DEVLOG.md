@@ -1,8 +1,8 @@
-# bi 研发台账 DEVLOG (主控编纂版 v3)
+# bi 研发台账 DEVLOG (主控编纂版 v4 · 终局)
 
-> **生成**:2026-10-17 存档 #10。**closed 104/117(89%),P0 38/38(100%)**,origin/main=51c3e12。
-> running 5(BI-16.2/18/18.1/18.2/18.3),planned 8(19.4/21 等),devlog 链 #155~#239。
-> 全仓 **~4800 测试用例 / tsc 0 错 / 零返工**。
+> **生成**:2026-10-17 存档 #11。**closed 117/117(100%)——台账全清,P0 全含(含 BI-21 终局门)**,origin/main=4610bc0。
+> 全仓 **4074 测试用例 / 209 文件 / 49687 expect / 双 tsc 0 错 / 零返工**;devlog 链 #155~#244。
+> 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md),演练真抓 2 缺陷并最小改动面修复。
 
 ---
 
@@ -137,20 +137,35 @@
 
 ---
 
-## 二、在途 (5 卡,工人存活)
-BI-16.2(主控亲建待开工,三败规程) · BI-18/18.1/18.2/18.3(族包三派施工中)
+## 二、终局增量 (13 卡,v3 快照后闭环,含 2 张父卡 rollup)
 
-## 三、planned (8 卡)
-BI-08.3(已完待关单) · BI-19.4 · BI-21 端到端实战 · 其他尾部
+| 卡 | 标题 | commit |
+|---|---|---|
+| BI-07.12 | 流式 HTML→Markdown 引擎+web-extractor(SAX 词法机/块级栈渲染/110 实体表/5MiB 预算,63 测试) | ba8fa3c |
+| BI-18.1 | superpowers SOP 技能集(四技能+总纲,472 行) | d709163 |
+| BI-19.4 | 剪贴板图文互通(跨平台矩阵/SHA-256 内容寻址去重//copy,54 测试) | 738e358 |
+| BI-16.2 | PTC 模式(tool-compiler 双形态+ptc-runner 沙箱单轮执行,43 测试) | 91a60eb |
+| BI-20 | Diff 审查门+/doctor 体检(53 测试) | 4ebb049 |
+| BI-18.2 | 视觉核验判定器(端口化状态机,27 测试) | e7cdcb2 |
+| BI-18.3 | 公文转译+PDF 管线(结构类型零跨插件耦合/优雅降级,30 测试) | 464edde |
+| BI-18 | 研报插件资产(xlsx 勾稽引擎+双栏抽取 Python 骨架,冒烟验证) | 474277f |
+| BI-07.15 | Web 抓取与搜索工具链(56 测试) | 6f12da7 |
+| BI-11.1 | 可观测性底座(OTLP 缺省零出网,45 测试) | 42d891a |
+| BI-00 | 父卡 rollup(锚点引擎+运行循环+硬分叉裁定,子卡全闭环) | a4931dc |
+| BI-04 | 父卡 rollup(SSE 驱动与插槽路由,adapters 域承载) | 591daef |
+| BI-21 | **终局全功能验收矩阵**(11 域 A-K 全 PASS,44 测试/575 断言) | 3d212ee+4610bc0 |
 
----
+## 三、终局验收矩阵摘要 (docs/E2E_DRILL_REPORT.md)
+
+A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth 七态 · D 沙箱(landlock+bwrap 本机实探) · E 上下文防御链 · F 双代理编排 · G MCP/A2A 回环 · H 工作流 DAG/plan-mode · I TUI 双缓冲同构 · J 命令钩子(20 事件钉死) · K 网关+原子换装。演练修复缺陷 2:xlsx_audit %.4g 科学计数法;installLock.release 异步 unlink 竞态→unlinkSync。
 
 ## 四、质量与安全
-- 全仓 **~4800 pass / 0 fail** / tsc 0 错 / 零返工
-- **P0 38/38 = 100% 全清**
-- 安全裁定:权限模式权威源(06.5) / Plan 审批必填(14.2) / TowerMerge reviewer 签名(12.2) / verifier 白名单冻结(21.1) / 钩子双层语义(06.4) / recover 走合法转移边(14.5) / 邮件双层白名单(15.1) / WSS 零入站端口(15.4)
-- 规程:TOOL-1/TOOL-2 / Step-0+时间锚(#175/#177) / 族包逐卡分段(#171) / 派工原子性(OPS-DISPATCH-1) / 三败主控亲建
+- 全仓 **4074 pass / 0 fail(209 文件,49687 expect)** / 双 tsc 0 错 / 零返工
+- **台账 117/117 = 100% 全清(P0 全含)**
+- 安全裁定:权限模式权威源(06.5) / Plan 审批必填(14.2) / TowerMerge reviewer 签名(12.2) / verifier 白名单冻结(21.1) / 钩子双层语义(06.4) / recover 走合法转移边(14.5) / 邮件双层白名单(15.1) / WSS 零入站端口(15.4) / OTLP 缺省零出网(11.1) / 升级面 rename 唯一原子面(17 系)
+- 规程:TOOL-1/TOOL-2 / Step-0+时间锚(#175/#177) / 族包逐卡分段+复用型工单(#171/#240) / 派工原子性(OPS-DISPATCH-1) / 三败主控亲建 / 探询 10min 零落盘即停
 
 ## 五、发现项
 open:TOOL-1/TOOL-2/AUDIT-8/AUDIT-10/LOGBOOK-EXPORT-1/HOOK-EVENT-MAP/OPS-DISPATCH-1
 fixed:AUDIT-6/9/11
+观察项(演练备案,非缺陷):workflow 包 barrel stub / picomatch 段语义 / MCP、A2A fail-closed 显式面
