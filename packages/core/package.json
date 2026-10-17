@@ -5,9 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./config": "./src/config/index.ts"
+    "./config": "./src/config/index.ts",
+    "./guard": "./src/guard/index.ts"
   },
   "dependencies": {
-    "smol-toml": "^1.9.0"
+    "smol-toml": "^1.9.0",
+    "picomatch": "^4.0.3"
   }
 }
