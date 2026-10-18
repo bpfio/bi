@@ -34,9 +34,17 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 			tools: buildDefaultToolset(process.cwd()),
 			cwd: process.cwd(),
 			permissionMode: "manual",
+			// 真实终端尺寸（BI-24.3）：此前缺省 24×80，大终端上提示符钉在第 24 行、
+			// 转录画在第 1 行，画面与视口脱节。
+			rows: process.stdout.rows ?? 24,
+			cols: process.stdout.columns ?? 80,
 			writer: { write: (data) => process.stdout.write(data) },
 		});
 		const keys = new KeyStream();
+		// 终端尺寸变更跟随（SIGWINCH；非 TTY 无事件，保守注册）。
+		process.on("SIGWINCH", () => {
+			session.resize(process.stdout.rows ?? 24, process.stdout.columns ?? 80);
+		});
 
 		// 真实输入桥：stdin 字节 → InputLoop（粘贴聚合+按键解析）→ KeyStream。
 		// EOF 桥：reader 耗尽（管道关闭/EOF）即 KeyStream.end()——InputLoop 静默

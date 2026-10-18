@@ -3,7 +3,7 @@ import { PACKAGE, VERSION } from "./index";
 
 describe("@bi/core", () => {
   test("导出 VERSION 常量", () => {
-    expect(VERSION).toBe("0.1.1");
+    expect(VERSION).toBe("0.1.2");
   });
 
   test("导出包描述对象", () => {

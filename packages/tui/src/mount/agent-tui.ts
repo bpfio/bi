@@ -145,19 +145,20 @@ class ApprovalOverlay implements Component {
 	}
 }
 
-/** 会话视图组件：投影 L3 行集 + 状态行；不消费按键（放行浮层）。 */
+/** 会话视图组件：投影 L3 行集 + 状态行；不消费按键（放行浮层）。
+ * 布局（BI-24.3 修复同格叠写）：状态条独占倒数第二行，最底行让给 REPL 提示行
+ * ——此前状态行与 PromptView 同写最底行，"❯ "仅 2 格宽盖掉"[manual]"前两格，
+ * 真机呈现 `❯ anual] 就绪` 乱码。 */
 class TranscriptView implements Component {
-	constructor(
-		private readonly session: AgentTuiSession,
-		private readonly rows: number,
-	) {}
+	constructor(private readonly session: AgentTuiSession) {}
 
 	render(term: VirtualTerminal): void {
 		const lines = this.session.projection.render();
-		const viewRows = Math.max(1, this.rows - 1);
+		const rows = this.session.rows;
+		const viewRows = Math.max(1, rows - 2);
 		const visible = lines.slice(-viewRows);
 		for (let i = 0; i < visible.length; i++) term.write(0, i, visible[i]!);
-		term.write(0, this.rows - 1, this.session.statusText());
+		term.write(0, rows - 2, this.session.statusText());
 	}
 
 	wantsKey(_key: ParsedKey): boolean {
@@ -170,8 +171,8 @@ export class AgentTuiSession {
 	readonly projection: TranscriptProjection;
 	readonly app: TuiApp;
 	readonly #model: ModelPort;
-	readonly #rows: number;
-	readonly #cols: number;
+	#rows: number;
+	#cols: number;
 	readonly #hooks: TuiSessionHooks;
 	readonly #gate: PermissionGate;
 	readonly #registry = new Map<string, ToolBinding>();
@@ -199,7 +200,7 @@ export class AgentTuiSession {
 		// 帧字节面：真实终端经 options.writer 注入（BI-24.2）；缺省 no-op（测试注入 hooks.onFrame 断言行集）。
 		const writer: Writer = options.writer ?? { write: () => undefined };
 		this.app = new TuiApp(writer, this.#rows, this.#cols);
-		this.app.push(new TranscriptView(this, this.#rows));
+		this.app.push(new TranscriptView(this));
 		this.#gate = new PermissionGate({ mode: options.permissionMode ?? "manual" });
 		for (const binding of options.tools) this.#registry.set(binding.definition.name, binding);
 		const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
@@ -229,6 +230,11 @@ export class AgentTuiSession {
 		return this.#state;
 	}
 
+	/** 当前渲染行数（resize 可变；TranscriptView 布局单一来源）。 */
+	get rows(): number {
+		return this.#rows;
+	}
+
 	/** AgentLoop 内态诊断面（thinking/paused/exit/...；测试与状态条用）。 */
 	get agentState(): string {
 		return this.#agentLoop.state;
@@ -255,10 +261,20 @@ export class AgentTuiSession {
 	#frame(): void {
 		this.app.render();
 		const lines = this.projection.render();
-		const viewRows = Math.max(1, this.#rows - 1);
+		const viewRows = Math.max(1, this.#rows - 2);
 		const overlay = this.#activeOverlay?.lines() ?? [];
 		const frame = [...overlay, ...lines.slice(-(viewRows - overlay.length)), this.statusText()];
 		this.#hooks.onFrame?.(frame, { approvalVisible: this.#state === "awaiting-approval", state: this.#state });
+	}
+
+	/** 终端尺寸变更（SIGWINCH 桥，BI-24.3）：双缓冲与转录窗同步重绘。
+	 * 投影折行宽仍为构造期 cols（已渲染行不重排，仅影响后续折行，备案）。 */
+	resize(rows: number, cols: number): void {
+		if (rows === this.#rows && cols === this.#cols) return;
+		this.#rows = rows;
+		this.#cols = cols;
+		this.app.resize(rows, cols);
+		this.#frame();
 	}
 
 	#transcribe(kind: TranscriptKind, text: string): void {
