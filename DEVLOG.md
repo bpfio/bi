@@ -1,9 +1,9 @@
-# bi 研发台账 DEVLOG (主控编纂版 v5.1 · 组装点火)
+# bi 研发台账 DEVLOG (主控编纂版 v5.2 · 真实点火)
 
-> **生成**:2026-10-19 组装点火存档。**closed 117/117(100%)——能力矩阵全清,P0 全含(含 BI-21 终局门)**,代码前沿 75c466f。
-> 全仓 **4092 测试用例 / 211 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#248。
+> **生成**:2026-10-19 真实模型点火存档。**closed 117/117(100%)——能力矩阵全清,P0 全含(含 BI-21 终局门)**,代码前沿 73b5d29。
+> 全仓 **4105 测试用例 / 212 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#252。
 > 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md),演练真抓 2 缺陷并最小改动面修复。
-> 当前阶段:**组装点火进行中**(BI-ASM-2026-10-18 批次,BI-23.1 走骨架已点亮,见第六节)。
+> 当前阶段:**真实模型点火达成**(BI-ASM-2026-10-18 批次:BI-23.1 走骨架 + BI-23.3 真实点火均已点亮,BI-23.2 TUI 挂载在册,见第六节)。
 
 ---
 
@@ -210,10 +210,16 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 |---|---|---|---|
 | BI-23.1 | 走骨架点火:bin 真入口+kimi 序 main 分发+无头端到端装配体 | 75c466f | **closed**(主控亲建) |
 | BI-23.2 | TUI 挂载与事件流:双缓冲投影/审批 ask 回路/取消键位 | — | planned |
-| BI-23.3 | 真实模型端到端点火:SSE 驱动+凭据门+真实会话验收 | — | planned |
+| BI-23.3 | 真实模型端到端点火:SSE 驱动+凭据门+真实会话验收 | 73b5d29 | **closed**(主控亲建) |
 
 **BI-23.1 验收证据**:`bun bin/bi.ts --version` → `bi 0.1.0`;main 分发退出码语义 0(会话 ok)/2(参数与未知子命令)/3(无模型端口)/4(已识别未接线);e2e 5 用例断言全链路——真实工具执行(fs 读回真实内容)/钩子真实子进程触发(SessionStart+PreToolUse ran+决策 allow/block)/权限门审计轨迹(manual 模式 ask 结构化拒绝回喂,不假冒放行)/JSONL 会话 5 条目链(user→assistant(tool_use)→tool_call→tool_result→assistant,toolCallId/toolName 配对)/stream-json 线合约(StreamEvent 透传+session_done 汇总)。build-bin.ts 按 NOTE(BI-20.2) 钩子替换 VERSION 占位为 runBi 真入口(编译产物双冒烟:--version exit 0/裸跑 usage exit 2)。
 
 **首轮走骨架真抓 3 个跨器官接线缺陷并修复**:①会话根条目 id 未回填→第二条 append 成第二个根违例;②状态机契约撞线:executeTools 落定后已在 thinking,beginTurn 只该 idle 态调;③测试桩捕获 messages 活引用未快照。均为 117 卡单器官测试无法暴露的合约对撞——RULE-BI-12 价值首轮实证。
 
 **新增件**:bin/bi.ts、packages/core/src/cli/{headless,main}.ts(+e2e test)。骨架期显式降级(不伪造能力):权限 ask 无头结构化拒绝(审批 UI 归 23.2)/信任门缺省 trusted(真实信任门归后续装配卡)/未接线子命令结构化上报。
+
+**BI-23.3 真实点火(2026-10-19,commit 73b5d29,closed)**:真实 ModelPort 落地——`cli/model-port.ts` 两件套:`createAdapterModelPort`(BI-04.2 双模态适配器→ModelPort 直连包装)+ `resolveModelPort`(BiConfig 选择链 models.default→entries 首个回退→provider 引用链→kind→WireMode(openai/anthropic,google 结构化无驱动)→**BI-02 凭据门**(api_key_env 间接引用,key 只经环境变量,永不落盘)+ thinking 档位映射 minimal→off/low→low/medium→high/high→max);`main.ts` 未注入 ModelPort 时走配置装配(ConfigService 三级 TOML+env),凭据/配置失败结构化退出码 3(带修复指引)。门控实弹 e2e `scripts/ignition-real-model.ts`:默认零外呼(BI_IGNITION 门),无 key DEGRADED 备案(沿 BI-21 纪律,不伪造 PASS)。
+
+**真实点火验收(PASS,双模态)**:用户提供真实凭据(mimo-v2.6-flash,OpenAI 兼容+Anthropic 兼容双端点),key 仅存运行进程环境(~/.bi-ignition-key 0600,仓库外,git grep 0 泄漏)。两模态各一次完整真实会话:SSE 流→模型自主调用 read_file→工具回环→finalText 含魔数→JSONL 落盘(user→assistant(tool_use)→tool_call→tool_result→assistant 链)→stream-json 终帧,exit 0。anthropic-messages({origin}/anthropic/v1/messages)与 openai-completions({origin}/v1/chat/completions)双 PASS——BI-04.2 对第三方 Anthropic 兼容端点的兼容性首次实测成立。**至此 bi 首次真实模型端到端贯通:(1+1)+(1+1+1)≥5 不等式的第一个实证数据点。**
+
+**点火排障三则(devlog #252)**:①单测桩建好 fetch 却忘传给端口,差点真实外呼——门控纪律教训(测试零外呼必须结构性保证,非约定俗成);②点火断言读错 BI-03 JSONL 记录层级(.type vs .entry.type)误报工具未回环;③resolveModelPort 漏传 temperature(单测当场抓获)。
