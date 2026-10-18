@@ -275,3 +275,20 @@ npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @b
 **排障(devlog #257)**:acp 端口未注入用例原断言依赖真实 ~/.bi——重锚定空 homeDir 凭据门,消除环境依赖与潜在真实外呼。
 
 **门禁:4170 pass/0 fail(217 文件),双 tsc 0。诚实边界汇总**:acp 取消语义/多会话并行、bash 写类工具、REPL 粘贴多行、windows 平台、--embed 资产嵌入、@bi/mcp AcpBridge 跨包合流归后续卡。
+
+## 十、发布修复批次 (BI-REL-2026-10-20,真机面两连修,2026-10-20)
+
+用户真机验收连环揪出两个发布/渲染缺陷,当日双修双发版。两卡均带 pty 真终端探针证据(探针脚本暂驻 /tmp,转正归 BI-27.6/BI-26.4)。
+
+| 卡 | 标题 | commit | 版本 | 状态 |
+|---|---|---|---|---|
+| BI-25.5 | 发布物编译入口修复(bin/bi.ts 进二进制) | 0391e38 | 0.1.1 | **closed**(F-REL-01 fixed) |
+| BI-24.3 | REPL 真机布局修复(行分离+真实尺寸) | 7c9189a | 0.1.2 | **closed** |
+
+**BI-25.5 落位(Devlog #259)**:0.1.0 发布二进制裸跑=USAGE exit 2,无参 REPL 主入口从未进过编译产物——build-bin 编译入口自 BI-23.1 钉在 core cli main(当时仅无头面,选择正确),BI-24.2 为 bin/bi.ts 接 REPL 后无人回头改编译管线,而 npm README 已宣称 `bi # 交互 REPL`。修:临时 entry 改 bin/bi.ts 副作用导入(全相对导入可打包;embed 资产表挂载先于动态导入),build-bin e2e 断言改锁新语义(空 HOME 裸跑→exit 3 凭据门=REPL 装配路径,非 USAGE 分支)。教训:**入口面变更必须同步核对编译管线入口;版本号双源(根 package.json+core VERSION 常量)须同卡同升**。npm 接线经验:publish 经临时 userconfig(0600 用后即焚,token 零落盘);registry 传播延迟轮询消化;装机 --prefer-online 破本机 packument 缓存。本机可用性接线:npm i -g @bpfio/bi + ~/.bashrc 密钥注入块(export BI_MIMO_API_KEY="$(cat ~/.bi-ignition-key)";非交互 shell 触发交互守卫不注入)。
+
+**BI-24.3 落位(Devlog #260)**:用户报告"界面非常简陋、无法完成输入"。pty 探针(40×100 真窗口)复现定位两叠加缺陷:①TranscriptView 状态行与 PromptView 提示行同写虚拟终端最底行——"❯ "(2 格)盖掉"[manual]"前两格,草稿增长逐格吞状态文本(`❯ anual] 就绪`→`❯ hello` 渐进);②终端尺寸硬编码 24×80(TuiSessionOptions 缺省且 bin 未传),提示符钉第 24 行、转录画第 1 行,与真实视口脱节。按键字节流全程正常(UTF-8/回车/回合启动均通)——纯渲染层问题。修:状态条独占 rows-2(kimi 式布局,转录窗收缩 rows-2)、TranscriptView 改读 session.rows 单一来源、新增 AgentTuiSession.resize(rows,cols)(TuiApp/DiffRenderer resize 已有)、bin 注入 process.stdout.rows/columns+SIGWINCH 跟随。备案:投影折行宽仍为构造期 cols(已渲染行不重排)。教训:**挂载层测试全用注入渲染面(onFrame 行集),虚拟终端布局缺陷只有 pty 真机才显形——真人 TTY 面回归必须常态化**。
+
+**终验(装机版 0.1.2)**:40×100 pty 下状态行 `[manual] 就绪` 独占第 39 行、提示行 `❯ hello` 逐键干净渲染第 40 行、零叠写;无头真模型回合 session_done exit=ok。**门禁:4170 pass/0 fail(217 文件),双 tsc 0。**
+
+**策略评估备案(本会话对话产出,未立项)**:①测试充分性=结构层充分(4170/217 文件,每卡带测试,注入式零外呼)/成品层部分充分(BI-21 演练矩阵止步 104 卡时代,23/24/25 三族未入阵;真实点火一次性不可回归;真人 TTY/崩溃恢复/darwin 真机/acp 真客户端/agent 质量评估缺位)→ **BI-26 测试深化族 5 卡方案已提案待口令**;②TUI 生态未向 kimi 对齐(RULE-BI-07 壳层基线欠账盘点:流式渲染/光标可视化/markdown 高亮/样式/候选菜单/多行粘贴/视口工程/spinner/pty 回归九项)→ **BI-27 对齐族 6 卡方案已提案待口令**(轮子首选 kimi pi-tui,备选 DiffRenderer 自研增强);③scripts/ 母体遗产混淆测试面(smoke-tui-*.ts 等引用 vendor/zcode.cjs)→ 归 BI-26 清理卡;④doctor 仍探母体凭据面(open.bigmodel.cn)→ 归 BI-24 族后续卡。
