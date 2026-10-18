@@ -1,9 +1,9 @@
-# bi 研发台账 DEVLOG (主控编纂版 v5.2 · 真实点火)
+# bi 研发台账 DEVLOG (主控编纂版 v5.3 · 组装点火里程碑)
 
-> **生成**:2026-10-19 真实模型点火存档。**closed 117/117(100%)——能力矩阵全清,P0 全含(含 BI-21 终局门)**,代码前沿 73b5d29。
-> 全仓 **4105 测试用例 / 212 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#252。
+> **生成**:2026-10-19 BI-23 族全闭存档。**closed 117/117+BI-23 族(120/120)——能力矩阵全清+组装点火里程碑达成**,代码前沿 b678fb6。
+> 全仓 **4111 测试用例 / 213 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#253。
 > 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md),演练真抓 2 缺陷并最小改动面修复。
-> 当前阶段:**真实模型点火达成**(BI-ASM-2026-10-18 批次:BI-23.1 走骨架 + BI-23.3 真实点火均已点亮,BI-23.2 TUI 挂载在册,见第六节)。
+> 当前阶段:**BI-23 组装点火里程碑达成**(行走骨架+TUI 挂载+真实模型点火三子卡全闭,见第六节)。
 
 ---
 
@@ -209,7 +209,7 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 | 卡 | 标题 | commit | 状态 |
 |---|---|---|---|
 | BI-23.1 | 走骨架点火:bin 真入口+kimi 序 main 分发+无头端到端装配体 | 75c466f | **closed**(主控亲建) |
-| BI-23.2 | TUI 挂载与事件流:双缓冲投影/审批 ask 回路/取消键位 | — | planned |
+| BI-23.2 | TUI 挂载与事件流:双缓冲投影/审批 ask 回路/取消键位 | b678fb6 | **closed**(主控亲建) |
 | BI-23.3 | 真实模型端到端点火:SSE 驱动+凭据门+真实会话验收 | 73b5d29 | **closed**(主控亲建) |
 
 **BI-23.1 验收证据**:`bun bin/bi.ts --version` → `bi 0.1.0`;main 分发退出码语义 0(会话 ok)/2(参数与未知子命令)/3(无模型端口)/4(已识别未接线);e2e 5 用例断言全链路——真实工具执行(fs 读回真实内容)/钩子真实子进程触发(SessionStart+PreToolUse ran+决策 allow/block)/权限门审计轨迹(manual 模式 ask 结构化拒绝回喂,不假冒放行)/JSONL 会话 5 条目链(user→assistant(tool_use)→tool_call→tool_result→assistant,toolCallId/toolName 配对)/stream-json 线合约(StreamEvent 透传+session_done 汇总)。build-bin.ts 按 NOTE(BI-20.2) 钩子替换 VERSION 占位为 runBi 真入口(编译产物双冒烟:--version exit 0/裸跑 usage exit 2)。
@@ -223,3 +223,7 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 **真实点火验收(PASS,双模态)**:用户提供真实凭据(mimo-v2.6-flash,OpenAI 兼容+Anthropic 兼容双端点),key 仅存运行进程环境(~/.bi-ignition-key 0600,仓库外,git grep 0 泄漏)。两模态各一次完整真实会话:SSE 流→模型自主调用 read_file→工具回环→finalText 含魔数→JSONL 落盘(user→assistant(tool_use)→tool_call→tool_result→assistant 链)→stream-json 终帧,exit 0。anthropic-messages({origin}/anthropic/v1/messages)与 openai-completions({origin}/v1/chat/completions)双 PASS——BI-04.2 对第三方 Anthropic 兼容端点的兼容性首次实测成立。**至此 bi 首次真实模型端到端贯通:(1+1)+(1+1+1)≥5 不等式的第一个实证数据点。**
 
 **点火排障三则(devlog #252)**:①单测桩建好 fetch 却忘传给端口,差点真实外呼——门控纪律教训(测试零外呼必须结构性保证,非约定俗成);②点火断言读错 BI-03 JSONL 记录层级(.type vs .entry.type)误报工具未回环;③resolveModelPort 漏传 temperature(单测当场抓获)。
+
+**BI-23.2 TUI 挂载(2026-10-19,commit b678fb6,closed)**:`packages/tui/src/mount/agent-tui.ts`——AgentTuiSession 把 BI-23.1 对话驱动器挂上 BI-19/20 器官(器官零改动):**双缓冲投影**(TranscriptProjection L1→L3 + TuiApp/DiffRenderer begin/end 差分帧,onFrame 注入渲染面探针);**审批 ask 回路**(manual 门 ask→栈顶 ApprovalOverlay y/n/Esc,deny 结构化 permission-denied 回喂模型——无头降级的假冒面就此消除);**Esc 二段取消**(对齐 BI-07 迁移表:thinking→paused+模型流 abort,窗口内二段→exit,pre-beginTurn 竞态 noop 兜底,paused 续提交经 resume)。ToolCallAssembler 自 headless 导出复用,挂载面入 @bi/tui index。验收:注入渲染面 6 用例(帧序列/工具回环+tool_result 回喂/ask→放行/ask→拒绝/一段 cancelled/二段 exit+续提交报错)全绿。边界:行编辑器 REPL 接线归后续装配卡;钩子 runner 暂为无头专属。排障三则(devlog #253):Esc 与 beginTurn 竞态(根条目 fs 落盘窗口 noop 无取消→流永挂)→noop+idle 兜底;轮询错对象;浮层行集单一来源化。
+
+**BI-23 父卡 rollup(closed)**:三子卡证据链齐备——23.1 走骨架(75c466f,5 e2e,抓 3 跨器官缺陷)/23.2 TUI 挂载(b678fb6,6 帧序列用例,抓 3 装配竞态)/23.3 真实点火(73b5d29,mimo 双模态 PASS)。RULE-BI-12 行走骨架先行铁律首个工程完赛:骨架常绿 4111 测试,器官卡全数挂上,未接线子命令(init/session/fork/export/transfer/acp/upgrade/doctor)逐个挂分发归后续装配卡。
