@@ -1,9 +1,9 @@
 # bi 研发台账 DEVLOG (主控编纂版 v5.4 · CLI 生态接线)
 
-> **生成**:2026-10-19 BI-24 族全闭+npm 发布存档。**closed 117/117+BI-23 族+BI-24 族(123/123)+BI-25.4**,代码前沿 7e7b703 段。
-> 全仓 **4141 测试用例 / 215 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#255。
+> **生成**:2026-10-19 BI-25 族全闭存档。**closed 117/117+BI-23/24/25 三族(128/128)**,代码前沿 ee77698。
+> 全仓 **4170 测试用例 / 217 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#257。
 > 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md)。
-> 当前阶段:**npm 发布达成**——`npm i -g @bpfio-yp/bi` 即装即用(原生二进制,无需 Node/Bun 运行期),见第七节·补遗。
+> 当前阶段:**装配增强与发布面达成**——`npm i -g @bpfio/bi` 即装即用(原生二进制),bin 两路径挂默认工具集(mimo 真实工具回合实测),acp 可接真会话,REPL 有历史/补全/多行,见第八·九节。
 
 ---
 
@@ -253,3 +253,25 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 **排障三则(devlog #255)**:①BuildReport 成功态无 ok 字段且为多行 pretty JSON——按行截 `{` 解析必炸,改判据=退出码+失败标志正则;②`npm org create` CLI 不可用(EUSAGE)——@bpfio org 须网页创建,v1 落用户 scope `@bpfio-yp/bi`,建 org 后可迁移;③注册表传播延迟(发布回执≠立即可见),冷安装须轮询等待。
 
 **BI-25 剩余**:25.1/25.2/25.3 三卡 planned 待口令(工具注册表面/acp 桥接/REPL 增强)。
+
+## 九、装配增强批次 (BI-ASM-2026-10-19-02,双 agent,父卡 rollup closed)
+
+npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @bpfio-yp→@bpfio 重发三包(@bpfio/bi@0.1.0+两平台包),@bpfio/bi 冷安装冒烟 PASS,旧 @bpfio-yp/* 三包 deprecate 指引迁移(Devlog #256)。
+
+| 卡 | 标题 | commit | 状态 |
+|---|---|---|---|
+| BI-25.1 | 工具注册表面(bin 层 tools 挂载) | ee77698 | **closed**(Agent-D) |
+| BI-25.2 | acp 完整桥接(session/new+prompt) | ee77698 | **closed**(Agent-C) |
+| BI-25.3 | REPL 增强(历史/tab/多行) | ee77698 | **closed**(Agent-D) |
+| BI-25.4 | npm 发布面(@bpfio/bi) | 24c01af→5ffb2ba | **closed** |
+| BI-25 | 父卡 rollup | — | **closed** |
+
+**BI-25.1 落位**:cli/toolset.ts buildDefaultToolset(cwd)=read_file(段级 cwd 逃逸守卫)+web_fetch(BI-07.15 器官)+web_search(env 密钥门+TTL 缓存+令牌桶),全 readOnly;bash/写类不挂(沙箱面归后续卡)。主控接线:bin 两路径(--prompt/REPL)挂 buildDefaultToolset。**真实冒烟 PASS:mimo 自主调用 read_file→真实执行→魔数 77 回填作答(rounds=2)——bin 层首次全 agentic 回路**。11 用例。
+
+**BI-25.2 落位**:commands/acp-session.ts AcpSessionConnection——Content-Length JSON-RPC 上 session/new(UUIDv7 落 JSONL)/session/prompt(agent_message_chunk 增量+终帧,链式续聊)/session/end;错误面 -32003/-32004(单飞忙)/-32005(端口)/-32006;stdout 帧纯净。主控接线:runBi 默认惰性 memo buildModelPort(凭据门,homeDir 可注入);端口未注入用例重锚定空 homeDir(修真实 ~/.bi 误读+潜在真实外呼风险)。8 用例。边界:取消/多会话/thinking 帧归后续卡。
+
+**BI-25.3 落位**:repl.ts——PromptHistory(up/down+草稿暂存+越界还原)/tab 补全(ReplOptions.completions 可注入,缺省历史前缀,共同前缀不劈代理对)/多行语义(Ctrl+E 外编回填保换行整体提交,粘贴摊平为边界)。23 用例(13 既有+10 新增,唯一语义变更=外编回填改原样提交)。相邻一行修复:回合收束提示行同步当前草稿。
+
+**排障(devlog #257)**:acp 端口未注入用例原断言依赖真实 ~/.bi——重锚定空 homeDir 凭据门,消除环境依赖与潜在真实外呼。
+
+**门禁:4170 pass/0 fail(217 文件),双 tsc 0。诚实边界汇总**:acp 取消语义/多会话并行、bash 写类工具、REPL 粘贴多行、windows 平台、--embed 资产嵌入、@bi/mcp AcpBridge 跨包合流归后续卡。
