@@ -11,6 +11,7 @@
 import { ConfigService } from "../packages/core/src/config/config-service";
 import { ConfigError } from "../packages/core/src/config/schema";
 import { resolveModelPort, ModelPortConfigError } from "../packages/core/src/cli/model-port";
+import { buildDefaultToolset } from "../packages/core/src/cli/toolset";
 import { runBi } from "../packages/core/src/cli/main";
 import { AgentTuiSession } from "../packages/tui/src/mount/agent-tui";
 import { KeyStream, runRepl } from "../packages/tui/src/mount/repl";
@@ -30,7 +31,7 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 
 		const session = new AgentTuiSession({
 			model: selection.port,
-			tools: [],
+			tools: buildDefaultToolset(process.cwd()),
 			cwd: process.cwd(),
 			permissionMode: "manual",
 			writer: { write: (data) => process.stdout.write(data) },
@@ -79,4 +80,7 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 }
 
 const argv = process.argv.slice(2);
-process.exitCode = argv.length === 0 ? await runReplMain(process.stdin as RawCapableStdin) : await runBi(argv);
+process.exitCode =
+	argv.length === 0
+		? await runReplMain(process.stdin as RawCapableStdin)
+		: await runBi(argv, { headless: { tools: buildDefaultToolset(process.cwd()) } });

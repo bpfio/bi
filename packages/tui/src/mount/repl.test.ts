@@ -1,5 +1,6 @@
 /**
  * BI-24.2 —— 行编辑器 REPL 验收：注入键流断言（全离线，零网络，不触 stdin/raw mode）。
+ * BI-25.3 —— REPL 增强验收：up/down 历史翻页、tab 补全、多行输入语义。
  *
  * 覆盖：
  * 1. LineEditor 键位单元：可见字符/回删/光标移动/提交自清、空行与纯空白忽略、
@@ -11,8 +12,14 @@
  * 5. 运行态 Esc 转发 session.handleKey（hangingModel：一段=cancelled）；
  * 6. 窗口内二段 Esc：会话 exit 终态 → REPL 同步终场（session-exited）；
  * 7. awaiting-approval 态按键经 TuiApp 派发（y=放行审批回路）；
- * 8. Ctrl+E 外编桥：回填多行摊平；编辑器异常保稿；
- * 9. TuiSessionOptions.writer 透传：提示行走 session 注入渲染面（DiffRenderer 字节）。
+ * 8. Ctrl+E 外编桥：回填多行原样保留整体提交（BI-25.3 语义）；编辑器异常保稿；
+ * 9. TuiSessionOptions.writer 透传：提示行走 session 注入渲染面（DiffRenderer 字节）；
+ * 10. PromptHistory 单元：record 入史/up/down 来回（最旧钳制）/草稿暂存与还原；
+ * 11. tab 补全单元：唯一候选/多候选共同前缀/无进益 no-op/代理对不劈开；
+ * 12. runRepl 历史翻页接线：空草稿 up=最近一条、down 越界回草稿、编辑草稿暂存、
+ *     回想再编辑提交入史、空历史 no-op；
+ * 13. runRepl tab 补全接线：缺省历史前缀补全、注入候选面多候选/无候选；
+ * 14. 多行语义：提示行 ⏎ 摊平显示、粘贴含换行仍摊平为空格。
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -20,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AgentTuiSession } from "./agent-tui";
-import { KeyStream, LineEditor, runRepl } from "./repl";
+import { KeyStream, LineEditor, PromptHistory, commonPrefix, completeDraft, runRepl } from "./repl";
 import { MemoryWriter } from "../testing";
 import type { ModelPort, ToolBinding } from "../../../core/src/cli/headless";
 import type { StreamEvent } from "../../../core/src/adapters/deepseek-adapter";
@@ -97,6 +104,9 @@ const ctrlC: ParsedKey = { kind: "ctrl", char: "c" };
 const ctrlD: ParsedKey = { kind: "ctrl", char: "d" };
 const ctrlE: ParsedKey = { kind: "ctrl", char: "e" };
 const esc: ParsedKey = { kind: "esc" };
+const upKey: ParsedKey = { kind: "up" };
+const downKey: ParsedKey = { kind: "down" };
+const tabKey: ParsedKey = { kind: "tab" };
 
 /** 轮询等待（微任务/宏任务双冲刷；超时即败）。 */
 async function until(cond: () => boolean): Promise<void> {
@@ -451,11 +461,12 @@ describe("BI-24.2 · runRepl 运行态键路由", () => {
 });
 
 describe("BI-24.2 · runRepl 外编桥与渲染面", () => {
-  test("Ctrl+E 外编桥：回填多行摊平提交；编辑器异常保稿", async () => {
+  test("Ctrl+E 外编桥：回填多行换行原样保留整体提交（BI-25.3）+ up 回想保原样；编辑器异常保稿", async () => {
     const { root, cleanup } = await makeRoot();
     try {
-      // 场景一：外编回填多行文本（\n 摊平为空格）→ Enter 提交
+      // 场景一：外编回填多行文本（\n 原样保留）→ Enter 整体提交；up 回想同样原样
       const sink1 = frameSink();
+      const prompts1: string[] = [];
       const session1 = new AgentTuiSession({
         model: scriptedModel([[{ type: "content_delta", delta: "收到。" }, { type: "done", stopReason: "stop" }]]),
         tools: [],
@@ -470,13 +481,20 @@ describe("BI-24.2 · runRepl 外编桥与渲染面", () => {
       const done1 = runRepl({
         session: session1,
         keys: stream1,
+        onPrompt: (d) => prompts1.push(d),
         editExternally: async () => ({ text: "第一行\n第二行", modified: true }),
       });
       stream1.push(ctrlE);
+      await until(() => prompts1.at(-1) === "第一行\n第二行"); // 回填原稿含换行（探针回吐原样）
       stream1.push(enter);
       await until(
-        () => session1.state === "idle" && sink1.frames.some((f) => f.lines.some((l) => l.includes("[user] 第一行 第二行"))),
+        () => session1.state === "idle" && sink1.frames.some((f) => f.lines.some((l) => l.includes("[user] 第一行"))),
       );
+      // 投影按换行拆逻辑行：首行带 [user] 前缀，次行裸文本（整体提交的证据）
+      const lineText1 = sink1.frames.map((f) => f.lines.join("\n")).join("\n");
+      expect(lineText1).toContain("[user] 第一行\n第二行");
+      stream1.push(upKey);
+      await until(() => prompts1.at(-1) === "第一行\n第二行"); // 历史条目原样（含换行）
       stream1.push(ctrlD);
       const result1 = await done1;
       expect(result1.submittedLines).toBe(1);
@@ -538,6 +556,372 @@ describe("BI-24.2 · runRepl 外编桥与渲染面", () => {
 
       expect(writer.output).toContain("❯ hi"); // 提示行经 DiffRenderer 差分落到注入 writer
       expect(writer.output).toContain("\x1b["); // CUP/EL 最小 ANSI 输出
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BI-25.3 · PromptHistory / tab 补全单元
+// ---------------------------------------------------------------------------
+
+describe("BI-25.3 · PromptHistory 单元", () => {
+  test("无历史 no-op；record 入史；空草稿 up=最近一条；连续 up 最旧钳制；down 越界回空稿", () => {
+    const h = new PromptHistory();
+    expect(h.up("草稿")).toBeUndefined(); // 无历史 no-op
+    expect(h.down()).toBeUndefined(); // 已在草稿槽 no-op
+    h.record("第一条");
+    h.record("第二条");
+    expect(h.lines).toEqual(["第一条", "第二条"]);
+    expect(h.up("")).toBe("第二条"); // 空草稿 up=最近一条（无暂存）
+    expect(h.up("")).toBe("第一条"); // 连续 up 向更旧
+    expect(h.up("")).toBe("第一条"); // 最旧处钳制（不绕回）
+    expect(h.down()).toBe("第二条");
+    expect(h.down()).toBe(""); // 越回草稿槽：无暂存=空稿
+    expect(h.down()).toBeUndefined(); // 已在草稿槽 no-op
+  });
+
+  test("编辑过草稿先暂存：离开草稿槽暂存、down 越界还原；回想条目上的编辑不二次暂存；record 复位弃暂存", () => {
+    const h = new PromptHistory();
+    h.record("老条目");
+    expect(h.up("我的草稿")).toBe("老条目"); // 非空草稿 → 先暂存
+    expect(h.stashedDraft).toBe("我的草稿");
+    expect(h.up("老条目再编辑")).toBe("老条目"); // 最旧钳制；回想条目上的编辑不二次暂存
+    expect(h.stashedDraft).toBe("我的草稿");
+    expect(h.down()).toBe("我的草稿"); // 单条历史：已在最旧，down 一步即越回草稿槽还原暂存
+    expect(h.stashedDraft).toBeUndefined(); // 还原即弃
+    h.up("再次暂存");
+    h.record("新提交"); // record 复位并弃暂存
+    expect(h.stashedDraft).toBeUndefined();
+    expect(h.down()).toBeUndefined(); // 游标已复位草稿槽：down no-op（暂存确已弃，而非"再次暂存"）
+    expect(h.lines).toEqual(["老条目", "新提交"]);
+  });
+});
+
+describe("BI-25.3 · tab 补全单元", () => {
+  test("completeDraft/commonPrefix：唯一候选、多候选第一共同前缀、无进益 no-op、代理对不劈开", () => {
+    expect(completeDraft("", [])).toBeUndefined(); // 无候选
+    expect(completeDraft("re", ["read"])).toBe("read"); // 唯一候选整稿补全
+    expect(completeDraft("re", ["readx", "ready"])).toBe("read"); // 多候选第一共同前缀
+    expect(completeDraft("read", ["read", "readx"])).toBeUndefined(); // 共同前缀=草稿（无进益）
+    expect(completeDraft("ab", ["xb"])).toBeUndefined(); // 非前缀延伸不替换
+    expect(completeDraft("读", [])).toBeUndefined();
+    // 代理对：🎉 = \uD83C\uDF89；共同前缀恰为完整码点，不劈在中间
+    expect(commonPrefix(["🎉a", "🎉b"])).toBe("🎉"); // 共同前缀为完整码点，不劈在中间
+    expect(completeDraft("", ["🎉x", "🎉y"])).toBe("🎉"); // 空草稿补出完整代理对（非半个）
+    expect(commonPrefix([])).toBe("");
+    expect(commonPrefix(["abc"])).toBe("abc");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BI-25.3 · runRepl 历史翻页（注入键流）
+// ---------------------------------------------------------------------------
+
+describe("BI-25.3 · runRepl 历史翻页（注入键流）", () => {
+  test("提交入史：空草稿 up=最近一条、连续 up/down 来回、down 越界回草稿", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([
+          [{ type: "content_delta", delta: "答一。" }, { type: "done", stopReason: "stop" }],
+          [{ type: "content_delta", delta: "答二。" }, { type: "done", stopReason: "stop" }],
+        ]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      for (const key of [...text("第一条"), enter]) stream.push(key);
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[user] 第一条"))));
+      for (const key of [...text("第二条"), enter]) stream.push(key);
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[user] 第二条"))));
+
+      stream.push(upKey);
+      await until(() => prompts.at(-1) === "第二条"); // 空草稿 up=最近一条
+      stream.push(upKey);
+      await until(() => prompts.at(-1) === "第一条");
+      stream.push(downKey);
+      await until(() => prompts.at(-1) === "第二条");
+      stream.push(downKey);
+      await until(() => prompts.at(-1) === ""); // down 越界回草稿（空稿）
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.endedAs).toBe("exit-key");
+      expect(result.submittedLines).toBe(2);
+      const lineText = sink.frames.map((f) => f.lines.join("\n")).join("\n");
+      expect(lineText).toContain("[user] 第一条");
+      expect(lineText).toContain("[user] 第二条");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("编辑过草稿先暂存：up 进史回想、down 越界还原原稿", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([[{ type: "content_delta", delta: "收到。" }, { type: "done", stopReason: "stop" }]]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      for (const key of [...text("老条目"), enter]) stream.push(key);
+      // 等回合收束（assistant 帧）再编辑：运行态按键走 dispatchKey 会丢
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[assistant] 收到。"))));
+      for (const key of text("草稿abc")) stream.push(key); // 编辑草稿（不提交）
+      await until(() => prompts.at(-1) === "草稿abc");
+      stream.push(upKey); // 离开草稿槽 → 暂存 + 回想
+      await until(() => prompts.at(-1) === "老条目");
+      stream.push(downKey); // 越回草稿槽 → 还原暂存
+      await until(() => prompts.at(-1) === "草稿abc");
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.submittedLines).toBe(1); // 暂存稿未被误提交
+      expect(prompts).toContain("老条目");
+      expect(prompts.at(-1)).toBe("草稿abc");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("回想条目再编辑提交：入史并成为最近一条（record 复位）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([
+          [{ type: "content_delta", delta: "一。" }, { type: "done", stopReason: "stop" }],
+          [{ type: "content_delta", delta: "二。" }, { type: "done", stopReason: "stop" }],
+        ]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      for (const key of [...text("old"), enter]) stream.push(key);
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[user] old"))));
+      stream.push(upKey); // 回想 "old"（空草稿无暂存）
+      await until(() => prompts.at(-1) === "old");
+      stream.push({ kind: "char", char: "X" }); // 回想条目上再编辑 → "oldX"
+      await until(() => prompts.at(-1) === "oldX");
+      stream.push(enter); // 提交编辑后的回想条目
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[user] oldX"))));
+      stream.push(upKey); // 最近一条=oldX（record 复位生效）
+      await until(() => prompts.at(-1) === "oldX");
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.submittedLines).toBe(2);
+      expect(prompts.filter((p) => p === "oldX").length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("空历史 up/tab：草稿不动（探针零回吐）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+      stream.push(upKey);
+      stream.push(tabKey);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(prompts).toEqual([""]); // 只有初始探针：no-op 不回吐
+      stream.push(ctrlD);
+      const result = await done;
+      expect(result.submittedLines).toBe(0);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BI-25.3 · runRepl tab 补全（注入键流）
+// ---------------------------------------------------------------------------
+
+describe("BI-25.3 · runRepl tab 补全（注入键流）", () => {
+  test("缺省历史前缀补全：唯一候选补全；等值候选无进益 no-op", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([[{ type: "content_delta", delta: "收到。" }, { type: "done", stopReason: "stop" }]]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      for (const key of [...text("list all files"), enter]) stream.push(key);
+      // 等回合收束（assistant 帧）再补全：运行态按键走 dispatchKey 会丢
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[assistant] 收到。"))));
+      for (const key of text("list")) stream.push(key);
+      await until(() => prompts.at(-1) === "list");
+      stream.push(tabKey); // 唯一候选 "list all files" → 整稿补全
+      await until(() => prompts.at(-1) === "list all files");
+      const before = prompts.length;
+      stream.push(tabKey); // 等值候选被排除 → 无候选 → no-op
+      await new Promise((r) => setTimeout(r, 20));
+      expect(prompts.length).toBe(before); // no-op 不回吐探针
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.submittedLines).toBe(1);
+      expect(prompts).toContain("list all files");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("注入 completions：多候选第一共同前缀；无候选 no-op（注入面按草稿调用）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const prompts: string[] = [];
+      const seen: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({
+        session,
+        keys: stream,
+        onPrompt: (d) => prompts.push(d),
+        completions: (draft) => {
+          seen.push(draft);
+          return draft === "re" ? ["readx", "ready"] : [];
+        },
+      });
+
+      for (const key of text("re")) stream.push(key);
+      await until(() => prompts.at(-1) === "re");
+      stream.push(tabKey); // 多候选 → 第一共同前缀 "read"
+      await until(() => prompts.at(-1) === "read");
+      stream.push(tabKey); // 无候选 → no-op
+      await new Promise((r) => setTimeout(r, 20));
+      expect(prompts.at(-1)).toBe("read");
+      for (const key of [...text("zz"), tabKey]) stream.push(key); // 无候选 no-op
+      await new Promise((r) => setTimeout(r, 20));
+      expect(prompts.at(-1)).toBe("readzz"); // "zz" 追加进益，tab 未动草稿
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.submittedLines).toBe(0);
+      expect(seen).toContain("re"); // 注入面在 tab 时刻收到当前草稿
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BI-25.3 · 多行输入语义（显示端 ⏎ 摊平；粘贴边界）
+// ---------------------------------------------------------------------------
+
+describe("BI-25.3 · 多行输入语义", () => {
+  test("提示行显示端换行摊平为 ⏎；粘贴含换行仍摊平为空格并单行提交", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      // 场景一（writer 渲染面）：外编回填多行 → 提示行显示 "❯ 甲⏎乙"
+      const writer = new MemoryWriter();
+      const session1 = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        writer,
+      });
+      const stream1 = new KeyStream();
+      const done1 = runRepl({
+        session: session1,
+        keys: stream1,
+        editExternally: async () => ({ text: "甲\n乙", modified: true }),
+      });
+      stream1.push(ctrlE);
+      await until(() => writer.output.includes("❯ 甲⏎乙")); // 显示端 ⏎ 摊平（草稿内态保留换行）
+      stream1.push(ctrlD);
+      await done1;
+
+      // 场景二（粘贴边界）：paste 含换行仍摊平为空格，单行提交
+      const sink2 = frameSink();
+      const prompts2: string[] = [];
+      const session2 = new AgentTuiSession({
+        model: scriptedModel([[{ type: "content_delta", delta: "收到。" }, { type: "done", stopReason: "stop" }]]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink2.hooks,
+      });
+      const stream2 = new KeyStream();
+      const done2 = runRepl({ session: session2, keys: stream2, onPrompt: (d) => prompts2.push(d) });
+      stream2.push({ kind: "paste", text: "丙\n丁" });
+      await until(() => prompts2.at(-1) === "丙 丁"); // 摊平为空格
+      stream2.push(enter);
+      await until(
+        () => session2.state === "idle" && sink2.frames.some((f) => f.lines.some((l) => l.includes("[user] 丙 丁"))),
+      );
+      stream2.push(ctrlD);
+      const result2 = await done2;
+
+      expect(result2.submittedLines).toBe(1);
+      const lineText = sink2.frames.map((f) => f.lines.join("\n")).join("\n");
+      expect(lineText).not.toContain("丙⏎丁"); // 粘贴不产生换行语义
     } finally {
       await cleanup();
     }

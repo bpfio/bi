@@ -300,7 +300,7 @@ describe("BI-24.1 acp（最小握手帧，注入 IO）", () => {
     const outChunks: Uint8Array[] = [];
     const input = streamOf([
       acpFrame({ jsonrpc: "2.0", method: "initialized" }), // 通知：不回执
-      acpFrame({ jsonrpc: "2.0", id: 8, method: "session/new", params: {} }),
+      acpFrame({ jsonrpc: "2.0", id: 8, method: "session/load", params: {} }), // BI-25.2 未接线方法
     ]);
     const { io } = collect();
     expect(
@@ -317,7 +317,7 @@ describe("BI-24.1 acp（最小握手帧，注入 IO）", () => {
     const response = frames[0]! as { id: number; error: { code: number; message: string } };
     expect(response.id).toBe(8);
     expect(response.error.code).toBe(-32601);
-    expect(response.error.message).toContain("session/new");
+    expect(response.error.message).toContain("session/load");
   });
 });
 

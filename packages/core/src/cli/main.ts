@@ -92,6 +92,26 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...(h.sessionsRoot !== undefined ? { sessionsRoot: h.sessionsRoot } : {}),
 			...options.deps,
 		};
+		if (deps.buildModelPort === undefined) {
+			// BI-25.2：acp session/prompt 生产面——配置装配惰性 memo 化（每进程装配一次）。
+			// homeDir 取 deps.homeDir ?? h.homeDir：测试可注入空目录实现零外呼确定性。
+			const factoryHomeDir = deps.homeDir ?? h.homeDir;
+			let memoPort: Promise<ModelPort> | undefined;
+			deps.buildModelPort = () => {
+				memoPort ??= (async () => {
+					const service = new ConfigService({
+						...(factoryHomeDir !== undefined ? { homeDir: factoryHomeDir } : {}),
+					});
+					const config = await service.load();
+					const selection = resolveModelPort(config, {
+						resolveApiKey: (name) => service.resolveProviderApiKey(name),
+					});
+					err(`bi: 模型已装配 provider=${selection.providerName} mode=${selection.mode} model=${selection.wireModel}`);
+					return selection.port;
+				})();
+				return memoPort;
+			};
+		}
 		const restArgs = subIndex === -1 ? parsed.positionals.slice(1) : argv.slice(subIndex + 1);
 		return handleSubcommand(subcommand, restArgs, { out, err }, deps);
 	}

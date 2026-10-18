@@ -18,10 +18,13 @@
  *   fork     = commands/fork.ts forkSession（BI-03 manager.fork 的 CLI 面）。
  *   export   = commands/export.ts exportSession（markdown / json 渲染 + 落盘）。
  *   transfer = commands/transfer.ts transferCommand（脱敏导出 / 归档导入）。
- *   acp      = 新建 v1：最小握手帧——Content-Length 头帧 JSON-RPC，仅实现
- *              initialize 能力协商（未知请求回 MethodNotFound、通知静默、
- *              EOF 收尾）；完整桥接面 @bi/mcp AcpBridge 的注入装配归后续卡
- *              （接缝⑤房规：core 不 import mcp，本层不假冒 session/prompt 能力）。
+ *   acp      = BI-25.2 会话桥接面（commands/acp-session.ts，core 侧镜像
+ *              @bi/mcp AcpBridge 协议形状）：v1 握手帧 + session/new
+ *              （SessionManager 落 JSONL，回 sessionId）+ session/prompt
+ *              （模型端口经 SubcommandDeps.buildModelPort 注入，文本增量以
+ *              session/update 通知流式回执，单会话单飞忙拒绝 -32004）+
+ *              session/end（优雅收束）。工具调用更新帧/取消语义/多会话并行
+ *              归后续卡（诚实边界见 acp-session.ts 头注）。
  *   upgrade  = 新建 v1：BI-00 锚点循环门语义——探测
  *              /home/yupeng/bi-ledger-ops/upstream_sync.py 存在性并执行 check
  *              子命令（--no-net 透传）。真实子进程仅生产路径；测试一律注入
@@ -30,6 +33,7 @@
  *              allOk → 0，存在异常 → 1）。
  *
  * 注入面（SubcommandDeps）：会话根目录 / cwd / homeDir / ACP IO 通道 /
+ * acp 模型端口工厂（buildModelPort，生产路径由 main/bin 传入）/
  * upgrade 替身 / doctor 检查项替身。测试零外呼：全部用例走注入，零网络。
  */
 import { execFile } from "node:child_process";
@@ -45,7 +49,9 @@ import {
   type DoctorCheck,
   type DoctorPorts,
 } from "../../doctor";
+import type { ModelPort } from "../headless";
 import { createStdioChannels } from "./acp-command";
+import { AcpSessionConnection } from "./acp-session";
 import { ExportError, exportSession, type ExportOptions } from "./export";
 import { ForkError, forkSession } from "./fork";
 import { listSessions } from "./session";
@@ -96,6 +102,12 @@ export interface SubcommandDeps {
   acpInput?: ReadableStream<Uint8Array>;
   /** ACP 注入 stdout（缺省真实 stdout；测试必须注入）。 */
   acpOutput?: AcpOutputChannel;
+  /**
+   * ACP 注入：模型端口工厂（session/prompt 每回合调用一次）。生产路径由
+   * main/bin 传入配置装配的真实端口（BI-23.3 resolveModelPort）；测试注入
+   * 脚本化替身。未注入时 session/prompt 结构化 -32005 拒绝执行（不假冒）。
+   */
+  buildModelPort?: () => ModelPort | Promise<ModelPort>;
   /** 锚点引擎脚本路径（缺省 DEFAULT_UPGRADE_SCRIPT）。 */
   upgradeScriptPath?: string;
   /** 注入：脚本存在性探测替身（缺省 fs.access 真实探测）。 */
@@ -392,135 +404,13 @@ async function handleTransfer(rest: readonly string[], io: SubcommandIo, deps: S
 }
 
 // ---------------------------------------------------------------------------
-// acp —— 最小握手帧（新建 v1；完整桥接面 @bi/mcp 装配归后续卡）
+// acp —— 会话桥接面（BI-25.2；协议本体在 commands/acp-session.ts）
 // ---------------------------------------------------------------------------
 
-/** ACP 协议版本（core 侧镜像 @bi/mcp ACP_PROTOCOL_VERSION = 1）。 */
-const ACP_PROTOCOL_VERSION = 1;
-
-/** 头帧结束标记（与 lsp-stdio-transport 同为 \r\n\r\n 房规）。 */
-const ACP_HEADER_END = "\r\n\r\n";
-
-const ACP_ENCODER = new TextEncoder();
-
-/** 最小握手面统计（结构化汇总到 err）。 */
-interface AcpHandshakeStats {
-  initialize: number;
-  notifications: number;
-  methodNotFound: number;
-  parseErrors: number;
-}
-
-function acpSendFrame(output: AcpOutputChannel, payloadText: string): Promise<void> | void {
-  const body = ACP_ENCODER.encode(payloadText);
-  const header = ACP_ENCODER.encode(`Content-Length: ${body.byteLength}${ACP_HEADER_END}`);
-  const frame = new Uint8Array(header.byteLength + body.byteLength);
-  frame.set(header, 0);
-  frame.set(body, header.byteLength);
-  return output.write(frame);
-}
-
-function acpSendResult(output: AcpOutputChannel, id: unknown, result: unknown): Promise<void> | void {
-  return acpSendFrame(output, JSON.stringify({ jsonrpc: "2.0", id, result }));
-}
-
-function acpSendError(output: AcpOutputChannel, id: unknown, code: number, message: string): Promise<void> | void {
-  return acpSendFrame(output, JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
-}
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const merged = new Uint8Array(a.byteLength + b.byteLength);
-  merged.set(a, 0);
-  merged.set(b, a.byteLength);
-  return merged;
-}
-
-/**
- * 从缓冲区头部尝试抽取一帧（Content-Length 头帧协议，Content-Length 按
- * UTF-8 字节计）。缓冲不足 → null；头部非法 → 交空 payload 走 ParseError。
- */
-function tryExtractAcpFrame(buffer: Uint8Array): { payload: Uint8Array; rest: Uint8Array } | null {
-  let headerEnd = -1;
-  for (let i = 0; i + 4 <= buffer.byteLength; i++) {
-    if (
-      buffer[i] === 13 && buffer[i + 1] === 10 &&
-      buffer[i + 2] === 13 && buffer[i + 3] === 10
-    ) {
-      headerEnd = i;
-      break;
-    }
-  }
-  if (headerEnd === -1) return null;
-  const headerText = new TextDecoder("ascii").decode(buffer.subarray(0, headerEnd));
-  let length = Number.NaN;
-  for (const line of headerText.split("\r\n")) {
-    const match = /^content-length\s*:\s*(\d+)\s*$/i.exec(line.trim());
-    if (match !== null) length = Number.parseInt(match[1] ?? "", 10);
-  }
-  if (!Number.isFinite(length) || length < 0) {
-    // 非法头部块：整块丢弃（payload 为空 → 交 JSON 层记 ParseError），继续收帧
-    return { payload: new Uint8Array(0), rest: buffer.subarray(headerEnd + 4) };
-  }
-  const total = headerEnd + 4 + length;
-  if (buffer.byteLength < total) return null; // 体未到齐，等下一块
-  return { payload: buffer.subarray(headerEnd + 4, total), rest: buffer.subarray(total) };
-}
-
-/** 单帧处理：initialize → 能力协商回应；其余请求 → MethodNotFound；通知静默。 */
-async function handleAcpPayload(payload: Uint8Array, output: AcpOutputChannel, stats: AcpHandshakeStats): Promise<void> {
-  let message: unknown;
-  try {
-    message = JSON.parse(new TextDecoder().decode(payload));
-  } catch {
-    stats.parseErrors += 1;
-    await acpSendError(output, null, -32700, "Parse error");
-    return;
-  }
-  if (typeof message !== "object" || message === null) {
-    stats.parseErrors += 1;
-    await acpSendError(output, null, -32600, "Invalid Request");
-    return;
-  }
-  const record = message as { id?: unknown; method?: unknown };
-  if (typeof record.method !== "string") return; // 客户端响应帧：忽略
-  if (record.id === undefined) {
-    stats.notifications += 1; // 通知：接受不回执（与 @bi/mcp 桥同房规）
-    return;
-  }
-  if (record.method === "initialize") {
-    stats.initialize += 1;
-    await acpSendResult(output, record.id, {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      agentCapabilities: {},
-      authMethods: [],
-    });
-    return;
-  }
-  stats.methodNotFound += 1;
-  await acpSendError(output, record.id, -32601, `未知方法 "${record.method}"`);
-}
-
-/** 逐帧读通道直至 EOF（注入流或真实 stdio），逐帧处理。 */
-async function acpHandshakeLoop(input: ReadableStream<Uint8Array>, output: AcpOutputChannel, stats: AcpHandshakeStats): Promise<void> {
-  const reader = input.getReader();
-  let buffer: Uint8Array = new Uint8Array(0);
-  for (;;) {
-    const extracted = tryExtractAcpFrame(buffer);
-    if (extracted === null) {
-      const next = await reader.read();
-      if (next.done) return; // EOF：不足一帧的残余半帧静默丢弃
-      buffer = concatBytes(buffer, next.value);
-      continue;
-    }
-    buffer = extracted.rest;
-    await handleAcpPayload(extracted.payload, output, stats);
-  }
-}
-
-/** `bi acp`：stdio 最小握手面（注入 IO；结构化汇总走 err，不污染协议 stdout）。 */
+/** `bi acp`：stdio 会话桥接（注入 IO + 注入模型端口；汇总走 err，协议 stdout 纯净）。 */
 async function handleAcp(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
   if (rest.length > 0) {
-    throw new SubUsageError("acp 不接受参数（最小握手面只吃 stdio 帧）");
+    throw new SubUsageError("acp 不接受参数（会话桥接面只吃 stdio 帧）");
   }
   // 仅在缺注入时才装配真实 stdio（测试两通道齐注 → 不触碰真实 stdin）
   const needsStdio = deps.acpInput === undefined || deps.acpOutput === undefined;
@@ -531,19 +421,26 @@ async function handleAcp(rest: readonly string[], io: SubcommandIo, deps: Subcom
     io.err("bi acp: IO 通道装配失败（注入不完整）");
     return 1;
   }
-  const stats: AcpHandshakeStats = { initialize: 0, notifications: 0, methodNotFound: 0, parseErrors: 0 };
+  const manager = makeSessionManager(deps);
   try {
-    await acpHandshakeLoop(input, output, stats);
+    const stats = await new AcpSessionConnection({
+      input,
+      output,
+      manager,
+      ...(deps.buildModelPort !== undefined ? { buildModelPort: deps.buildModelPort } : {}),
+    }).run();
+    io.err(
+      `bi acp: 连接收束 initialize=${stats.initialize} sessionNew=${stats.sessionNew}` +
+        ` prompt=${stats.promptTurns} busy=${stats.busyRefusals} sessionEnd=${stats.sessionEnds}` +
+        ` notify=${stats.notifications} methodNotFound=${stats.methodNotFound} parseError=${stats.parseErrors}` +
+        "（BI-25.2 会话桥接：session/new + session/prompt + session/end；" +
+        "工具调用更新帧/取消语义/多会话并行归后续卡）",
+    );
+    return 0;
   } catch (cause) {
     io.err(`bi acp: 通道异常: ${cause instanceof Error ? cause.message : String(cause)}`);
     return 1;
   }
-  io.err(
-    `bi acp: 握手会话结束 initialize=${stats.initialize} notify=${stats.notifications}` +
-      ` methodNotFound=${stats.methodNotFound} parseError=${stats.parseErrors}` +
-      "（最小握手面：initialize 能力协商；完整桥接面 @bi/mcp AcpBridge 装配归后续卡）",
-  );
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
