@@ -85,6 +85,21 @@ function errorMessage(err: unknown): string {
 }
 
 /**
+ * matcher 匹配面：仅 PreToolUse / PostToolUse 事件消费（其余事件忽略，钩子照常触发）；
+ * 缺省/空串 = 匹配全部；非法正则 = 不匹配（fail-closed：钩子不触发，主流程不受影响）。
+ * 不匹配的钩子与事件不匹配同权：不进入 matched，也不产生审计记录。
+ */
+function matcherMatches(hook: HookDefinition, event: HookEvent, tool: string | undefined): boolean {
+  if (hook.matcher === undefined || hook.matcher === '') return true;
+  if (event !== 'PreToolUse' && event !== 'PostToolUse') return true;
+  try {
+    return new RegExp(hook.matcher).test(tool ?? '');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 从 stdout 提取最后一个非空行并解析为 HookOutput 决策。
  * 不可解析（空输出 / 非 JSON / 非对象 / action 非法）时返回结构化错误，
  * 由调用方按 fail-open 语义放行并记录告警。
@@ -215,7 +230,7 @@ export class HookRunner {
     const matched: Array<{ hook: HookDefinition; hookId: string }> = [];
     for (let i = 0; i < allHooks.length; i += 1) {
       const hook = allHooks[i];
-      if (hook !== undefined && hook.event === event) {
+      if (hook !== undefined && hook.event === event && matcherMatches(hook, event, input.tool)) {
         matched.push({ hook, hookId: `hooks[${i}]` });
       }
     }

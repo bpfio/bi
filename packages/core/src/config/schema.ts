@@ -487,17 +487,61 @@ export const watchSchema = sObj({
 });
 export type WatchSection = InferSchema<typeof watchSchema>;
 
-export const HOOK_EVENTS = ["session_start", "session_end", "pre_tool", "post_tool", "prompt_submitted"] as const;
+/**
+ * hooks 事件面：hook-runner（BI-06.4）20 事件 PascalCase 契约的 snake_case 规范镜像。
+ * 两套名字机械互转（纯 Pascal 词序，无连续大写/数字），装载映射归 hooks-adapter。
+ */
+export const HOOK_EVENTS = [
+  "pre_tool_use",
+  "post_tool_use",
+  "post_tool_use_failure",
+  "permission_request",
+  "permission_denied",
+  "session_start",
+  "session_end",
+  "pre_compact",
+  "post_compact",
+  "pre_undo",
+  "post_undo",
+  "pre_file_write",
+  "post_file_write",
+  "pre_bash",
+  "post_bash",
+  "interrupted",
+  "date_change",
+  "model_fallback",
+  "context_overflow",
+  "session_fork",
+] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
+/**
+ * 早期 5 事件面的兼容别名。prompt_submitted 不在册：hook-runner 20 事件契约无
+ * 对应触发点，保留即为永不生效的死配置（schema 校验期整条丢弃并记 issue）。
+ */
+export const HOOK_EVENT_ALIASES = {
+  pre_tool: "pre_tool_use",
+  post_tool: "post_tool_use",
+} as const;
+export type HookEventAlias = keyof typeof HOOK_EVENT_ALIASES;
+
+/** 配置面接受的事件名全集 = 规范 20 事件 + 兼容别名。 */
+export const HOOK_EVENT_NAMES = [...HOOK_EVENTS, "pre_tool", "post_tool"] as const;
+
 export const hookEntrySchema = sEntity({
-  event: sEnum(HOOK_EVENTS, "pre_tool"),
+  event: sEnum(HOOK_EVENT_NAMES, "pre_tool_use"),
   /** 待执行的 shell 命令。 */
   command: sStr(""),
   /** 命令超时毫秒。 */
   timeout_ms: sInt(10_000),
-  /** 工具名匹配器（仅对 pre_tool / post_tool 生效）；空串 = 匹配全部。 */
+  /**
+   * 工具名正则匹配器：仅 pre_tool_use / post_tool_use（含兼容别名）事件生效，
+   * 其余事件忽略此字段；空串 = 匹配全部工具。装载层（hooks-adapter）校验正则
+   * 形态，非法正则整条丢弃。
+   */
   matcher: sStr(""),
+  /** 是否允许钩子的 block 决策阻断主流程（false = 咨询性钩子，block 降级为记录）。 */
+  blocking: sBool(true),
 });
 export type HookEntry = InferSchema<typeof hookEntrySchema>;
 

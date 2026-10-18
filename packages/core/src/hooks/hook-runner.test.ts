@@ -630,3 +630,74 @@ describe('缺省 spawn 集成（真实子进程）', () => {
     expect(outcome.records[0]!.warning).toContain('invalid-action');
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe('matcher 工具名过滤（HOOK-EVENT-MAP 增量）', () => {
+  test('PreToolUse：matcher 命中的工具触发，未命中的不触发且不产生记录', async () => {
+    const { impl, calls } = stubSpawn(() => ({ stdout: jsonLine({ action: 'allow' }) }));
+    const { runner } = harness({
+      hooks: [{ event: 'PreToolUse', command: 'echo guard', matcher: '^(Bash|Edit)$' }],
+      spawnImpl: impl,
+    });
+    const hit = await runner.run('PreToolUse', { ...baseInput, tool: 'Bash' });
+    expect(hit.ran).toBe(1);
+    expect(calls).toHaveLength(1);
+    const miss = await runner.run('PreToolUse', { ...baseInput, tool: 'Read' });
+    expect(miss.action).toBe('allow');
+    expect(miss.ran).toBe(0);
+    expect(miss.records).toHaveLength(0);
+    expect(calls).toHaveLength(1); // 未命中不 spawn
+  });
+
+  test('matcher 仅对 PreToolUse / PostToolUse 生效：SessionStart 忽略 matcher 照常触发', async () => {
+    const { impl, calls } = stubSpawn(() => ({ stdout: '' }));
+    const { runner } = harness({
+      hooks: [{ event: 'SessionStart', command: 'echo boot', matcher: '^Bash$' }],
+      spawnImpl: impl,
+    });
+    const outcome = await runner.run('SessionStart', { ...baseInput, tool: undefined });
+    expect(outcome.ran).toBe(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('PostToolUse：matcher 命中触发；tool 缺失视为空串参与匹配', async () => {
+    const { impl, calls } = stubSpawn(() => ({ stdout: '' }));
+    const { runner } = harness({
+      hooks: [{ event: 'PostToolUse', command: 'echo after', matcher: '^Bash' }],
+      spawnImpl: impl,
+    });
+    const hit = await runner.run('PostToolUse', { ...baseInput, tool: 'Bash(x=1)' });
+    expect(hit.ran).toBe(1);
+    const miss = await runner.run('PostToolUse', { ...baseInput, tool: undefined });
+    expect(miss.ran).toBe(0);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('程序化直构非法 matcher 正则：钩子不触发且不产生记录（fail-closed）', async () => {
+    const { impl, calls } = stubSpawn(() => ({ stdout: '' }));
+    const { runner } = harness({
+      hooks: [{ event: 'PreToolUse', command: 'echo guard', matcher: '([unclosed' }],
+      spawnImpl: impl,
+    });
+    const outcome = await runner.run('PreToolUse', { ...baseInput, tool: 'Bash' });
+    expect(outcome.action).toBe('allow');
+    expect(outcome.ran).toBe(0);
+    expect(outcome.records).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('matcher 与事件联合过滤：同条目在他事件下不因 matcher 干扰触发判定', async () => {
+    const { impl, calls } = stubSpawn(() => ({ stdout: jsonLine({ action: 'block', reason: 'no' }) }));
+    const { runner } = harness({
+      hooks: [{ event: 'PreToolUse', command: 'echo guard', matcher: '^Bash$', blocking: false }],
+      spawnImpl: impl,
+    });
+    const blocked = await runner.run('PreToolUse', { ...baseInput, tool: 'Bash' });
+    expect(blocked.action).toBe('allow'); // blocking=false：block 决策降级为记录
+    expect(calls).toHaveLength(1);
+    const other = await runner.run('SessionStart', { ...baseInput, tool: 'Bash' });
+    expect(other.action).toBe('allow');
+    expect(other.ran).toBe(0); // 事件不匹配，与 matcher 无关
+  });
+});

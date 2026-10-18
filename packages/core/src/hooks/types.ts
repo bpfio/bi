@@ -67,6 +67,12 @@ export interface HookDefinition {
   timeoutMs?: number;
   /** 是否允许其 block 决策阻断主流程，缺省 true；false = 咨询性钩子（block 被降级为记录） */
   blocking?: boolean;
+  /**
+   * 工具名正则匹配器：仅 PreToolUse / PostToolUse 事件生效（其余事件忽略），
+   * 缺省/空串 = 匹配全部工具。config 装载层（hooks-adapter）已校验正则形态；
+   * 程序化直构传入非法正则时按不匹配处理（该钩子不触发，主流程不受影响）。
+   */
+  matcher?: string;
 }
 
 /**
