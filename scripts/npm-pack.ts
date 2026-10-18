@@ -20,7 +20,7 @@
 import { cp, mkdir, chmod, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-const SCOPE = "@bpfio-yp";
+const SCOPE = "@bpfio"; // 2026-10-19 起迁移至 bpfio org（原 @bpfio-yp 用户 scope 已发布 0.1.0 并 deprecate 指引迁移）
 const REPO_URL = "https://github.com/bpfio/bi";
 const DESCRIPTION =
 	"bi — a terminal CLI Agent built with Bun + TypeScript. Independent implementation, not a fork of any existing agent CLI.";
