@@ -292,3 +292,24 @@ npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @b
 **终验(装机版 0.1.2)**:40×100 pty 下状态行 `[manual] 就绪` 独占第 39 行、提示行 `❯ hello` 逐键干净渲染第 40 行、零叠写;无头真模型回合 session_done exit=ok。**门禁:4170 pass/0 fail(217 文件),双 tsc 0。**
 
 **策略评估备案(本会话对话产出,未立项)**:①测试充分性=结构层充分(4170/217 文件,每卡带测试,注入式零外呼)/成品层部分充分(BI-21 演练矩阵止步 104 卡时代,23/24/25 三族未入阵;真实点火一次性不可回归;真人 TTY/崩溃恢复/darwin 真机/acp 真客户端/agent 质量评估缺位)→ **BI-26 测试深化族 5 卡方案已提案待口令**;②TUI 生态未向 kimi 对齐(RULE-BI-07 壳层基线欠账盘点:流式渲染/光标可视化/markdown 高亮/样式/候选菜单/多行粘贴/视口工程/spinner/pty 回归九项)→ **BI-27 对齐族 6 卡方案已提案待口令**(轮子首选 kimi pi-tui,备选 DiffRenderer 自研增强);③scripts/ 母体遗产混淆测试面(smoke-tui-*.ts 等引用 vendor/zcode.cjs)→ 归 BI-26 清理卡;④doctor 仍探母体凭据面(open.bigmodel.cn)→ 归 BI-24 族后续卡。
+
+## 十一、生产冲刺批次 (BI-PROD-2026-10-20,第一波,2026-10-20)
+
+用户口令"距离生产还有哪些任务?我们一次性处理完"→ 23 项一次立项(BI-26 测试深化 6/BI-27 TUI 对齐 5/BI-28 执行面 5/BI-29 运维收口 2/BI-30 dogfood 1+三父卡),双 agent 并发+主控线,commit 2a04a9f,版本 0.2.0。
+
+| 卡 | 标题 | 执行方 | 状态 |
+|---|---|---|---|
+| BI-27.1 | 输入补齐(光标▏/多行粘贴/翻页) | Agent-A | **closed** |
+| BI-27.2 | 流式渲染(StreamView+秒数) | Agent-A | **closed** |
+| BI-28.1 | bash 工具挂载 | Agent-B | **closed** |
+| BI-28.2 | edit/write 工具 | Agent-B | **closed** |
+| BI-26.2 | 本地伪端点 bin e2e | 主控 | **closed** |
+| BI-26.4 | pty 真人面回归入库 | 主控 | **closed** |
+| BI-26.5 | 母体遗产清理(36 脚本+3 workflow) | 主控 | **closed** |
+| BI-26.6 | 版本双源同步门 | 主控 | **closed** |
+
+**落位要点**:①执行面上线——buildDefaultToolset 现挂 bash(超时杀/100KB 尾截断/shell-scan dangerous|opaque 标注/spawnImpl 注入)+edit(唯一命中/$& 字面)+write(atomicWriteFile+PathJail 第二层),manual 模式全 ask(实义确认:ask 走三态默认,与 readOnly 无关);②壳层对齐——光标条/粘贴保换行整稿提交/翻页跳页/StreamView 流式预览(80ms 节流可注入时钟)/运行中秒数;③测试深化——本地伪端点(双模态 SSE,echo 回环)驱动 bin 级零网络 e2e + pty 40×100 真人面回归(BI_PTY_E2E 门控,CI 置位);④清理——36 个母体死脚本(引用已不存在的 vendor/zcode.cjs、packages/zcode-tui、../test 等)+3 个母体 workflow 删除,ci.yml 重写为 bi 最小门禁;⑤版本双源同步测试(package.json===core VERSION,漂移即红)。
+
+**排障两条(devlog #262)**:pty 断言 `"anual]"` 是 `"manual]"` 子串必误报,缺陷特征须锚定 ❯;execFileSync 阻塞事件循环会饿死同进程 Bun.serve 伪端点(子进程 fetch 永挂),须异步化。
+
+**门禁:4205 pass/0 fail(220 文件,含门控套件),双 tsc 0,origin=2a04a9f。F-LEASE-28(lease 工具只认 agy 身份)wontfix 备案。诚实边界**:沙箱包装/命令词级裁决归 28.4;余 11 项 planned(26.1/26.3、27.3/27.4/27.5、28.3/28.4/28.5、29.1/29.2、30)。
