@@ -1,7 +1,7 @@
-# bi 研发台账 DEVLOG (主控编纂版 v4 · 终局)
+# bi 研发台账 DEVLOG (主控编纂版 v5 · 维护态)
 
-> **生成**:2026-10-17 存档 #11。**closed 117/117(100%)——台账全清,P0 全含(含 BI-21 终局门)**,origin/main=4610bc0。
-> 全仓 **4074 测试用例 / 209 文件 / 49687 expect / 双 tsc 0 错 / 零返工**;devlog 链 #155~#244。
+> **生成**:2026-10-18 维护态裁决存档。**closed 117/117(100%)——台账全清,P0 全含(含 BI-21 终局门)**,代码前沿 711f9e9。
+> 全仓 **4087 测试用例 / 210 文件 / 49726 expect / 双 tsc 0 错 / 零返工**;devlog 链 #155~#247。
 > 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md),演练真抓 2 缺陷并最小改动面修复。
 
 ---
@@ -189,12 +189,14 @@
 A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth 七态 · D 沙箱(landlock+bwrap 本机实探) · E 上下文防御链 · F 双代理编排 · G MCP/A2A 回环 · H 工作流 DAG/plan-mode · I TUI 双缓冲同构 · J 命令钩子(20 事件钉死) · K 网关+原子换装。演练修复缺陷 2:xlsx_audit %.4g 科学计数法;installLock.release 异步 unlink 竞态→unlinkSync。
 
 ## 四、质量与安全
-- 全仓 **4074 pass / 0 fail(209 文件,49687 expect)** / 双 tsc 0 错 / 零返工
+- 全仓 **4087 pass / 0 fail(210 文件,49726 expect)** / 双 tsc 0 错 / 零返工
 - **台账 117/117 = 100% 全清(P0 全含)**
 - 安全裁定:权限模式权威源(06.5) / Plan 审批必填(14.2) / TowerMerge reviewer 签名(12.2) / verifier 白名单冻结(21.1) / 钩子双层语义(06.4) / recover 走合法转移边(14.5) / 邮件双层白名单(15.1) / WSS 零入站端口(15.4) / OTLP 缺省零出网(11.1) / 升级面 rename 唯一原子面(17 系)
-- 规程:TOOL-1/TOOL-2 / Step-0+时间锚(#175/#177) / 族包逐卡分段+复用型工单(#171/#240) / 派工原子性(OPS-DISPATCH-1) / 三败主控亲建 / 探询 10min 零落盘即停
+- 规程:TOOL-1/TOOL-2 / Step-0+时间锚(#175/#177) / 族包逐卡分段+复用型工单(#171/#240) / 派工原子性(OPS-DISPATCH-1→RULE-BI-10) / 三败主控亲建 / 探询 10min 零落盘即停 / picomatch 段语义(RULE-BI-11)
 
-## 五、发现项
-open:TOOL-1/TOOL-2/AUDIT-8/AUDIT-10/LOGBOOK-EXPORT-1/HOOK-EVENT-MAP/OPS-DISPATCH-1
-fixed:AUDIT-6/9/11
-观察项(演练备案,非缺陷):workflow 包 barrel stub / picomatch 段语义 / MCP、A2A fail-closed 显式面
+## 五、发现项与维护态裁决 (2026-10-18,用户按建议组合定案)
+- **fixed×2**:HOOK-EVENT-MAP(commit 711f9e9:config 事件面扩为 runner 20 事件 snake_case 镜像+pre_tool/post_tool 别名,prompt_submitted 移出;新增 hooks-adapter 装载适配+runner matcher 过滤,13 新用例) / OPS-DISPATCH-1(升格 RULE-BI-10 派工三步锁,纯流程零代码)
+- **wontfix×2(转备案)**:AUDIT-10(五处集成接缝消歧指令已全部兑现,转架构 SSOT) / AUDIT-8(大典外残差五项不立项,另需时再立新卡)
+- **维持 open×3(上游 logbook 工具缺陷,规程规避中)**:TOOL-1(devlog 带 task_id 静默覆盖,规避=默认不带) / TOOL-2(task_upsert 字段破坏性置空,规避=全量回填) / LOGBOOK-EXPORT-1(大导出通道不可达,规避=SSH 直发)——根治归 bpfio/logbook 上游,另立项目再议
+- 规则入库:**RULE-BI-10**(派工三步锁:登记-对账-探测) / **RULE-BI-11**(picomatch 段语义,deny 深路径须 `/**`)
+- 观察项(演练备案,非缺陷,维持):workflow 包 barrel stub(对外 API 收口归组装层,待有外部消费者) / picomatch 段语义(已升格 RULE-BI-11) / MCP `server.tool` 前缀路由与 A2A `allowFrom` 必填显式面(fail-closed 架构事实)
