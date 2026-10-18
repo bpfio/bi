@@ -82,6 +82,8 @@ export interface TuiSessionOptions {
 	readonly cols?: number;
 	readonly clock?: Clock;
 	readonly hooks?: TuiSessionHooks;
+	/** 帧字节输出面（缺省 no-op；真实终端注入 WriteStream，BI-24.2 REPL 挂载用）。 */
+	readonly writer?: Writer;
 }
 
 export interface TuiSessionResult {
@@ -194,7 +196,8 @@ export class AgentTuiSession {
 		this.#maxRounds = options.maxRounds ?? 8;
 		this.#model = options.model;
 		this.projection = new TranscriptProjection({ width: this.#cols });
-		const writer: Writer = { write: () => undefined }; // 帧字节面：测试注入 hooks.onFrame 断言行集
+		// 帧字节面：真实终端经 options.writer 注入（BI-24.2）；缺省 no-op（测试注入 hooks.onFrame 断言行集）。
+		const writer: Writer = options.writer ?? { write: () => undefined };
 		this.app = new TuiApp(writer, this.#rows, this.#cols);
 		this.app.push(new TranscriptView(this, this.#rows));
 		this.#gate = new PermissionGate({ mode: options.permissionMode ?? "manual" });

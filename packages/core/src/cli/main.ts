@@ -1,31 +1,25 @@
 /**
  * BI-23.1 —— bi 主分发（kimi 装配参考形状：main → handleMainCommand → TUI/无头）。
  *
- * 接线现状（BI-23.3 起真实驱动在位）：
+ * 接线现状（BI-24.1 起八子命令查表派发）：
  * - 真实路径：无头会话（--prompt）——ModelPort 未注入时从配置装配（BI-02 凭据门 +
  *   BI-04.2 双模态 SSE 驱动），装配失败结构化退出码 3；
- * - 已识别未接线：init/session/fork/export/transfer/acp/upgrade 等子命令的处理器
- *   均已在库（BI-20.2/20.6/20.7/BI-03 交付），逐个挂上分发归后续装配卡——本层
- *   结构化上报 "not-wired"，不假冒执行；
+ * - 子命令：init/session/fork/export/transfer/acp/upgrade/doctor 全部经
+ *   cli/commands/dispatch.ts handleSubcommand 派发到真实处理器（器官在库即用，
+ *   缺器官结构化上报，不假冒成功）；未知子命令仍 exit 2；
  * - --version 直读 @bi/core VERSION。
  */
 import { ConfigService } from "../config/config-service";
 import { ConfigError } from "../config/schema";
 import { parseGlobalArgs, ArgParseError } from "./commands/args";
+import {
+	findSubcommandIndex,
+	handleSubcommand,
+	SUBCOMMANDS,
+	type SubcommandDeps,
+} from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
-
-/** 已识别但尚未挂接的子命令（逐个接线归 BI-23.2/23.3 及后续装配卡）。 */
-const RECOGNIZED_UNWIRED: readonly string[] = [
-	"init",
-	"session",
-	"fork",
-	"export",
-	"transfer",
-	"acp",
-	"upgrade",
-	"doctor",
-];
 
 export interface RunBiOptions {
 	/** 无头模型端口（缺省 = 从配置文件装配真实 BI-04.2 驱动；测试注入替身）。 */
@@ -38,6 +32,8 @@ export interface RunBiOptions {
 	out?: (line: string) => void;
 	/** 诊断输出汇（缺省 stderr）。 */
 	err?: (line: string) => void;
+	/** BI-24.1 子命令注入面（临时根目录/IO/upgrade 检查替身等，详见 dispatch.ts）。 */
+	deps?: SubcommandDeps;
 }
 
 const USAGE = `bi — CLI Agent（行走骨架）
@@ -47,7 +43,7 @@ const USAGE = `bi — CLI Agent（行走骨架）
   bi <subcommand> [args]                               子命令（见下）
   bi --version                                         版本
 
-子命令: ${RECOGNIZED_UNWIRED.join(" / ")}（骨架期未接线，结构化上报）
+子命令: ${SUBCOMMANDS.join(" / ")}
 `;
 
 /** bi 主入口：argv 分发，返回进程退出码。 */
@@ -65,9 +61,13 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 		return argv.length === 0 ? 2 : 0;
 	}
 
+	// BI-24.1：子命令 argv 切分——首个子命令裸词之后的 token 不进全局参数矩阵，
+	// 原样交给子命令自持旗标面（--limit / --format / --no-net 等不由全局解析报错）。
+	const subIndex = findSubcommandIndex(argv);
+
 	let parsed;
 	try {
-		parsed = parseGlobalArgs(argv);
+		parsed = parseGlobalArgs(subIndex === -1 ? argv : argv.slice(0, subIndex));
 	} catch (cause) {
 		if (cause instanceof ArgParseError) {
 			err(`bi: 参数错误 [${cause.code}]: ${cause.message}`);
@@ -76,15 +76,24 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 		throw cause;
 	}
 
-	const subcommand = parsed.positionals[0];
+	const subcommand = subIndex === -1 ? parsed.positionals[0] : argv[subIndex];
 	if (subcommand !== undefined) {
-		if (RECOGNIZED_UNWIRED.includes(subcommand)) {
-			err(`bi: 子命令 "${subcommand}" 已识别但装配未接线（BI-23.2/23.3 及后续装配卡），本次退出。`);
-			return 4;
+		if (!SUBCOMMANDS.includes(subcommand)) {
+			err(`bi: 未知子命令 "${subcommand}"`);
+			err(USAGE);
+			return 2;
 		}
-		err(`bi: 未知子命令 "${subcommand}"`);
-		err(USAGE);
-		return 2;
+		// 查表派发：headless 注入面（cwd/homeDir/sessionsRoot）同时作为子命令缺省
+		// 注入（deps 显式值优先），两条路径共享同一注入语义。
+		const h = options.headless ?? {};
+		const deps: SubcommandDeps = {
+			...(h.cwd !== undefined ? { cwd: h.cwd } : {}),
+			...(h.homeDir !== undefined ? { homeDir: h.homeDir } : {}),
+			...(h.sessionsRoot !== undefined ? { sessionsRoot: h.sessionsRoot } : {}),
+			...options.deps,
+		};
+		const restArgs = subIndex === -1 ? parsed.positionals.slice(1) : argv.slice(subIndex + 1);
+		return handleSubcommand(subcommand, restArgs, { out, err }, deps);
 	}
 
 	if (parsed.prompt === undefined || parsed.prompt === "") {

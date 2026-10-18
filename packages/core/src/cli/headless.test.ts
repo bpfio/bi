@@ -225,8 +225,22 @@ describe("BI-23.1 main 分发（kimi 序 main → dispatch）", () => {
 		expect(await runBi(["frobnicate"], io)).toBe(2);
 		expect(errs.join("\n")).toContain("未知子命令");
 
-		expect(await runBi(["session"], io)).toBe(4);
-		expect(errs.at(-1)).toContain("装配未接线");
+		// BI-24.1 起 session 已接线：改为断言注入式离线列表路径（空会话目录 → 零条输出）
+		const sessRoot = await mkdtemp(join(tmpdir(), "bi-sess-"));
+		try {
+			const sessOuts: string[] = [];
+			const sessErrs: string[] = [];
+			const code = await runBi(["session"], {
+				out: (line) => sessOuts.push(line),
+				err: (line) => sessErrs.push(line),
+				deps: { sessionsRoot: sessRoot },
+			});
+			expect(code).toBe(0);
+			expect(sessOuts).toHaveLength(0);
+			expect(sessErrs.join("\n")).toContain("共 0 个会话");
+		} finally {
+			await rm(sessRoot, { recursive: true, force: true });
+		}
 
 		// 无模型端口且无配置：走 BI-23.3 配置装配，结构化退出码 3
 		const emptyHome = await mkdtemp(join(tmpdir(), "bi-home-"));

@@ -109,3 +109,7 @@ export type {
   TuiSessionState,
   FrameInfo,
 } from "./mount/agent-tui";
+
+// —— 装配挂载层：行编辑器 REPL 交互主回路（BI-24.2，LineEditor/KeyStream/runRepl）——
+export { LineEditor, KeyStream, runRepl } from "./mount/repl";
+export type { LineEditAction, ReplOptions, ReplResult } from "./mount/repl";
