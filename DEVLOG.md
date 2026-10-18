@@ -1,9 +1,9 @@
 # bi 研发台账 DEVLOG (主控编纂版 v5.4 · CLI 生态接线)
 
-> **生成**:2026-10-19 BI-24 族全闭存档。**closed 117/117+BI-23 族+BI-24 族(123/123)**,代码前沿 28b6486。
-> 全仓 **4141 测试用例 / 215 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#254。
+> **生成**:2026-10-19 BI-24 族全闭+npm 发布存档。**closed 117/117+BI-23 族+BI-24 族(123/123)+BI-25.4**,代码前沿 7e7b703 段。
+> 全仓 **4141 测试用例 / 215 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#255。
 > 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md)。
-> 当前阶段:**CLI 生态接线达成**——`bi` 无参即交互 REPL(真实模型),八子命令全接,见第六节。
+> 当前阶段:**npm 发布达成**——`npm i -g @bpfio-yp/bi` 即装即用(原生二进制,无需 Node/Bun 运行期),见第七节·补遗。
 
 ---
 
@@ -243,3 +243,13 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 **BI-24.2 落位**:mount/repl.ts——LineEditor(插入/删除/光标移动单行编辑)+ KeyStream(单消费键流,end()=eof 信号)+ PromptView + runRepl 主回路(按键按会话态路由:审批浮层全键 dispatchKey/running 态 Esc→二段取消/idle 编辑);agent-tui.ts 唯一许可扩展(TuiSessionOptions.writer 透传 stdout)。13 条注入键流用例。诚实边界:历史翻页/tab 补全/多行输入归后续卡;REPL v1 纯对话(工具注册表面归后续装配卡)。
 
 **主控收口**:bin/bi.ts 无参=REPL 主路径(配置装配→凭据门→AgentTuiSession(writer=stdout)→InputLoop→KeyStream 真实桥,stdin EOF 经生成器 finally 显式 KeyStream.end(),raw-mode 尽力而为);带参=runBi 分发。**三连真实冒烟 PASS**:①--prompt 无头回归(mimo 答 OK);②管道 REPL 贯通(stdin 逐字符提示行→提交→真实回合→[user]/[assistant] 帧→Ctrl-D eof);③bi session 列出真实会话。装配期接线宣告收尾:**bi 是一台可交互、可持久化、全命令面贯通的整机**。
+
+## 八、npm 发布面 (BI-25.4,2026-10-19 closed)
+
+**BI-25 族立项(批次 BI-ASM-2026-10-19-02)**:BI-25 父卡 + 25.1 工具注册表面(P1)/25.2 acp 完整桥接(P1)/25.3 REPL 增强(P2)三件**立项待开工**(用户指令"全部立项"),25.4 npm 发布面(用户供 token)**直接开工当日闭环**。
+
+**BI-25.4 交付(closed)**:`scripts/npm-pack.ts` 入库(纯拼装,零凭据)——esbuild/turbo 同款平台二进制模式:`@bpfio-yp/bi` 元包(bin/bi.js shim 按平台 spawn)+ `@bpfio-yp/bi-linux-x64`、`@bpfio-yp/bi-darwin-arm64` 平台包(optionalDependencies 自动选装,构建失败整包剔除并进 warnings);LICENSE/README 随包。**发布回执**:三包 `+ @bpfio-yp/bi(-linux-x64/-darwin-arm64)@0.1.0` 全部上 registry。**冷安装冒烟 PASS**:全新 prefix `npm install @bpfio-yp/bi` → added 2 packages(元包+平台包自动选装)→ `.bin/bi --version` → `bi 0.1.0` exit 0 → `.bin/bi session` 真实列出会话。**运行期用户零 Node/Bun 依赖**。token 纪律:`~/.bi-npm-token`(0600,仓库外),发布经环境注入,git grep 零泄漏。
+
+**排障三则(devlog #255)**:①BuildReport 成功态无 ok 字段且为多行 pretty JSON——按行截 `{` 解析必炸,改判据=退出码+失败标志正则;②`npm org create` CLI 不可用(EUSAGE)——@bpfio org 须网页创建,v1 落用户 scope `@bpfio-yp/bi`,建 org 后可迁移;③注册表传播延迟(发布回执≠立即可见),冷安装须轮询等待。
+
+**BI-25 剩余**:25.1/25.2/25.3 三卡 planned 待口令(工具注册表面/acp 桥接/REPL 增强)。
