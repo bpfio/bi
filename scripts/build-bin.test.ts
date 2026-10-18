@@ -117,13 +117,13 @@ describe("normalizeTarget", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderTempEntrySource / renderEmbedModuleSource", () => {
-  test("无嵌入：core 最小入口包装，含 BI-20.2 替换注记，不含 file 属性导入", () => {
+  test("无嵌入：runBi 真实入口（BI-23.1 替换 VERSION 占位），不含 file 属性导入", () => {
     const src = renderTempEntrySource(null);
     // 仓库不落 workspace 符号链接，"@bi/core" 需 package.json 声明方解析，
-    // 临时 entry 用相对路径导入 core 入口（语义等价，见 build-bin.ts 头注）
-    expect(src).toContain('import { VERSION } from "../../packages/core/src/index.ts";');
-    expect(src).toContain('console.log("bi", VERSION);');
-    expect(src).toContain("NOTE(BI-20.2)");
+    // 编译 entry 用相对路径导入 core cli main（语义等价，见 build-bin.ts 头注）
+    expect(src).toContain('import { runBi } from "../../packages/core/src/cli/main.ts";');
+    expect(src).toContain("process.exitCode = await runBi(process.argv.slice(2));");
+    expect(src).toContain("BI-23.1");
     expect(src).not.toContain('with { type: "file" }');
   });
 
@@ -299,11 +299,15 @@ describe("buildBin e2e", () => {
     const { readdirSync } = await import("node:fs");
     expect(readdirSync(outdir).sort()).toEqual(["bi", "bi.sha256"]);
 
-    // 冒烟执行：入口输出 "bi <VERSION>"
-    const proc = Bun.spawn([report.outPath], { stdout: "pipe", stderr: "pipe" });
+    // 冒烟执行：BI-23.1 真实入口主分发——--version 输出 "bi <VERSION>"（exit 0）
+    const proc = Bun.spawn([report.outPath, "--version"], { stdout: "pipe", stderr: "pipe" });
     const stdout = await new Response(proc.stdout).text();
     const code = await proc.exited;
     expect(code).toBe(0);
     expect(stdout.trim()).toMatch(/^bi \d+\.\d+\.\d+/);
+    // 裸跑（无参数）：主分发 usage 语义（exit 2，不再是无声 VERSION 占位）
+    const bare = Bun.spawn([report.outPath], { stdout: "pipe", stderr: "pipe" });
+    await new Response(bare.stderr).text();
+    expect(await bare.exited).toBe(2);
   }, 180_000);
 });
