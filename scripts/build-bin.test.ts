@@ -117,13 +117,12 @@ describe("normalizeTarget", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderTempEntrySource / renderEmbedModuleSource", () => {
-  test("无嵌入：runBi 真实入口（BI-23.1 替换 VERSION 占位），不含 file 属性导入", () => {
+  test("无嵌入：bin/bi.ts 真实入口（BI-25.5 修复 REPL 主面），不含 file 属性导入", () => {
     const src = renderTempEntrySource(null);
-    // 仓库不落 workspace 符号链接，"@bi/core" 需 package.json 声明方解析，
-    // 编译 entry 用相对路径导入 core cli main（语义等价，见 build-bin.ts 头注）
-    expect(src).toContain('import { runBi } from "../../packages/core/src/cli/main.ts";');
-    expect(src).toContain("process.exitCode = await runBi(process.argv.slice(2));");
-    expect(src).toContain("BI-23.1");
+    // 编译入口=bin/bi.ts（无参→REPL；带参→runBi 全分发），相对路径副作用导入
+    expect(src).toContain('await import("../../bin/bi.ts");');
+    expect(src).toContain("BI-25.5");
+    expect(src).not.toContain("packages/core/src/cli/main.ts");
     expect(src).not.toContain('with { type: "file" }');
   });
 
@@ -305,9 +304,19 @@ describe("buildBin e2e", () => {
     const code = await proc.exited;
     expect(code).toBe(0);
     expect(stdout.trim()).toMatch(/^bi \d+\.\d+\.\d+/);
-    // 裸跑（无参数）：主分发 usage 语义（exit 2，不再是无声 VERSION 占位）
-    const bare = Bun.spawn([report.outPath], { stdout: "pipe", stderr: "pipe" });
-    await new Response(bare.stderr).text();
-    expect(await bare.exited).toBe(2);
+    // 裸跑（无参数）：BI-25.5 起入口=bin/bi.ts → 交互 REPL 主路径。
+    // HOME 指向空目录 → 配置装载/凭据门结构化失败（exit 3，stderr "bi: " 前缀），
+    // 证明裸跑已落入 REPL 装配路径而非 runBi 的 USAGE 分支
+    // （旧 0.1.0 缺陷：编译入口指向 core main，裸跑 exit 2，发布物缺 REPL 主入口）。
+    const bareHome = scratch("bare-home");
+    mkdirSync(bareHome, { recursive: true });
+    const bare = Bun.spawn([report.outPath], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, HOME: bareHome, XDG_CONFIG_HOME: join(bareHome, ".config") },
+    });
+    const bareErr = await new Response(bare.stderr).text();
+    expect(await bare.exited).toBe(3);
+    expect(bareErr).toContain("bi: ");
   }, 180_000);
 });
