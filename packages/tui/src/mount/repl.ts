@@ -1,13 +1,16 @@
 /**
  * BI-24.2 —— 行编辑器 REPL 接线：交互主回路。
  * BI-25.3 —— REPL 增强：up/down 历史翻页、tab 补全、多行输入语义。
+ * BI-27.1 —— 输入补齐：光标可视化（▏1 格条）、多行粘贴（换行原样入稿）、
+ *   pageup/pagedown 十条跳页。
  *
  * 挂载面（器官全量复用、不改动；本文件为 mount 层新配件）：
  * - **LineEditor**：基于 ParsedKey（diff-renderer.ts）的单行编辑器。可见字符
  *   追加/插入、backspace、left/right/home/end 光标移动、Enter 提交非空行
  *   （空行含纯空白忽略）、Ctrl+C（非空=清空草稿，空=退出 REPL）、Ctrl+D=退出、
  *   Ctrl+E=外部编辑器桥（editPromptCommand 校验：空文本/编辑器异常=取消保稿）、
- *   paste（PasteBurst 聚合事件）整段插入。Esc 不在编辑器内消费——会话取消
+ *   paste（PasteBurst 聚合事件）走 insertRaw 原样入稿（BI-27.1：换行不摊平）。
+ *   Esc 不在编辑器内消费——会话取消
  *   语义由 runRepl 主回路按会话状态路由。
  * - **PromptHistory（BI-25.3）**：已提交行入史；空草稿 up=最近一条，连续
  *   up/down 来回移动（最旧处钳制不绕回）；编辑过草稿在第一次离开草稿槽时
@@ -17,10 +20,11 @@
  *   historyCompletions = 历史前缀匹配，排除与草稿全等的项）。Tab：唯一候选
  *   整稿补全；多候选取第一共同前缀（UTF-16 码元逐位，不劈开代理对）；无候选
  *   或共同前缀不带来进益 no-op。
- * - **多行输入语义（BI-25.3）**：外编回填（Ctrl+E）文本中的换行原样保留并
- *   整体提交（LineEditor.replaceAllRaw 不摊平）；编辑行显示端把换行摊平为
- *   ⏎（草稿内态保留原样；onPrompt 探针回吐原稿含换行）；粘贴含换行仍摊平
- *   为空格（单行输入边界明确保留）；历史条目含换行时回想同样保留原样。
+ * - **多行输入语义（BI-25.3 / BI-27.1）**：外编回填（Ctrl+E）文本中的换行
+ *   原样保留并整体提交（LineEditor.replaceAllRaw 不摊平）；粘贴（BI-27.1
+ *   语义变更）同样走 insertRaw 原样入稿，Enter 单次提交含换行整稿（runRepl
+ *   提交逻辑不变）；编辑行显示端把换行摊平为 ⏎（草稿内态保留原样；onPrompt
+ *   探针回吐原稿含换行）；历史条目含换行时回想同样保留原样。
  * - **runRepl**：主循环——注入键流 → 编辑器 → 提交行 → session.submit()
  *   （transcript 渲染由 session 的 onFrame 钩子/组件栈承担，REPL 不重复画；
  *   提示行经 session.app 组件栈走 session 注入渲染面）→ 回到提示行。
@@ -35,24 +39,34 @@
  *   y/n/Esc，其余落空）；
  * - running：Esc → session.handleKey（二段取消语义， awaited）；其余键经
  *   dispatchKey 透传（无浮层则落空）；
- * - 编辑态（idle）：up/down=历史翻页、tab=补全先于编辑器裁决；其余交
+ * - 编辑态（idle）：up/down=历史逐条翻页、pageup/pagedown=十条跳页（BI-27.1，
+ *   复用同一暂存语义）、tab=补全先于编辑器裁决；其余交
  *   LineEditor.feed；Esc 落空（session.handleKey 对 idle 不消费）。
  *
  * 诚实边界（最小可用面，超出部分显式不做）：
  * - 单行编辑器：光标按 UTF-16 码元移动（不感知字形簇/组合 emoji）；多行草稿
- *   在编辑器内仍为单"行"内态（光标跨换行按码元计）；提示行渲染不可视化光标
- *   位置（left/right 仅改编辑器内态，经 editor.cursor 观察）；
+ *   在编辑器内仍为单"行"内态（光标跨换行按码元计）；
+ * - 光标可视化（BI-27.1）：提示行渲染 `❯ ` + draft[:cursor] + `▏` +
+ *   draft[cursor:]——1 格光标条把右侧文本推右（v1 语义，非原位覆写）。切分
+ *   按 UTF-16 码元直切（与光标移动同粒度）：cursor 落在代理对中间时左半为
+ *   孤立代理（VirtualTerminal 按宽 0 丢弃，条位视觉偏移一格）；cursor 落在
+ *   \r\n 两码元中间时两侧各摊平出一个 ⏎（双 ⏎ 边界，备案不做合并）；
  * - 历史翻页为钳制语义（最旧处 up 原地踏步，非绕回循环）；回想条目上的再
- *   编辑不二次暂存；历史无去重（相邻重复提交各占一条）；
+ *   编辑不二次暂存；pageup/pagedown 为连续十次 up()/down()（BI-27.1），暂存
+ *   只在首次离开草稿槽发生一次（后续调用游标已离槽，不重复覆盖，PromptHistory
+ *   单测备案）；历史无去重（相邻重复提交各占一条）；
  * - tab 多候选不展示候选菜单（仅第一共同前缀进益，菜单归后续卡）；
- * - 粘贴把 \r/\n 摊平为空格；外编回填另去尾部空白（编辑器补写的换行属噪音）
+ * - 粘贴（BI-27.1 语义变更）：\r/\n 原样入稿不摊平（显示端再摊平为 ⏎、
+ *   提交原样）；外编回填另去尾部空白（编辑器补写的换行属噪音）
  *   但内部换行原样保留（BI-25.3）；
  * - 提示行组件回合在飞时隐藏（让位状态行）；帧绘制依赖 DiffRenderer 差分，
  *   内容不变则零字节；
  * - EOF（输入流耗尽）时若回合仍在飞（含审批挂起）则等待其落定后返回；
  * - KeyStream 为单消费者队列（多消费竞争未定义）；runRepl 退出时对上游迭代器
  *   的 return() 只触发不等待（后台收流，真实终端侧 InputLoop 常驻由宿主管理）；
- * - pageup/pagedown 翻页归后续卡。
+ * - pageup/pagedown 键面：ParsedKey 已含两键（BI-19 csiTildeKey 解析
+ *   CSI 5~/6~，本卡零改动）；带修饰变体（CSI 5;5~ 等）不支持——csiTildeKey
+ *   全参匹配落 null 忽略。
  */
 
 import type { ParsedKey } from "../engine/diff-renderer";
@@ -62,6 +76,9 @@ import { editPromptCommand } from "../commands/edit-prompt";
 import { editExternally as defaultEditExternally, type EditResult } from "../editor/external-editor";
 
 import { AgentTuiSession, type TuiSessionResult, type TuiSessionState } from "./agent-tui";
+
+/** pageup/pagedown 单键跳页条数（BI-27.1；连发累计，最旧/草稿槽双端钳制）。 */
+const PAGE_JUMP_LINES = 10;
 
 // ---------------------------------------------------------------------------
 // LineEditor —— 单行编辑器（mount 层纯内态配件，不触终端）
@@ -111,7 +128,18 @@ export class LineEditor {
     this.#cursor = text.length;
   }
 
-  /** 光标处插入文本；\r/\n 摊平为空格（单行编辑器边界，见头注）。 */
+  /**
+   * 光标处插入原始文本（BI-27.1 多行粘贴专用路径）：\r/\n 原样入稿不摊平、
+   * 不做控制字节过滤——paste 事件来自 PasteBurst 聚合，语义上已是用户整段
+   * 意图文本（Enter 提交时单次带换行整稿上送）。显示端摊平归 PromptView。
+   */
+  insertRaw(text: string): void {
+    if (text.length === 0) return;
+    this.#draft = this.#draft.slice(0, this.#cursor) + text + this.#draft.slice(this.#cursor);
+    this.#cursor += text.length;
+  }
+
+  /** 光标处插入文本；\r/\n 摊平为空格（char 路径单行边界；BI-27.1 起 paste 不再走此路径）。 */
   insert(text: string): void {
     if (text.length === 0) return;
     const flat = text.replace(/\r\n?|\n/g, " ");
@@ -134,9 +162,10 @@ export class LineEditor {
         return { kind: "edit" };
       }
       case "paste": {
+        // BI-27.1：粘贴换行原样入稿（语义变更，见头注多行输入语义）。
         const text = key.text ?? "";
         if (text.length === 0) return { kind: "none" };
-        this.insert(text);
+        this.insertRaw(text);
         return { kind: "edit" };
       }
       case "backspace": {
@@ -353,14 +382,19 @@ export class KeyStream implements AsyncIterable<ParsedKey> {
 // PromptView —— 提示行组件（经 session.app 组件栈走 session 注入渲染面）
 // ---------------------------------------------------------------------------
 
-/** REPL 提示行组件：底部行渲染 `❯ {草稿}`；回合在飞时隐藏（状态行透出）。 */
+/** REPL 提示行组件：底部行渲染 `❯ {草稿}`（含 ▏光标条，BI-27.1）；回合在飞时隐藏（状态行透出）。 */
 class PromptView implements Component {
   #draft = "";
+  #cursor = 0;
   #active = true;
 
-  /** 更新草稿并置于可见态（编辑态每次变化调用）。 */
-  update(draft: string): void {
+  /**
+   * 更新草稿与光标并置于可见态（编辑态每次变化调用；cursor 由调用方传
+   * editor.cursor，同粒度 UTF-16 码元，越界钳制到 0..draft.length）。
+   */
+  update(draft: string, cursor: number): void {
     this.#draft = draft;
+    this.#cursor = Math.max(0, Math.min(cursor, draft.length));
     this.#active = true;
   }
 
@@ -376,8 +410,12 @@ class PromptView implements Component {
 
   render(term: VirtualTerminal): void {
     if (!this.#active) return;
-    // 编辑行显示端（BI-25.3）：草稿内态保留换行原样，显示端摊平为 ⏎。
-    term.write(0, term.rows - 1, `❯ ${displayDraft(this.#draft)}`);
+    // 编辑行显示端（BI-25.3/BI-27.1）：草稿内态保留换行原样、显示端摊平为
+    // ⏎；光标条 ▏ 按码元切分插入（1 格条把右侧文本推右，v1 语义与代理对/
+    // \r\n 劈分边界见头注）。
+    const before = displayDraft(this.#draft.slice(0, this.#cursor));
+    const after = displayDraft(this.#draft.slice(this.#cursor));
+    term.write(0, term.rows - 1, `❯ ${before}▏${after}`);
   }
 
   wantsKey(_key: ParsedKey): boolean {
@@ -447,7 +485,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
 
   if (session.sessionId === undefined) await session.start(options.title ?? "bi repl");
   session.app.push(prompt);
-  prompt.update(editor.draft);
+  prompt.update(editor.draft, editor.cursor);
   onPrompt(editor.draft);
   session.app.render(); // 首帧：提示行落布（writer 面可见）
 
@@ -470,7 +508,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
     );
     pendingTurn = settled.finally(() => {
       pendingTurn = undefined;
-      prompt.update(editor.draft); // 回到提示行时同步当前草稿（提交后=空稿，不残留旧稿渲染）
+      prompt.update(editor.draft, editor.cursor); // 回到提示行时同步当前草稿（提交后=空稿，不残留旧稿渲染）
       prompt.activate(); // 回到提示行
       session.app.render();
     });
@@ -508,7 +546,24 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           const recalled = key.kind === "up" ? history.up(editor.draft) : history.down();
           if (recalled !== undefined) {
             editor.replaceAllRaw(recalled); // 历史条目原样回填（多行条目保留换行）
-            prompt.update(editor.draft);
+            prompt.update(editor.draft, editor.cursor);
+            onPrompt(editor.draft);
+            session.app.render();
+          }
+          // no-op（无历史/已在草稿槽）：草稿不动。
+        } else if (key.kind === "pageup" || key.kind === "pagedown") {
+          // BI-27.1：十条跳页——连续十次 up()/down()（最旧/草稿槽双端钳制，
+          // 连发累计）。暂存复用 PromptHistory 语义且只发生一次：首调离开
+          // 草稿槽时暂存当前草稿，后续调用游标已离槽、不重复覆盖（单测备案）。
+          let recalled: string | undefined;
+          for (let i = 0; i < PAGE_JUMP_LINES; i++) {
+            const next = key.kind === "pageup" ? history.up(editor.draft) : history.down();
+            if (next === undefined) break;
+            recalled = next;
+          }
+          if (recalled !== undefined) {
+            editor.replaceAllRaw(recalled);
+            prompt.update(editor.draft, editor.cursor);
             onPrompt(editor.draft);
             session.app.render();
           }
@@ -517,7 +572,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           const completed = completeDraft(editor.draft, completions(editor.draft));
           if (completed !== undefined) {
             editor.replaceAllRaw(completed);
-            prompt.update(editor.draft);
+            prompt.update(editor.draft, editor.cursor);
             onPrompt(editor.draft);
             session.app.render();
           }
@@ -525,7 +580,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         } else {
           const action = editor.feed(key);
           if (action.kind === "edit") {
-            prompt.update(editor.draft);
+            prompt.update(editor.draft, editor.cursor);
             onPrompt(editor.draft);
             session.app.render();
           } else if (action.kind === "submit") {
@@ -545,7 +600,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
             if (outcome.status === "submitted") {
               editor.replaceAllRaw(outcome.text.trimEnd());
             }
-            prompt.update(editor.draft);
+            prompt.update(editor.draft, editor.cursor);
             onPrompt(editor.draft);
             session.app.render();
           }

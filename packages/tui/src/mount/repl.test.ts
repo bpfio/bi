@@ -1,11 +1,13 @@
 /**
  * BI-24.2 —— 行编辑器 REPL 验收：注入键流断言（全离线，零网络，不触 stdin/raw mode）。
  * BI-25.3 —— REPL 增强验收：up/down 历史翻页、tab 补全、多行输入语义。
+ * BI-27.1 —— 输入补齐验收：▏光标可视化、粘贴保换行（语义变更）、pageup/pagedown
+ *   十条跳页与暂存一次。
  *
  * 覆盖：
  * 1. LineEditor 键位单元：可见字符/回删/光标移动/提交自清、空行与纯空白忽略、
- *    控制字符过滤、paste 摊平、Ctrl+C 非空清空/空退出、Ctrl+D 弃稿退出、
- *    Ctrl+E 外编动作、Esc 不消费；
+ *    控制字符过滤、paste 保换行（BI-27.1）、insert 摊平对照、Ctrl+C 非空清空/
+ *    空退出、Ctrl+D 弃稿退出、Ctrl+E 外编动作、Esc 与翻页键不消费；
  * 2. runRepl 多回合：提交 → 帧序列出现 [user]/[assistant] → 再提交；
  * 3. 空 Enter（含纯空白）不提交；输入流 end() → eof 收场；
  * 4. Ctrl+C 非空清空草稿（清空后可继续输入）；Ctrl+C 空 / Ctrl+D 退出返回；
@@ -19,7 +21,10 @@
  * 12. runRepl 历史翻页接线：空草稿 up=最近一条、down 越界回草稿、编辑草稿暂存、
  *     回想再编辑提交入史、空历史 no-op；
  * 13. runRepl tab 补全接线：缺省历史前缀补全、注入候选面多候选/无候选；
- * 14. 多行语义：提示行 ⏎ 摊平显示、粘贴含换行仍摊平为空格。
+ * 14. 多行语义（BI-27.1）：提示行 ⏎ 摊平显示、粘贴保换行且单次提交原样；
+ * 15. 光标可视化（BI-27.1）：▏条随输入/左移/插入推移（writer 渲染面，ASCII/CJK）；
+ * 16. pageup/pagedown（BI-27.1）：12 条历史十条跳页、双端钳制、编辑稿暂存一次
+ *     并被 pagedown 原样还原；PromptHistory 连续 up 暂存不重复覆盖（单元）。
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -162,7 +167,7 @@ describe("BI-24.2 · LineEditor 键位单元", () => {
     expect(ed.draft).toBe(""); // 提交自清
   });
 
-  test("空行忽略/纯空白忽略/控制字符过滤/paste 摊平/esc 与翻页键不消费", () => {
+  test("空行忽略/纯空白忽略/控制字符过滤/paste 保换行/esc 与翻页键不消费", () => {
     const ed = new LineEditor();
     expect(ed.feed(enter)).toEqual({ kind: "none" }); // 空行忽略
     ed.insert("   ");
@@ -171,10 +176,24 @@ describe("BI-24.2 · LineEditor 键位单元", () => {
     expect(ed.feed({ kind: "char", char: "\t" })).toEqual({ kind: "none" }); // 控制字符不入稿
     expect(ed.feed({ kind: "paste", text: "" })).toEqual({ kind: "none" });
     expect(ed.feed({ kind: "paste", text: "一\n二\r\n三" })).toEqual({ kind: "edit" });
-    expect(ed.draft).toBe("一 二 三"); // 换行摊平为空格
+    expect(ed.draft).toBe("一\n二\r\n三"); // BI-27.1：粘贴换行原样入稿（不再摊平）
+    expect(ed.cursor).toBe("一\n二\r\n三".length); // 光标按码元推进到行尾
     expect(ed.feed(esc)).toEqual({ kind: "none" }); // 取消语义归主回路路由
     expect(ed.feed({ kind: "up" })).toEqual({ kind: "none" });
+    expect(ed.feed({ kind: "pageup" })).toEqual({ kind: "none" }); // 跳页语义归主回路路由
     expect(ed.feed({ kind: "tab" })).toEqual({ kind: "none" });
+  });
+
+  test("BI-27.1 · insert 摊平语义保留（char 路径）与 insertRaw 原样插入对照", () => {
+    const ed = new LineEditor();
+    ed.insert("甲\n乙"); // insert 直呼仍摊平（旧路径语义不变，paste 已不再走此路径）
+    expect(ed.draft).toBe("甲 乙");
+    ed.clear();
+    ed.insertRaw("甲\n乙"); // paste 专用路径：换行原样
+    expect(ed.draft).toBe("甲\n乙");
+    ed.insertRaw("丙"); // 光标处续插（行尾）
+    expect(ed.draft).toBe("甲\n乙丙");
+    expect(ed.cursor).toBe("甲\n乙丙".length);
   });
 
   test("Ctrl+C 非空清空/空退出；Ctrl+D 弃稿退出；Ctrl+E 外编动作保稿", () => {
@@ -597,6 +616,28 @@ describe("BI-25.3 · PromptHistory 单元", () => {
     expect(h.down()).toBeUndefined(); // 游标已复位草稿槽：down no-op（暂存确已弃，而非"再次暂存"）
     expect(h.lines).toEqual(["老条目", "新提交"]);
   });
+
+  test("BI-27.1 · 连续 up/down 十次（pageup/pagedown 语义）：暂存只发生一次、落点与还原对称", () => {
+    const h = new PromptHistory();
+    for (let i = 1; i <= 12; i++) h.record(`第${i}条`);
+    // 连续十次 up（pageup 单键语义）：首调暂存"我的草稿"；其余九次仍传入原稿，
+    // 但游标已离槽 → 不重复暂存（stashedDraft 不被回想条目覆盖）。
+    let last = "";
+    for (let i = 0; i < 10; i++) {
+      const next = h.up("我的草稿");
+      if (next !== undefined) last = next;
+    }
+    expect(last).toBe("第3条"); // 最近一条向旧数第 10 条（index 12-10=2）
+    expect(h.stashedDraft).toBe("我的草稿");
+    // 连续十次 down（pagedown 单键语义）：第 10 次恰越回草稿槽还原暂存。
+    let restored = "";
+    for (let i = 0; i < 10; i++) {
+      const next = h.down();
+      if (next !== undefined) restored = next;
+    }
+    expect(restored).toBe("我的草稿"); // 还原的是原稿而非最后回想条目
+    expect(h.stashedDraft).toBeUndefined(); // 还原即弃
+  });
 });
 
 describe("BI-25.3 · tab 补全单元", () => {
@@ -865,14 +906,14 @@ describe("BI-25.3 · runRepl tab 补全（注入键流）", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BI-25.3 · 多行输入语义（显示端 ⏎ 摊平；粘贴边界）
+// BI-27.1 · 多行输入语义（粘贴保换行 + 显示端 ⏎ 摊平 + 提交原样）
 // ---------------------------------------------------------------------------
 
-describe("BI-25.3 · 多行输入语义", () => {
-  test("提示行显示端换行摊平为 ⏎；粘贴含换行仍摊平为空格并单行提交", async () => {
+describe("BI-27.1 · 多行输入语义", () => {
+  test("粘贴含换行：原样入稿、显示端 ⏎ 摊平（含尾光标条）、Enter 单次提交原稿", async () => {
     const { root, cleanup } = await makeRoot();
     try {
-      // 场景一（writer 渲染面）：外编回填多行 → 提示行显示 "❯ 甲⏎乙"
+      // 场景一（writer 渲染面）：外编回填多行 → "❯ 甲⏎乙▏"（显示端 ⏎ 摊平 + 光标条）
       const writer = new MemoryWriter();
       const session1 = new AgentTuiSession({
         model: scriptedModel([]),
@@ -891,11 +932,11 @@ describe("BI-25.3 · 多行输入语义", () => {
         editExternally: async () => ({ text: "甲\n乙", modified: true }),
       });
       stream1.push(ctrlE);
-      await until(() => writer.output.includes("❯ 甲⏎乙")); // 显示端 ⏎ 摊平（草稿内态保留换行）
+      await until(() => writer.output.includes("❯ 甲⏎乙▏")); // 显示端 ⏎ 摊平 + 尾光标条
       stream1.push(ctrlD);
       await done1;
 
-      // 场景二（粘贴边界）：paste 含换行仍摊平为空格，单行提交
+      // 场景二（BI-27.1 语义变更）：粘贴 "丙\n丁" → 草稿保换行、单次提交原样
       const sink2 = frameSink();
       const prompts2: string[] = [];
       const session2 = new AgentTuiSession({
@@ -911,17 +952,182 @@ describe("BI-25.3 · 多行输入语义", () => {
       const stream2 = new KeyStream();
       const done2 = runRepl({ session: session2, keys: stream2, onPrompt: (d) => prompts2.push(d) });
       stream2.push({ kind: "paste", text: "丙\n丁" });
-      await until(() => prompts2.at(-1) === "丙 丁"); // 摊平为空格
+      await until(() => prompts2.at(-1) === "丙\n丁"); // 探针回吐原稿（保换行，不摊平）
       stream2.push(enter);
       await until(
-        () => session2.state === "idle" && sink2.frames.some((f) => f.lines.some((l) => l.includes("[user] 丙 丁"))),
+        () => session2.state === "idle" && sink2.frames.some((f) => f.lines.some((l) => l.includes("[user] 丙"))),
       );
       stream2.push(ctrlD);
       const result2 = await done2;
 
-      expect(result2.submittedLines).toBe(1);
+      expect(result2.submittedLines).toBe(1); // 单次提交（含换行整稿，非按行拆分）
       const lineText = sink2.frames.map((f) => f.lines.join("\n")).join("\n");
-      expect(lineText).not.toContain("丙⏎丁"); // 粘贴不产生换行语义
+      expect(lineText).toContain("[user] 丙\n丁"); // 投影按换行拆逻辑行：首行带前缀、次行裸文本
+      expect(lineText).not.toContain("丙 丁"); // 旧摊平语义已移除（语义变更对照）
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BI-27.1 · 光标可视化（▏1 格条，writer 渲染面）
+// ---------------------------------------------------------------------------
+
+describe("BI-27.1 · 光标可视化", () => {
+  test("ASCII：▏随输入/左移/光标处插入推移（右侧文本被推右）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const writer = new MemoryWriter();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        writer,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+
+      for (const key of text("abc")) stream.push(key);
+      await until(() => writer.output.includes("❯ abc▏")); // 光标在尾
+      stream.push({ kind: "left" });
+      await until(() => writer.output.includes("❯ ab▏c")); // 左移：条插入中段
+      stream.push({ kind: "left" });
+      await until(() => writer.output.includes("❯ a▏bc"));
+      stream.push({ kind: "char", char: "X" });
+      await until(() => writer.output.includes("❯ aX▏bc")); // 光标处插入，右文推右
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("CJK：宽字符草稿按码元切分，▏ 落在字符间不劈字", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const writer = new MemoryWriter();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        writer,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+
+      for (const key of text("你好")) stream.push(key);
+      await until(() => writer.output.includes("❯ 你好▏")); // 宽字符草稿 + 尾条
+      stream.push({ kind: "left" });
+      await until(() => writer.output.includes("❯ 你▏好")); // 码元切分落在两汉字之间
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BI-27.1 · runRepl pageup/pagedown 十条跳页（注入键流）
+// ---------------------------------------------------------------------------
+
+describe("BI-27.1 · runRepl pageup/pagedown 跳页", () => {
+  const pageup: ParsedKey = { kind: "pageup" };
+  const pagedown: ParsedKey = { kind: "pagedown" };
+
+  test("12 条历史：pageup 落向旧第 10 条、再按钳最旧；pagedown 对称回跳、越回草稿槽还原空稿", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const answer: StreamEvent[] = [{ type: "content_delta", delta: "好。" }, { type: "done", stopReason: "stop" }];
+      const session = new AgentTuiSession({
+        model: scriptedModel(Array.from({ length: 12 }, () => answer)),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      for (let i = 1; i <= 12; i++) {
+        const label = `第${i}条`;
+        for (const key of [...text(label), enter]) stream.push(key);
+        await until(
+          () => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes(`[user] ${label}`))),
+        );
+      }
+
+      stream.push(pageup); // 十次 up：游标 12 → 2
+      await until(() => prompts.at(-1) === "第3条");
+      stream.push(pageup); // 再十条：2 → 0（最旧钳制）
+      await until(() => prompts.at(-1) === "第1条");
+      stream.push(pagedown); // 十次 down：0 → 10
+      await until(() => prompts.at(-1) === "第11条");
+      stream.push(pagedown); // 10 → 12 草稿槽：还原空稿（提交时草稿为空，无暂存）
+      await until(() => prompts.at(-1) === "");
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.endedAs).toBe("exit-key");
+      expect(result.submittedLines).toBe(12);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("编辑过草稿：pageup 暂存一次，pagedown 越回草稿槽原样还原（不被回想条目覆盖）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const answer: StreamEvent[] = [{ type: "content_delta", delta: "好。" }, { type: "done", stopReason: "stop" }];
+      const session = new AgentTuiSession({
+        model: scriptedModel(Array.from({ length: 12 }, () => answer)),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      for (let i = 1; i <= 12; i++) {
+        const label = `第${i}条`;
+        for (const key of [...text(label), enter]) stream.push(key);
+        await until(
+          () => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes(`[user] ${label}`))),
+        );
+      }
+
+      for (const key of text("草稿xyz")) stream.push(key);
+      await until(() => prompts.at(-1) === "草稿xyz");
+      stream.push(pageup); // 首调暂存"草稿xyz" + 十条跳页
+      await until(() => prompts.at(-1) === "第3条");
+      stream.push(pagedown); // 十次 down 越回草稿槽：还原暂存原稿
+      await until(() => prompts.at(-1) === "草稿xyz");
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.submittedLines).toBe(12); // 暂存稿未被误提交
+      expect(prompts).toContain("第3条");
+      expect(prompts.at(-1)).toBe("草稿xyz");
     } finally {
       await cleanup();
     }

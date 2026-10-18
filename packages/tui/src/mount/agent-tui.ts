@@ -1,5 +1,11 @@
 /**
  * BI-23.2 —— TUI 挂载与事件流：把 BI-23.1 的对话驱动器挂上 BI-19/20 渲染器官。
+ * BI-27.2 —— 流式渲染：content_delta 追加 #streamText 缓冲并按 80ms 节流
+ *   出帧（时钟走注入 clock.now，缺省 Date.now）；StreamView 组件在状态行
+ *   上方（rows-3）单行预览缓冲尾部（前缀 ▌、≤160 码元、超宽截断加 …），缓冲
+ *   空不渲染；流收束（正常/取消/异常）清空缓冲并让 StreamView 退场，完整
+ *   文本按既有逻辑 transcribe 进投影（落盘行为不变）。running 状态行追加
+ *   已用秒数（turnStartedAt 起算，随每帧自然刷新）。
  *
  * 挂载面（kimi 装配序 tui 段；器官全量复用、不改动）：
  * - **双缓冲投影**：TranscriptProjection（BI-19.1 同构 L1→L3）承载会话视图，
@@ -40,7 +46,42 @@ import {
 import { TuiApp, type Component } from "../components/tui-app";
 import type { ParsedKey, Writer } from "../engine/diff-renderer";
 import { VirtualTerminal } from "../engine/virtual-terminal";
+import { charWidth, textWidth } from "../components/cjk-width";
 import { TranscriptProjection, type TranscriptKind } from "../transcript-projection";
+
+/** 流式帧节流窗口（毫秒，BI-27.2）：窗口内的 delta 合并到下一次出帧。 */
+const STREAM_FRAME_THROTTLE_MS = 80;
+
+/** 流式预览尾部字符上限（UTF-16 码元；超出取尾，再按终端列宽二次截断）。 */
+const STREAM_PREVIEW_CHARS = 160;
+
+/** 流式预览行前缀。 */
+const STREAM_PREFIX = "▌";
+
+/**
+ * 流式预览单行（BI-27.2）：缓冲尾部 ≤160 码元、换行摊平为 ⏎（单行组件，
+ * 防裸换行在网格写入时顶走下方状态行）、按显示列宽截断（CJK 宽字符计 2 列，
+ * 装不下时以 … 收尾）。缓冲为空返回空串（调用方据此跳过渲染与帧行）。
+ * render 与 #frame 帧探针共用的单一来源。
+ */
+function streamPreviewLine(buffer: string, cols: number): string {
+	if (buffer.length === 0) return "";
+	const tail = buffer.length > STREAM_PREVIEW_CHARS ? buffer.slice(-STREAM_PREVIEW_CHARS) : buffer;
+	const flat = tail.replace(/\r\n?|\n/g, "⏎");
+	const budget = Math.max(0, cols - textWidth(STREAM_PREFIX) - 1); // 预留 … 一格
+	let out = "";
+	let used = 0;
+	for (const ch of flat) {
+		const w = charWidth(ch);
+		if (used + w > budget) {
+			out += "…";
+			break;
+		}
+		out += ch;
+		used += w;
+	}
+	return `${STREAM_PREFIX}${out}`;
+}
 
 /** TUI 会话级错误（结构化面，调用方据此上报）。 */
 export class TuiSessionError extends Error {
@@ -166,6 +207,21 @@ class TranscriptView implements Component {
 	}
 }
 
+/** 流式预览组件（BI-27.2）：状态行上方（rows-3）单行预览流缓冲尾部；
+ * 缓冲空不渲染（让位转录尾窗）；不消费按键（放行浮层与 REPL 路由）。 */
+class StreamView implements Component {
+	constructor(private readonly session: AgentTuiSession) {}
+
+	render(term: VirtualTerminal): void {
+		const line = streamPreviewLine(this.session.streamBuffer, this.session.cols);
+		if (line !== "") term.write(0, this.session.rows - 3, line);
+	}
+
+	wantsKey(_key: ParsedKey): boolean {
+		return false;
+	}
+}
+
 /** TUI 挂载会话：submit() 驱动的交互式对话流（投影渲染 + 审批回路 + Esc 二段取消）。 */
 export class AgentTuiSession {
 	readonly projection: TranscriptProjection;
@@ -189,6 +245,14 @@ export class AgentTuiSession {
 	#state: TuiSessionState = "idle";
 	#rounds = 0;
 	#activeOverlay: ApprovalOverlay | undefined;
+	/** BI-27.2：流式预览缓冲（content_delta 追加；流收束清空，文本改走 transcribe）。 */
+	#streamText = "";
+	/** BI-27.2：上次流式出帧时刻（-∞ 保证首个 delta 立即出帧）。 */
+	#lastStreamFrameAt = Number.NEGATIVE_INFINITY;
+	/** BI-27.2：本回合起始时刻（状态行秒数源；回合收束清位）。 */
+	#turnStartedAt: number | undefined;
+	/** BI-27.2：注入时钟（节流与秒数共用；缺省 Date.now）。 */
+	readonly #clock: Clock | undefined;
 
 	constructor(options: TuiSessionOptions) {
 		this.#rows = options.rows ?? 24;
@@ -196,11 +260,13 @@ export class AgentTuiSession {
 		this.#hooks = options.hooks ?? {};
 		this.#maxRounds = options.maxRounds ?? 8;
 		this.#model = options.model;
+		this.#clock = options.clock;
 		this.projection = new TranscriptProjection({ width: this.#cols });
 		// 帧字节面：真实终端经 options.writer 注入（BI-24.2）；缺省 no-op（测试注入 hooks.onFrame 断言行集）。
 		const writer: Writer = options.writer ?? { write: () => undefined };
 		this.app = new TuiApp(writer, this.#rows, this.#cols);
 		this.app.push(new TranscriptView(this));
+		this.app.push(new StreamView(this)); // BI-27.2：流式预览（缓冲空时不落格）
 		this.#gate = new PermissionGate({ mode: options.permissionMode ?? "manual" });
 		for (const binding of options.tools) this.#registry.set(binding.definition.name, binding);
 		const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
@@ -235,6 +301,33 @@ export class AgentTuiSession {
 		return this.#rows;
 	}
 
+	/** 当前渲染列数（resize 可变；StreamView 截断布局单一来源，BI-27.2）。 */
+	get cols(): number {
+		return this.#cols;
+	}
+
+	/** 流式预览缓冲（只读视图；StreamView 与帧探针消费，BI-27.2）。 */
+	get streamBuffer(): string {
+		return this.#streamText;
+	}
+
+	/** 时刻源（BI-27.2）：注入 clock.now 缺省 Date.now（节流与秒数共用）。 */
+	#now(): number {
+		return this.#clock !== undefined ? this.#clock.now() : Date.now();
+	}
+
+	/**
+	 * 流式帧节流（BI-27.2）：80ms 窗口内的 content_delta 合并重绘；首 delta
+	 * 立即出帧（lastStreamFrameAt 初始 -∞，submit 起点复位）。时钟注入面可控
+	 * 推进（测试零真实延时）。
+	 */
+	#maybeStreamFrame(): void {
+		const now = this.#now();
+		if (now - this.#lastStreamFrameAt < STREAM_FRAME_THROTTLE_MS) return;
+		this.#lastStreamFrameAt = now;
+		this.#frame();
+	}
+
 	/** AgentLoop 内态诊断面（thinking/paused/exit/...；测试与状态条用）。 */
 	get agentState(): string {
 		return this.#agentLoop.state;
@@ -243,8 +336,14 @@ export class AgentTuiSession {
 	statusText(): string {
 		const mode = this.#gate.mode;
 		switch (this.#state) {
-			case "running":
-				return `[${mode}] 运行中 — Esc 取消（双击退出）`;
+			case "running": {
+				// BI-27.2：运行态追加已用秒数（turnStartedAt 起算；随每帧自然刷新）。
+				const started = this.#turnStartedAt;
+				const secs = started === undefined ? undefined : Math.max(0, Math.floor((this.#now() - started) / 1000));
+				return secs === undefined
+					? `[${mode}] 运行中 — Esc 取消（双击退出）`
+					: `[${mode}] 运行中 ${secs}s — Esc 取消（双击退出）`;
+			}
 			case "awaiting-approval":
 				return `[${mode}] 等待审批 — y 允许 / n 拒绝`;
 			case "exited":
@@ -263,7 +362,15 @@ export class AgentTuiSession {
 		const lines = this.projection.render();
 		const viewRows = Math.max(1, this.#rows - 2);
 		const overlay = this.#activeOverlay?.lines() ?? [];
-		const frame = [...overlay, ...lines.slice(-(viewRows - overlay.length)), this.statusText()];
+		// BI-27.2：流式预览行插在转录尾窗与状态行之间（缓冲空 = 无行；
+		// 备案边界——审批浮层同帧时网格上浮层覆盖 rows-3，帧数组仍含流式行）。
+		const streamLine = streamPreviewLine(this.#streamText, this.#cols);
+		const frame = [
+			...overlay,
+			...lines.slice(-(viewRows - overlay.length)),
+			...(streamLine === "" ? [] : [streamLine]),
+			this.statusText(),
+		];
 		this.#hooks.onFrame?.(frame, { approvalVisible: this.#state === "awaiting-approval", state: this.#state });
 	}
 
@@ -318,6 +425,10 @@ export class AgentTuiSession {
 		this.#exitRequested = false;
 		this.#turnController = new AbortController();
 		this.#state = "running";
+		// BI-27.2：回合起点复位流式面（秒数源 + 节流基线 + 预览缓冲）。
+		this.#turnStartedAt = this.#now();
+		this.#lastStreamFrameAt = Number.NEGATIVE_INFINITY;
+		this.#streamText = "";
 
 		// 会话持久化：根条目（仅首个 submit 建立）与链式追加。
 		if (this.#messages.length === 0) {
@@ -348,7 +459,12 @@ export class AgentTuiSession {
 					tools: [...this.#registry.values()].map((t) => t.definition),
 					signal: this.#turnController.signal,
 				})) {
-					if (event.type === "content_delta") text += event.delta;
+					if (event.type === "content_delta") {
+						text += event.delta;
+						// BI-27.2：流式预览缓冲追加 + 节流出帧（80ms 合并，时钟注入）。
+						this.#streamText += event.delta;
+						this.#maybeStreamFrame();
+					}
 					else if (event.type === "tool_call_delta") assembler.push(event);
 					else if (event.type === "done") stop = event.stopReason;
 					else if (event.type === "error") {
@@ -356,6 +472,11 @@ export class AgentTuiSession {
 						throw new TuiSessionError("adapter-error", `${event.error.code}: ${event.error.message}`);
 					}
 				}
+				// 流收束（BI-27.2）：清空预览缓冲并出帧让 StreamView 退场。文本按
+				// 既有逻辑转写——finish/cancel 分支 transcribe 进投影，tool_use 回合
+				// 维持既有不转写行为（落盘不变）。
+				this.#streamText = "";
+				this.#frame();
 				// Esc 收束：cancelled=一段暂停（保留 paused 态待 resume）；exit=二段终态。
 				if (this.#exitRequested || this.#turnCancelled) {
 					const endedAs = this.#exitRequested ? "exit" : "cancelled";
@@ -422,6 +543,9 @@ export class AgentTuiSession {
 			}
 			throw new TuiSessionError("rounds-exceeded", `回合超上限 ${this.#maxRounds}`);
 		} finally {
+			// BI-27.2：流式面收束兜底（异常抛出路径在流循环外，预览清空 + 秒数源清位）。
+			this.#streamText = "";
+			this.#turnStartedAt = undefined;
 			this.#state = String(this.#agentLoop.state) === "exit" ? "exited" : "idle";
 			this.#frame();
 		}

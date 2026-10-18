@@ -1,5 +1,6 @@
 /**
  * BI-23.2 —— TUI 挂载验收：注入渲染面断言帧序列（伪 TTY 等价面）。
+ * BI-27.2 —— 流式渲染验收：节流帧 + StreamView 预览行 + 运行态秒数。
  *
  * 全离线（脚本化模型 + 注入 Writer + 可控时钟），覆盖：
  * 1. 单回合自然收尾：帧序列出现 [user]→[assistant] 行集，状态回「就绪」；
@@ -7,7 +8,10 @@
  * 3. manual 模式审批 ask 回路：浮层可见（approvalVisible）→ y=允许执行；
  * 4. 审批拒绝：n=拒绝 → 工具不执行 → 结构化 permission-denied 回喂模型；
  * 5. Esc 二段取消（可控时钟）：一段=paused 收束（endedAs=cancelled，可 resume
- *    续转）；窗口内二段=exit 终态（endedAs=exit，续提交结构化报错）。
+ *    续转）；窗口内二段=exit 终态（endedAs=exit，续提交结构化报错）；
+ * 6. 流式渲染（BI-27.2）：慢速 delta 流中出现含部分文本的 ▌ StreamView 行；
+ *    收束后预览行消失、投影含完整文本；running 状态行含已用秒数；80ms 窗口
+ *    内连续 delta 合并出帧；取消收束同样清空预览并转写部分文本。
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -103,6 +107,12 @@ function frameSink(): FrameSink & { hooks: { onFrame: (lines: readonly string[],
 async function makeRoot(): Promise<{ root: string; cleanup: () => Promise<void> }> {
 	const root = await mkdtemp(join(tmpdir(), "bi-tui-mount-"));
 	return { root, cleanup: () => rm(root, { recursive: true, force: true }) };
+}
+
+/** 轮询等待（微任务/宏任务双冲刷；超时即败）。 */
+async function until(cond: () => boolean): Promise<void> {
+	for (let i = 0; i < 1000 && !cond(); i++) await new Promise((r) => setTimeout(r, 1));
+	expect(cond()).toBe(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +345,167 @@ describe("BI-23.2 · Esc 二段取消（可控时钟）", () => {
 			expect(session.state).toBe("exited");
 			await expect(session.submit("再来")).rejects.toMatchObject({ code: "session-exited" });
 		} finally {
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-27.2 · 流式渲染（节流帧 + StreamView 预览行 + 运行态秒数）
+// ---------------------------------------------------------------------------
+
+describe("BI-27.2 · 流式渲染", () => {
+	/** 可控时钟：测试显式推进 `now`（节流与秒数共用注入面，零真实延时）。 */
+	function steppedClock(initial: number): { clock: Clock; advance: (ms: number) => void } {
+		let now = initial;
+		return {
+			clock: {
+				now: () => now,
+				setTimeout: (handler, ms) => setTimeout(handler, ms),
+				clearTimeout: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
+			},
+			advance: (ms) => {
+				now += ms;
+			},
+		};
+	}
+
+	/** 门控慢速模型：每个 delta 停在闸门，测试推进时钟后放行（确定性节流驱动）。 */
+	function gatedStreamModel(gates: Array<{ promise: Promise<void>; open: () => void }>): ModelPort {
+		return {
+			async *stream() {
+				for (let i = 0; i < gates.length; i++) {
+					yield { type: "content_delta", delta: `第${i + 1}段` } as StreamEvent;
+					await gates[i]!.promise;
+				}
+				yield { type: "done", stopReason: "stop" } as StreamEvent;
+			},
+		};
+	}
+
+	function gate(): { promise: Promise<void>; open: () => void } {
+		let open!: () => void;
+		return { promise: new Promise<void>((r) => (open = r)), open };
+	}
+
+	test("慢速 delta：流中出现含部分文本的 ▌ 预览行；收束后预览退场、投影含完整文本；running 状态行含秒数", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const { clock, advance } = steppedClock(1_000);
+			const gates = [gate(), gate(), gate()];
+			const sink = frameSink();
+			const session = new AgentTuiSession({
+				model: gatedStreamModel(gates),
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 60,
+				clock,
+				hooks: sink.hooks,
+			});
+			await session.start("流式");
+			const pending = session.submit("流式一下");
+
+			// ① 首 delta 立即出帧：StreamView 行含部分文本（running 态）。
+			await until(() => sink.frames.some((f) => f.lines.includes("▌第1段")));
+			const first = sink.frames.find((f) => f.lines.includes("▌第1段"))!;
+			expect(first.state).toBe("running");
+
+			// 推进 3s 后放行第二段：节流窗外 → 新帧；状态行秒数随帧刷新。
+			advance(3_000);
+			gates[0]!.open();
+			await until(() => sink.frames.some((f) => f.lines.includes("▌第1段第2段")));
+			const second = sink.frames.filter((f) => f.lines.includes("▌第1段第2段")).at(-1)!;
+			// ③ running 状态行含已用秒数（turnStartedAt=1000，now=4000 → 3s）。
+			expect(second.lines.some((l) => l.includes("运行中 3s"))).toBe(true);
+
+			// 收束（正常）：预览行退场、投影按既有逻辑含完整文本。
+			advance(100);
+			gates[1]!.open();
+			gates[2]!.open();
+			const result = await pending;
+			expect(result.endedAs).toBe("finish");
+			expect(result.finalText).toBe("第1段第2段第3段");
+			const last = sink.frames.at(-1)!;
+			// ② 末帧无 ▌ 预览行，且投影含完整文本。
+			expect(last.lines.some((l) => l.startsWith("▌"))).toBe(false);
+			expect(last.lines.some((l) => l.includes("[assistant] 第1段第2段第3段"))).toBe(true);
+			expect(last.state).toBe("idle");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("节流合并：80ms 窗口内连续 delta 只出一次帧，窗外 delta 出新帧", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const { clock, advance } = steppedClock(1_000);
+			const gates = [gate(), gate(), gate()];
+			const sink = frameSink();
+			const session = new AgentTuiSession({
+				model: gatedStreamModel(gates),
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 60,
+				clock,
+				hooks: sink.hooks,
+			});
+			await session.start("节流");
+			const pending = session.submit("连发");
+
+			await until(() => sink.frames.some((f) => f.lines.includes("▌第1段")));
+			const afterFirst = sink.frames.length;
+			gates[0]!.open(); // delta2 在同一时刻到达：窗口内合并，不出新帧
+			await new Promise((r) => setTimeout(r, 20));
+			expect(sink.frames.some((f) => f.lines.includes("▌第1段第2段"))).toBe(false);
+			expect(sink.frames.length).toBe(afterFirst);
+
+			advance(80); // 窗外：delta3 出新帧（now-last=80，恰达节流阈值）
+			gates[1]!.open();
+			gates[2]!.open();
+			await pending;
+			expect(sink.frames.some((f) => f.lines.includes("▌第1段第2段第3段"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("取消收束：预览缓冲清空（▌ 行消失），部分文本按既有逻辑 transcribe 进投影", async () => {
+		const { root, cleanup } = await makeRoot();
+		let release!: () => void;
+		const gate = { promise: new Promise<void>((r) => (release = r)), open: () => release() };
+		try {
+			const { clock } = steppedClock(1_000);
+			const sink = frameSink();
+			const session = new AgentTuiSession({
+				model: hangingModel(gate),
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				cancelWindowMs: 800,
+				clock,
+				rows: 6,
+				cols: 40,
+				hooks: sink.hooks,
+			});
+			await session.start("取消预览");
+			const pending = session.submit("长任务");
+			for (let i = 0; i < 200 && session.agentState !== "thinking"; i++) await new Promise((r) => setTimeout(r, 1));
+			await until(() => sink.frames.some((f) => f.lines.includes("▌进行中…"))); // 流中预览可见
+			await session.handleKey(esc); // 一段：paused，abort 流
+			gate.open();
+			const result = await pending;
+			expect(result.endedAs).toBe("cancelled");
+			const last = sink.frames.at(-1)!;
+			expect(last.lines.some((l) => l.startsWith("▌"))).toBe(false); // 预览退场
+			expect(last.lines.some((l) => l.includes("[assistant] 进行中…"))).toBe(true); // 部分文本转写（既有行为）
+		} finally {
+			gate.open();
 			await cleanup();
 		}
 	});
