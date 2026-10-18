@@ -94,8 +94,8 @@ export interface HeadlessResult {
 	readonly permissionDecisions: ReadonlyArray<{ tool: string; decision: string }>;
 }
 
-/** 工具调用增量按 index 拼装缓冲。 */
-class ToolCallAssembler {
+/** 工具调用增量按 index 拼装缓冲（BI-23.2 TUI 挂载复用）。 */
+export class ToolCallAssembler {
 	#calls = new Map<number, { id?: string; name?: string; args: string }>();
 
 	push(event: Extract<StreamEvent, { type: "tool_call_delta" }>): void {

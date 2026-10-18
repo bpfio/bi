@@ -99,3 +99,13 @@ export type {
   PromptCancelReason,
   PromptEditOutcome,
 } from "./commands/edit-prompt";
+
+// —— 装配挂载层：TUI 会话驱动器（BI-23.2，双缓冲投影/审批 ask 回路/Esc 二段取消）——
+export { AgentTuiSession, TuiSessionError } from "./mount/agent-tui";
+export type {
+  TuiSessionOptions,
+  TuiSessionResult,
+  TuiSessionHooks,
+  TuiSessionState,
+  FrameInfo,
+} from "./mount/agent-tui";
