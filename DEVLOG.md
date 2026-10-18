@@ -1,8 +1,9 @@
-# bi 研发台账 DEVLOG (主控编纂版 v5 · 维护态)
+# bi 研发台账 DEVLOG (主控编纂版 v5.1 · 组装点火)
 
-> **生成**:2026-10-18 维护态裁决存档。**closed 117/117(100%)——台账全清,P0 全含(含 BI-21 终局门)**,代码前沿 711f9e9。
-> 全仓 **4087 测试用例 / 210 文件 / 49726 expect / 双 tsc 0 错 / 零返工**;devlog 链 #155~#247。
+> **生成**:2026-10-19 组装点火存档。**closed 117/117(100%)——能力矩阵全清,P0 全含(含 BI-21 终局门)**,代码前沿 75c466f。
+> 全仓 **4092 测试用例 / 211 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#248。
 > 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md),演练真抓 2 缺陷并最小改动面修复。
+> 当前阶段:**组装点火进行中**(BI-ASM-2026-10-18 批次,BI-23.1 走骨架已点亮,见第六节)。
 
 ---
 
@@ -200,3 +201,19 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 - **维持 open×3(上游 logbook 工具缺陷,规程规避中)**:TOOL-1(devlog 带 task_id 静默覆盖,规避=默认不带) / TOOL-2(task_upsert 字段破坏性置空,规避=全量回填) / LOGBOOK-EXPORT-1(大导出通道不可达,规避=SSH 直发)——根治归 bpfio/logbook 上游,另立项目再议
 - 规则入库:**RULE-BI-10**(派工三步锁:登记-对账-探测) / **RULE-BI-11**(picomatch 段语义,deny 深路径须 `/**`)
 - 观察项(演练备案,非缺陷,维持):workflow 包 barrel stub(对外 API 收口归组装层,待有外部消费者) / picomatch 段语义(已升格 RULE-BI-11) / MCP `server.tool` 前缀路由与 A2A `allowFrom` 必填显式面(fail-closed 架构事实)
+
+## 六、组装点火增量 (BI-ASM-2026-10-18 批次,进行中)
+
+复盘定案:分叉策略正确;真实弯路=WBS 未先行行走骨架 → **RULE-BI-12「行走骨架先行」入库**(第一张卡必须可运行最小整机,器官卡挂骨架保持常绿)。装配序沿 devlog #150 定版的 kimi 装配参考(main.ts→cli→tui→agent-core→oauth/acp/minidb)。
+
+| 卡 | 标题 | commit | 状态 |
+|---|---|---|---|
+| BI-23.1 | 走骨架点火:bin 真入口+kimi 序 main 分发+无头端到端装配体 | 75c466f | **closed**(主控亲建) |
+| BI-23.2 | TUI 挂载与事件流:双缓冲投影/审批 ask 回路/取消键位 | — | planned |
+| BI-23.3 | 真实模型端到端点火:SSE 驱动+凭据门+真实会话验收 | — | planned |
+
+**BI-23.1 验收证据**:`bun bin/bi.ts --version` → `bi 0.1.0`;main 分发退出码语义 0(会话 ok)/2(参数与未知子命令)/3(无模型端口)/4(已识别未接线);e2e 5 用例断言全链路——真实工具执行(fs 读回真实内容)/钩子真实子进程触发(SessionStart+PreToolUse ran+决策 allow/block)/权限门审计轨迹(manual 模式 ask 结构化拒绝回喂,不假冒放行)/JSONL 会话 5 条目链(user→assistant(tool_use)→tool_call→tool_result→assistant,toolCallId/toolName 配对)/stream-json 线合约(StreamEvent 透传+session_done 汇总)。build-bin.ts 按 NOTE(BI-20.2) 钩子替换 VERSION 占位为 runBi 真入口(编译产物双冒烟:--version exit 0/裸跑 usage exit 2)。
+
+**首轮走骨架真抓 3 个跨器官接线缺陷并修复**:①会话根条目 id 未回填→第二条 append 成第二个根违例;②状态机契约撞线:executeTools 落定后已在 thinking,beginTurn 只该 idle 态调;③测试桩捕获 messages 活引用未快照。均为 117 卡单器官测试无法暴露的合约对撞——RULE-BI-12 价值首轮实证。
+
+**新增件**:bin/bi.ts、packages/core/src/cli/{headless,main}.ts(+e2e test)。骨架期显式降级(不伪造能力):权限 ask 无头结构化拒绝(审批 UI 归 23.2)/信任门缺省 trusted(真实信任门归后续装配卡)/未接线子命令结构化上报。
