@@ -1,9 +1,9 @@
-# bi 研发台账 DEVLOG (主控编纂版 v5.3 · 组装点火里程碑)
+# bi 研发台账 DEVLOG (主控编纂版 v5.4 · CLI 生态接线)
 
-> **生成**:2026-10-19 BI-23 族全闭存档。**closed 117/117+BI-23 族(120/120)——能力矩阵全清+组装点火里程碑达成**,代码前沿 b678fb6。
-> 全仓 **4111 测试用例 / 213 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#253。
-> 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md),演练真抓 2 缺陷并最小改动面修复。
-> 当前阶段:**BI-23 组装点火里程碑达成**(行走骨架+TUI 挂载+真实模型点火三子卡全闭,见第六节)。
+> **生成**:2026-10-19 BI-24 族全闭存档。**closed 117/117+BI-23 族+BI-24 族(123/123)**,代码前沿 28b6486。
+> 全仓 **4141 测试用例 / 215 文件 / 双 tsc 0 错 / 零返工**;devlog 链 #155~#254。
+> 终局验收:**全功能矩阵 11 域(A-K)全 PASS、0 DEGRADED**(44 演练测试/575 断言,docs/E2E_DRILL_REPORT.md)。
+> 当前阶段:**CLI 生态接线达成**——`bi` 无参即交互 REPL(真实模型),八子命令全接,见第六节。
 
 ---
 
@@ -227,3 +227,19 @@ A 宏观政策数据审计(0 误差) · B 会话生命周期 · C 凭据/OAuth �
 **BI-23.2 TUI 挂载(2026-10-19,commit b678fb6,closed)**:`packages/tui/src/mount/agent-tui.ts`——AgentTuiSession 把 BI-23.1 对话驱动器挂上 BI-19/20 器官(器官零改动):**双缓冲投影**(TranscriptProjection L1→L3 + TuiApp/DiffRenderer begin/end 差分帧,onFrame 注入渲染面探针);**审批 ask 回路**(manual 门 ask→栈顶 ApprovalOverlay y/n/Esc,deny 结构化 permission-denied 回喂模型——无头降级的假冒面就此消除);**Esc 二段取消**(对齐 BI-07 迁移表:thinking→paused+模型流 abort,窗口内二段→exit,pre-beginTurn 竞态 noop 兜底,paused 续提交经 resume)。ToolCallAssembler 自 headless 导出复用,挂载面入 @bi/tui index。验收:注入渲染面 6 用例(帧序列/工具回环+tool_result 回喂/ask→放行/ask→拒绝/一段 cancelled/二段 exit+续提交报错)全绿。边界:行编辑器 REPL 接线归后续装配卡;钩子 runner 暂为无头专属。排障三则(devlog #253):Esc 与 beginTurn 竞态(根条目 fs 落盘窗口 noop 无取消→流永挂)→noop+idle 兜底;轮询错对象;浮层行集单一来源化。
 
 **BI-23 父卡 rollup(closed)**:三子卡证据链齐备——23.1 走骨架(75c466f,5 e2e,抓 3 跨器官缺陷)/23.2 TUI 挂载(b678fb6,6 帧序列用例,抓 3 装配竞态)/23.3 真实点火(73b5d29,mimo 双模态 PASS)。RULE-BI-12 行走骨架先行铁律首个工程完赛:骨架常绿 4111 测试,器官卡全数挂上,未接线子命令(init/session/fork/export/transfer/acp/upgrade/doctor)逐个挂分发归后续装配卡。
+
+## 七、CLI 生态接线增量 (BI-ASM-2026-10-19 批次,双 agent 并发,父卡 rollup closed)
+
+**并发派工模型(首个双 agent 工程)**:文件所有权切分零冲突——Agent-A 独占 packages/tui/**(BI-24.2),Agent-B 独占 packages/core/src/cli/**(BI-24.1),主控持文件租约收口 bin/bi.ts;提交权与台账收口在主控。
+
+| 卡 | 标题 | commit | 状态 |
+|---|---|---|---|
+| BI-24.1 | 八子命令分发接线(init/session/fork/export/transfer/acp/upgrade/doctor) | 28b6486 | **closed**(Agent-B) |
+| BI-24.2 | 行编辑器 REPL 接线(交互主回路) | 28b6486 | **closed**(Agent-A) |
+| BI-24 | 父卡 rollup | — | **closed** |
+
+**BI-24.1 落位**:commands/dispatch.ts 查表派发(findSubcommandIndex 在全局旗标后切 argv,子命令旗标不误报 unknown-flag);init=v1 脚手架(.bi/local.toml 幂等不覆盖)/session/fork/export/transfer=接 BI-03 库面/acp=v1 最小握手帧(Content-Length JSON-RPC,注入 IO)/upgrade=v1 锚点循环门(探测 upstream_sync.py,check 不 pull,缺脚本 exit 4)/doctor=接 src/doctor.ts 器官。17 条注入式用例(每命令 happy+边界)。诚实边界:acp 只握手面、init 不含 BI.md 草稿面、upgrade 不含 manifest 自升级链路。
+
+**BI-24.2 落位**:mount/repl.ts——LineEditor(插入/删除/光标移动单行编辑)+ KeyStream(单消费键流,end()=eof 信号)+ PromptView + runRepl 主回路(按键按会话态路由:审批浮层全键 dispatchKey/running 态 Esc→二段取消/idle 编辑);agent-tui.ts 唯一许可扩展(TuiSessionOptions.writer 透传 stdout)。13 条注入键流用例。诚实边界:历史翻页/tab 补全/多行输入归后续卡;REPL v1 纯对话(工具注册表面归后续装配卡)。
+
+**主控收口**:bin/bi.ts 无参=REPL 主路径(配置装配→凭据门→AgentTuiSession(writer=stdout)→InputLoop→KeyStream 真实桥,stdin EOF 经生成器 finally 显式 KeyStream.end(),raw-mode 尽力而为);带参=runBi 分发。**三连真实冒烟 PASS**:①--prompt 无头回归(mimo 答 OK);②管道 REPL 贯通(stdin 逐字符提示行→提交→真实回合→[user]/[assistant] 帧→Ctrl-D eof);③bi session 列出真实会话。装配期接线宣告收尾:**bi 是一台可交互、可持久化、全命令面贯通的整机**。
