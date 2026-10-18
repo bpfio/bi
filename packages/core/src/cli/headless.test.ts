@@ -8,7 +8,7 @@
  * 模型端口为脚本化注入（零网络；真实驱动随 BI-23.3）。
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runBi } from "./main";
@@ -228,9 +228,14 @@ describe("BI-23.1 main 分发（kimi 序 main → dispatch）", () => {
 		expect(await runBi(["session"], io)).toBe(4);
 		expect(errs.at(-1)).toContain("装配未接线");
 
-		// 无模型端口：结构化降级（真实驱动随 BI-23.3）
-		expect(await runBi(["--prompt", "hi"], io)).toBe(3);
-		expect(errs.at(-1)).toContain("模型端口");
+		// 无模型端口且无配置：走 BI-23.3 配置装配，结构化退出码 3
+		const emptyHome = await mkdtemp(join(tmpdir(), "bi-home-"));
+		try {
+			expect(await runBi(["--prompt", "hi"], { ...io, headless: { homeDir: emptyHome } })).toBe(3);
+			expect(errs.at(-1)).toContain("未配置对话模型");
+		} finally {
+			await rm(emptyHome, { recursive: true, force: true });
+		}
 	});
 
 	test("runBi 端到端：经主分发跑通注入式模型无头会话", async () => {
@@ -249,6 +254,70 @@ describe("BI-23.1 main 分发（kimi 序 main → dispatch）", () => {
 			expect(done.exit).toBe("ok");
 		} finally {
 			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-23.3 main 配置装配（BI-02 凭据门离线失败面，全程不触网）
+// ---------------------------------------------------------------------------
+
+function writeGateConfig(apiKeyEnv: string, kind: string): string {
+	return `
+[providers.entries.gate]
+api_key_env = "${apiKeyEnv}"
+base_url = "https://gate.test/v1"
+kind = "${kind}"
+models = ["gate-model"]
+
+[models]
+default = "main"
+
+[models.entries.main]
+provider = "gate"
+model = "gate-model"
+`;
+}
+
+describe("BI-23.3 main 配置装配与凭据门", () => {
+	test("凭据未设置：退出码 3，报错携带 api_key_env 变量名与修复指引", async () => {
+		const home = await mkdtemp(join(tmpdir(), "bi-gate-"));
+		const envName = "BI_GATE_MISSING_KEY";
+		delete process.env[envName];
+		await mkdir(join(home, ".bi"), { recursive: true });
+		await writeFile(join(home, ".bi", "config.toml"), writeGateConfig(envName, "openai"), "utf8");
+		const errs: string[] = [];
+		try {
+			const code = await runBi(["--prompt", "hi"], {
+				out: () => {},
+				err: (line) => errs.push(line),
+				headless: { homeDir: home },
+			});
+			expect(code).toBe(3);
+			expect(errs.join("\n")).toContain(`${envName} 未设置`);
+		} finally {
+			await rm(home, { recursive: true, force: true });
+		}
+	});
+
+	test("kind 无驱动（google）：凭据门通过后仍结构化退出码 3，不触网", async () => {
+		const home = await mkdtemp(join(tmpdir(), "bi-gate-"));
+		const envName = "BI_GATE_KEY_GOOGLE";
+		process.env[envName] = "k";
+		await mkdir(join(home, ".bi"), { recursive: true });
+		await writeFile(join(home, ".bi", "config.toml"), writeGateConfig(envName, "google"), "utf8");
+		const errs: string[] = [];
+		try {
+			const code = await runBi(["--prompt", "hi"], {
+				out: () => {},
+				err: (line) => errs.push(line),
+				headless: { homeDir: home },
+			});
+			expect(code).toBe(3);
+			expect(errs.join("\n")).toContain("暂无已装配驱动");
+		} finally {
+			delete process.env[envName];
+			await rm(home, { recursive: true, force: true });
 		}
 	});
 });

@@ -1,14 +1,18 @@
 /**
  * BI-23.1 —— bi 主分发（kimi 装配参考形状：main → handleMainCommand → TUI/无头）。
  *
- * 接线现状（骨架期，诚实边界）：
- * - 真实路径：无头会话（--prompt，注入式 ModelPort；真实 SSE 驱动随 BI-23.3）；
+ * 接线现状（BI-23.3 起真实驱动在位）：
+ * - 真实路径：无头会话（--prompt）——ModelPort 未注入时从配置装配（BI-02 凭据门 +
+ *   BI-04.2 双模态 SSE 驱动），装配失败结构化退出码 3；
  * - 已识别未接线：init/session/fork/export/transfer/acp/upgrade 等子命令的处理器
  *   均已在库（BI-20.2/20.6/20.7/BI-03 交付），逐个挂上分发归后续装配卡——本层
  *   结构化上报 "not-wired"，不假冒执行；
  * - --version 直读 @bi/core VERSION。
  */
+import { ConfigService } from "../config/config-service";
+import { ConfigError } from "../config/schema";
 import { parseGlobalArgs, ArgParseError } from "./commands/args";
+import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
 
 /** 已识别但尚未挂接的子命令（逐个接线归 BI-23.2/23.3 及后续装配卡）。 */
@@ -24,10 +28,12 @@ const RECOGNIZED_UNWIRED: readonly string[] = [
 ];
 
 export interface RunBiOptions {
-	/** 无头模型端口（骨架期注入；真实驱动 BI-23.3）。 */
+	/** 无头模型端口（缺省 = 从配置文件装配真实 BI-04.2 驱动；测试注入替身）。 */
 	model?: ModelPort;
-	/** 透传 runHeadless 其余选项（测试注入 sessionsRoot/cwd/tools/hooks 等）。 */
-	headless?: Partial<Pick<HeadlessOptions, "cwd" | "sessionsRoot" | "tools" | "hooks" | "permissionMode" | "trust" | "hookSpawn" | "maxRounds">>;
+	/** 透传 runHeadless 其余选项（测试注入 sessionsRoot/cwd/tools/hooks 等；homeDir 供 ConfigService 注入）。 */
+	headless?: Partial<
+		Pick<HeadlessOptions, "cwd" | "sessionsRoot" | "tools" | "hooks" | "permissionMode" | "trust" | "hookSpawn" | "maxRounds"> & { homeDir: string }
+	>;
 	/** 输出汇（缺省 stdout）。 */
 	out?: (line: string) => void;
 	/** 诊断输出汇（缺省 stderr）。 */
@@ -85,17 +91,36 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 		err('bi: 无头会话需要 --prompt "<text>"');
 		return 2;
 	}
-	if (options.model === undefined) {
-		err("bi: 无模型端口（骨架期 ModelPort 为注入式；真实 SSE 驱动随 BI-23.3 接入）。");
-		return 3;
+
+	const h = options.headless ?? {};
+	let model = options.model;
+	if (model === undefined) {
+		// BI-23.3：真实驱动装配 = 配置装载（三级 TOML+env）→ BI-02 凭据门 → BI-04.2 双模态适配器。
+		try {
+			const service = new ConfigService({
+				...(h.homeDir !== undefined ? { homeDir: h.homeDir } : {}),
+				...(h.cwd !== undefined ? { workDir: h.cwd } : {}),
+			});
+			const config = await service.load();
+			const selection = resolveModelPort(config, {
+				resolveApiKey: (name) => service.resolveProviderApiKey(name),
+			});
+			err(`bi: 模型已装配 provider=${selection.providerName} mode=${selection.mode} model=${selection.wireModel}`);
+			model = selection.port;
+		} catch (cause) {
+			if (cause instanceof ConfigError || cause instanceof ModelPortConfigError) {
+				err(`bi: ${cause.message}`);
+				return 3;
+			}
+			throw cause;
+		}
 	}
 
 	try {
-		const h = options.headless ?? {};
 		const result = await runHeadless({
 			prompt: parsed.prompt,
 			cwd: h.cwd ?? process.cwd(),
-			model: options.model,
+			model,
 			tools: h.tools ?? [],
 			...(h.hooks !== undefined ? { hooks: h.hooks } : {}),
 			...(h.sessionsRoot !== undefined ? { sessionsRoot: h.sessionsRoot } : {}),
