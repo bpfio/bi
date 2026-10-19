@@ -371,3 +371,31 @@ npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @b
 **门禁终态:4320 pass/0 fail(228 文件,BI_PTY_E2E=1),双 tsc 0。提交链:d833f1f(docs)→c5b28dd/a028072/04c7671(语料)→94cc84b(代码,10 文件 +502/-48)。**
 
 **dogfood 方法论沉淀**:①bi 本体修 bi 可行且高效——三工单实改 502 行,主控只出简报+验收;②无头回合上限须可调(--max-rounds),真实工单 8 回合必撞墙;③并发实例共树,互踩 stash 是真实风险(A 曾为自证 stash→pop 撞上 B 写 args.ts,靠备份恢复并集);④codebuddy 免费模型(hy3/step-5-preview)接评审/分析类子任务,--allowedTools/--disallowedTools 静默失效 bug 只用 --tools;⑤台账通道故障时,结论+简报+转录+日志全量先落仓(docs/dogfood/),台账恢复后补记。
+
+## 十四、codebuddy 派工批次:CI 转绿 + TUI 三快赢 (2026-10-19,当日第三波)
+
+用户口令"派发2-4个agent解决TUI对齐与BI-30批次"→"只通过codebuddy派发,不用opencode"→"下批开工:继续派codebuddy"。执行形态:**主控(ZCode)只做策划与验收,7 单全派 codebuddy hy3 免费模型**;纪律 SSOT=~/.agents/skills/dispatch/SKILL.md(私有仓 bpfio/dispatch,同日三次实战升级)。opencode 两连 429 僵尸(glm/deepseek 免费档大简报开局 Rate limit exceeded 不重试空转 40min)后被用户裁定弃用,存档教训(若解禁:--pure 剥插件系统提示+3 分钟看门狗+session 按 --dir 隔离)已入 skill。
+
+### 十四·一 CI 转绿链(BI-30.2b + CI-GREEN-1,closed)
+
+**BI-30.2b 真根因(十三节断点的反转)**:非 DeepSeekAdapter——**ci.yml 无 `bun install` 步骤**,裸跑 `bun test` 进 auto-install,解析不了仅声明于子包的 workspace 嵌套依赖(smol-toml/picomatch);失败发生在 import 解析期(openai 用例 2.12ms,父进程内 import;anthropic 用例走子进程 spawn 的完整 auto-install 故过)。修复 +2 行(D3)。**第一层修复揭出第二层洋葱 3 项**(D4 修):①D5 沙箱探针 errorKind 双源漂移(CI 实报 binary-missing 不在测试硬编码白名单)→ os-sandbox.ts 导出 SANDBOX_PROBE_ERROR_KINDS 常量、测试改引用,单一事实源;②③BI-21 链4/5 根因 openpyxl 缺件(gen_drill_xlsx.py/xlsx_audit.py)→ ci.yml +pip install openpyxl,链5 纯连带。
+
+**CI 实跑验收**:重开 workflow(disabled_manually→enabled)后 run 39220601240 全绿(伪端点 openai 模式 pass 21.90ms 近期首次)→ TUI 批次推送后 run 39230194421 再绿。诊断手法沉淀:**worktree 离线复现法**(`git worktree add --detach /tmp/sim <commit>` 得无 node_modules 干净树,复现 CI 条件→定位→同树验修复→丢弃);**决定性证据源不可禁**(D1 简报继承"禁联网"约束致代理假设被 CI 日志证伪——好过程错结论,责任在主控策划)。
+
+### 十四·二 TUI 三快赢(TUI-ALIGN-1 差距分析 + TUI-ALIGN-2 实现,皆 closed)
+
+D2c 差距分析(7 维矩阵双侧 file:line):**转录投影层已同构对齐**,"简陋"集中在交互输入面,主因 top3=无转录搜索/无文件@补全/编辑器弱。三单实现(编排:A/B 文件面不相交并行;C 与 B 同碰 repl.ts 串行):
+
+| 单 | 落点 | 要点 | 测试 |
+|---|---|---|---|
+| D5 转录搜索 | mount/transcript-search.ts(新,192 行)+agent-tui(+85) | ANSI 剥离语料+正则命中+增量缓存(吸收 alt-screen-search 机制);Ctrl+F 开/Enter 下一/Ctrl+G 上一/Esc 复原,wrap-around | 新 11/0,包 531/0 |
+| D6 文件/路径/@补全 | mount/file-completion.ts(新,311 行)+candidate-menu(+75)+repl(+71) | readdir 降级+fuzzy 评分移植+Tab 裁决(唯一整稿/多候选公共前缀/无候选回退历史,不抢原交互) | 新 20/0,包 551/0 |
+| D7 编辑器强化 | repl(+217/-31)+cjk-width(+101)+mount/editor-history.ts(新)+agent-tui(+5) | Intl.Segmenter 字素光标+Emacs 键位(KillRing/UndoStack,ctrl-a/b/k/u/w/y/z)+长行横滚 layoutPromptLine+ctrl-f 转发 agent-tui.handleKey(经 searchActive getter) | 新 23/0,包 574/0 |
+
+### 十四·三 派工方法论沉淀
+
+①主控策划三问(入 skill):最便宜证据源先摸清(勿一刀切禁网)/只读 vs 改码权限与验收先定/CI-only 先 worktree 复现;②codebuddy print 模式全程缓冲终态一次性输出,运行中 0 字节是正常态,判终态看 exit 标记;③写模式 -y 可控,零实质越界;理想行为样本:D4 抓出主控简报文件路径笔误,核实后正确修复并显式申报偏差;D5 申报跨工单集成缺口(repl→handleKey 转发)折入 D7 简报收口;④并行编排看文件面相交:不相交并行、相交串行,集成缺口显式指派归属;⑤台账闭环:发起即 running(通道/模型/sessionId),完成即 closed+commit_hash+proof_link。
+
+**门禁终态:4374 pass/0 fail(231 文件,51206 expect,BI_PTY_E2E=1)+双 tsc 0(自十三节 4320/228 增 54 测试)。提交链:832da15(D3)→429562c(D4)→8267972(docs)→148ac0e(D5+D6)→edb0eeb(D7);CI 全绿 run 39220601240、39230194421。派工档案:docs/dispatch/{2026-10-19-wave,2026-10-19-tui-align2}/(简报+报告全档)。**
+
+**诚实边界**:ctrl-f 让位搜索(非 readline forward-char,前移用右箭头);D7 申报的"越界"为其自身简报留档(untracked docs),无害保留;TUI 剩余"部分"差距(支柱二子命令面 bi vis/config、渲染布局树)未动;BI-30 里程碑卡仍 planned。
