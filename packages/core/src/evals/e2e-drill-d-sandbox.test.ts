@@ -20,7 +20,7 @@ import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRule } from "../guard/types";
 import { ToolTimeoutPolicy, ToolTimeoutError } from "../guard/timeout-policy";
 import { deadlineFrom } from "../guard/deadline";
-import { OsSandbox } from "../sandbox/os-sandbox";
+import { OsSandbox, SANDBOX_PROBE_ERROR_KINDS } from "../sandbox/os-sandbox";
 
 describe("BI-21 域 D —— 沙箱与权限", () => {
 	test("D1 shell-scan:危险/不透明/安全三分类与预算 fail-closed", () => {
@@ -176,11 +176,12 @@ describe("BI-21 域 D —— 沙箱与权限", () => {
 			const b = byId.get(id)!;
 			expect(typeof b.available).toBe("boolean");
 			expect(b.detail.length).toBeGreaterThan(0);
-			if (!b.available) {
-				if (b.errorKind !== undefined) {
-					expect(["kernel-unsupported", "ffi-unavailable", "binary-not-found", "bwrap-not-functional", "wrong-platform"]).toContain(b.errorKind);
-				}
+		if (!b.available) {
+			if (b.errorKind !== undefined) {
+				// 单一事实源:探针导出的 errorKind 全集(杜绝双源漂移)
+				expect(SANDBOX_PROBE_ERROR_KINDS).toContain(b.errorKind);
 			}
+		}
 		}
 		if (probe.available) {
 			if (probe.preferred !== null) {

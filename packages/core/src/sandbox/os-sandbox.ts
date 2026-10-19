@@ -55,6 +55,21 @@ export type SandboxProbeErrorKind =
   | "workspace-root-missing"
   | "probe-failed";
 
+/**
+ * 探针真实可产出的 errorKind 全集(唯一事实源)。
+ * 测试断言(如 D5 结构化探针白名单)必须引用此常量,杜绝"探针改串 / 测试硬编码
+ * 同一语义不同字面量"的双源漂移——新增 errorKind 时只在此处改一处。
+ * 注:`probe-failed` 仅在类型层声明,当前探针实现不产出,故未列入。
+ */
+export const SANDBOX_PROBE_ERROR_KINDS: readonly SandboxProbeErrorKind[] = [
+  "wrong-platform",
+  "binary-missing",
+  "kernel-unsupported",
+  "userns-unsupported",
+  "ffi-unavailable",
+  "workspace-root-missing",
+];
+
 export interface BackendProbe {
   backend: SandboxBackendId;
   available: boolean;

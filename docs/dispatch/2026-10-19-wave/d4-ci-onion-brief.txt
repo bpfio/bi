@@ -1,0 +1,23 @@
+工单 D4 / CI-GREEN-1:修 CI 第二层 3 项环境假设缺陷(改码单;主控已定位文件与失败签名,勿重复诊断 CI)。
+
+背景:CI run 39218065386(已补 bun install --frozen-lockfile 步骤)新暴露 3 项 fail;本机全绿因环境更肥而掩盖。第一层(依赖解析)已修毕闭案,证据 docs/dispatch/2026-10-19-wave/d1-t2b-diag-report.md。
+
+失败 1:D5 os-sandbox 探针 errorKind 字面量漂移。
+- 签名:测试断言 errorKind ∈ ["kernel-unsupported","ffi-unavailable","binary-not-found","bwrap-not-functional","wrong-platform"],CI 实报 "binary-missing" 不在列(packages/core/src/sandbox/os-sandbox.test.ts:181 附近)。
+- 任务:读 packages/core/src/sandbox/os-sandbox.ts 探针源,列其真实可能产出的 errorKind 全集;以探针源码为唯一事实源统一字面量——若测试白名单缺探针实际值→补齐白名单;若探针/测试各自硬编码同一语义不同串→收敛为单一来源(优先测试引用探针导出的常量,杜绝双源再漂移)。选最小改动。
+
+失败 2/3:BI-21 链4 财报勾稽 xlsx_audit.py 三表 errors!==0;链5 研报生成随之连带(packages/core/src/evals/e2e-drill.test.ts)。
+- 已知环境差:CI 有 python 3.14 但无任何 pip 安装步骤;本机 python 环境肥。
+- 任务:先诊断 xlsx_audit.py 的 import 依赖与本机/CI 环境差集(读脚本 + 测试 setup 代码),按判据处置:脚本缺第三方依赖→在 .github/workflows/ci.yml 增最小 pip 安装步骤(python -m pip install <精确包名>,放在 setup-python 之后);测试对环境假设过强(如依赖本机字体/字体缓存/特定路径)→按 BI_PTY_E2E 风格加环境门控;脚本真缺陷→修脚本。链5 若纯为链4 连带,修好链4 后复跑判定;若另有独立环境假设,同法处置。
+
+边界(硬约束):
+- 允许改:packages/core/src/sandbox/os-sandbox.ts、os-sandbox.test.ts、packages/core/src/evals/e2e-drill.test.ts、xlsx_audit.py 本体及其测试 setup、.github/workflows/ci.yml;
+- 禁止:packages/tui/**、bin/bi.ts、bun.lock、package.json(python 依赖走 CI pip 步骤,不进 node 依赖)、以及上述清单外任何文件;
+- 禁止 git commit / git push,改完留工作树主控验收;不得联网。
+
+验证(必须执行,最终回复附输出):
+1) 本机:BI_PTY_E2E=1 bun test packages/core/src/sandbox/os-sandbox.test.ts packages/core/src/evals/e2e-drill.test.ts 全绿;
+2) 模拟 CI(无肥环境):git -C /home/yupeng/bi worktree add --detach /tmp/d4-verify HEAD && cd /tmp/d4-verify && bun install --frozen-lockfile && BI_PTY_E2E=1 bun test packages/core/src/sandbox/os-sandbox.test.ts packages/core/src/evals/e2e-drill.test.ts,期望全绿(python 依赖项若走 ci.yml pip 步骤,worktree 内可用 python3 -m pip install --user <包> 等价模拟并说明);完事 git -C /home/yupeng/bi worktree remove --force /tmp/d4-verify;
+3) git -C /home/yupeng/bi diff --stat 确认改动文件全部在允许清单内。
+
+交付(最终回复格式):每项失败=根因一句话+处置一句话+diff 摘要;末尾附两套件验证 pass/fail 计数。
