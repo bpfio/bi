@@ -113,9 +113,10 @@ export function startFakeEndpoint(options: FakeEndpointOptions = {}): FakeEndpoi
 		},
 	});
 
+	const boundPort = server.port ?? 0;
 	return {
-		url: `http://127.0.0.1:${server.port}`,
-		port: server.port,
+		url: `http://127.0.0.1:${boundPort}`,
+		port: boundPort,
 		requests,
 		close: () => server.stop(true),
 	};

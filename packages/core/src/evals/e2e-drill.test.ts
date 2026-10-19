@@ -15,7 +15,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { fetchWebPage } from "../tools/web-fetch";
 import { runDoctor, DOCTOR_CHECK_NAMES } from "../doctor";
@@ -423,53 +423,70 @@ describe("BI-21 终局演练:宏观政策与数据审计全流程", () => {
 		expect(bad.issues).toHaveLength(1);
 		expect(bad.issues[0]!.type).toBe("overlap");
 
-		// —— runDoctor(注入端口,零真实 IO):四项全绿为交付前置 ——
-		const now = Date.now();
+		// —— runDoctor(bi 自有面,注入探针,零真实 IO):五项全绿为交付前置(BI-29.1) ——
+		const doctorBiHome = join(await mkdtemp(join(tmpdir(), "bi-drill-doctor-")), ".bi");
+		mkdirSync(doctorBiHome, { recursive: true });
+		writeFileSync(
+			join(doctorBiHome, "config.toml"),
+			[
+				"[providers.entries.fake]",
+				'api_key_env = "BI_DRILL_KEY"',
+				'base_url = "https://mimo.example.internal/v1"',
+				'kind = "openai"',
+				'models = ["fake-mini"]',
+				"",
+				"[providers]",
+				'default = "fake"',
+				"",
+				"[models]",
+				'default = "main"',
+				"",
+				"[models.entries.main]",
+				'provider = "fake"',
+				'model = "fake-mini"',
+				"",
+			].join("\n"),
+			{ mode: 0o600 },
+		);
+		const doctorBase = {
+			env: { BI_DRILL_KEY: "k-drill" },
+			homeDir: dirname(doctorBiHome),
+			timeoutMs: 200,
+		};
 		const healthy = await runDoctor({
 			ports: {
-				endpointUrl: "https://open.example.com",
-				timeoutMs: 200,
-				configDir: tmpdir(),
-				now: () => now,
-				probeNetwork: () =>
-					Promise.resolve({ reachable: true, detail: "TCP 443 可达(注入)" }),
-				readCredentials: () =>
-					Promise.resolve({ provider: "zhipu", expiresAtMs: now + 3_600_000 }),
-				exec: (cmd) =>
-					Promise.resolve(
-						cmd.includes("--version")
-							? { code: 0, stdout: "Python 3.14.4", stderr: "" }
-							: { code: 0, stdout: "", stderr: "" },
-					),
-				configDirWritable: () =>
-					Promise.resolve({ ok: true, detail: "配置目录可写(注入)" }),
+				...doctorBase,
+				probeNetwork: () => Promise.resolve({ reachable: true, detail: "DNS/TCP 可达(注入)" }),
+				probeSandbox: () => ({ available: true, detail: "沙箱后端可用: landlock(注入)" }),
+				probeToolset: () => ({ ok: true, detail: "6 个工具注册(注入)" }),
 			},
 		});
 		expect(healthy.allOk).toBe(true);
-		expect(healthy.checks).toHaveLength(4);
+		expect(healthy.checks).toHaveLength(5);
 		expect(healthy.checks.map((c) => c.name)).toEqual([
-			DOCTOR_CHECK_NAMES.network,
+			DOCTOR_CHECK_NAMES.config,
 			DOCTOR_CHECK_NAMES.credentials,
-			DOCTOR_CHECK_NAMES.python,
-			DOCTOR_CHECK_NAMES.workspace,
+			DOCTOR_CHECK_NAMES.network,
+			DOCTOR_CHECK_NAMES.sandbox,
+			DOCTOR_CHECK_NAMES.tools,
 		]);
+		// 网络探测端点 = 所配 provider base_url(去母体化:不再探测 open.bigmodel.cn)
+		expect(healthy.checks[2]!.detail).toBe("DNS/TCP 可达(注入)");
 
-		// 反向:网络探测端口不通 → allOk=false 且带修复建议(体检门拦下带病交付)
+		// 反向:凭据门未过 → 网络级联 fail;体检门拦下带病交付
 		const degraded = await runDoctor({
 			ports: {
-				endpointUrl: "https://open.example.com",
-				timeoutMs: 200,
-				configDir: tmpdir(),
-				now: () => now,
-				probeNetwork: () =>
-					Promise.resolve({ reachable: false, detail: "TCP 443 不可达(注入)" }),
-				readCredentials: () => Promise.resolve(null),
-				exec: () => Promise.resolve({ code: 0, stdout: "Python 3.14.4", stderr: "" }),
-				configDirWritable: () => Promise.resolve({ ok: true, detail: "可写(注入)" }),
+				...doctorBase,
+				env: {},
+				probeNetwork: () => Promise.resolve({ reachable: false, detail: "DNS/TCP 不可达(注入)" }),
+				probeSandbox: () => ({ available: true, detail: "ok(注入)" }),
+				probeToolset: () => ({ ok: true, detail: "ok(注入)" }),
 			},
 		});
 		expect(degraded.allOk).toBe(false);
+		const cred = degraded.checks.find((c) => c.name === DOCTOR_CHECK_NAMES.credentials);
 		const net = degraded.checks.find((c) => c.name === DOCTOR_CHECK_NAMES.network);
+		expect(cred?.ok).toBe(false);
 		expect(net?.ok).toBe(false);
 		expect(typeof net?.fix).toBe("string");
 	}, 30_000);

@@ -6,7 +6,7 @@
  *   1 = 运行期失败（目标缺失 / IO / doctor 有异常发现项）；
  *   2 = 用法错误（未知参数、缺位置参数、非法值）；
  *   3 = 装配凭据类（归 main 无头路径专用，本层不用）；
- *   4 = 已识别但能力不在位（upgrade 锚点引擎脚本缺失等"器官不在库"场景）。
+ *   4 = 已识别但能力不在位（upgrade 无 manifest 源等"能力未配置"场景）。
  * 未知子命令仍 exit 2。
  *
  * 命令落位（器官在库即用，缺器官做结构化 v1，绝不假冒成功）：
@@ -25,10 +25,11 @@
  *              session/update 通知流式回执，单会话单飞忙拒绝 -32004）+
  *              session/end（优雅收束）。工具调用更新帧/取消语义/多会话并行
  *              归后续卡（诚实边界见 acp-session.ts 头注）。
- *   upgrade  = 新建 v1：BI-00 锚点循环门语义——探测
- *              /home/yupeng/bi-ledger-ops/upstream_sync.py 存在性并执行 check
- *              子命令（--no-net 透传）。真实子进程仅生产路径；测试一律注入
- *              probe/check 替身。脚本缺失 → 结构化 exit 4，不执行 check。
+ *   upgrade  = BI-29.2 自升级真链（cli/update/upgrade-subcommand.ts 编排 BI-20.7
+ *              器官：manifest 下载 → sha256 门 → native-swap 原子换装）。
+ *              manifest 源解析：--manifest-url > BI_UPGRADE_MANIFEST_URL > 无源
+ *              结构化 exit 4（不假冒检查成功）；--check 只比对不换装。
+ *              母体替身（python3 upstream_sync.py 锚点循环门）退役。
  *   doctor   = src/doctor.ts runDoctor 器官（检查项/端口注入，退出码按发现项：
  *              allOk → 0，存在异常 → 1）。
  *
@@ -36,10 +37,8 @@
  * acp 模型端口工厂（buildModelPort，生产路径由 main/bin 传入）/
  * upgrade 替身 / doctor 检查项替身。测试零外呼：全部用例走注入，零网络。
  */
-import { execFile } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
 import { resolveConfigPaths } from "../../config/paths";
 import { SessionManager } from "../../session/manager";
 import { TransferError } from "../../session/transfer";
@@ -56,6 +55,10 @@ import { ExportError, exportSession, type ExportOptions } from "./export";
 import { ForkError, forkSession } from "./fork";
 import { listSessions } from "./session";
 import { transferCommand } from "./transfer";
+import {
+  runUpgradeSubcommand,
+  type UpgradeSubcommandOptions,
+} from "../update/upgrade-subcommand";
 
 /** 已接线的子命令全集（main 用法文本与子命令定位共用）。 */
 export const SUBCOMMANDS: readonly string[] = [
@@ -69,9 +72,6 @@ export const SUBCOMMANDS: readonly string[] = [
   "doctor",
 ];
 
-/** BI-00 锚点引擎（仓库外执行体；RULE-BI-08 升级追踪铁律的循环门载体）。 */
-export const DEFAULT_UPGRADE_SCRIPT = "/home/yupeng/bi-ledger-ops/upstream_sync.py";
-
 /** 子命令输出汇（与 main 的 out/err 同形）。 */
 export interface SubcommandIo {
   out: (line: string) => void;
@@ -83,14 +83,7 @@ export interface AcpOutputChannel {
   write(chunk: Uint8Array): void | Promise<void>;
 }
 
-/** upgrade check 步结果（注入替身与真实子进程共用形状）。 */
-export interface UpgradeCheckResult {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
-
-/** 子命令注入面：临时根目录 / IO / upgrade 检查替身 / doctor 检查项替身。 */
+/** 子命令注入面：临时根目录 / IO / upgrade 真链注入 / doctor 检查项替身。 */
 export interface SubcommandDeps {
   /** 工作目录（init 脚手架定位等；缺省 process.cwd()）。 */
   cwd?: string;
@@ -108,15 +101,8 @@ export interface SubcommandDeps {
    * 脚本化替身。未注入时 session/prompt 结构化 -32005 拒绝执行（不假冒）。
    */
   buildModelPort?: () => ModelPort | Promise<ModelPort>;
-  /** 锚点引擎脚本路径（缺省 DEFAULT_UPGRADE_SCRIPT）。 */
-  upgradeScriptPath?: string;
-  /** 注入：脚本存在性探测替身（缺省 fs.access 真实探测）。 */
-  upgradeProbe?: (scriptPath: string) => boolean | Promise<boolean>;
-  /** 注入：check 步替身（缺省 python3 真实子进程；测试一律注入，零外呼）。 */
-  upgradeCheck?: (input: {
-    scriptPath: string;
-    args: readonly string[];
-  }) => Promise<UpgradeCheckResult>;
+  /** upgrade 注入面（BI-29.2:manifest 源 + 全步替身 checkFn/downloadFn/swapFn/lockFn;测试零外呼）。 */
+  upgradeDeps?: UpgradeSubcommandOptions;
   /** doctor 注入：全量检查项替身（优先于 ports；缺省走真实探测端口）。 */
   doctorChecks?: readonly DoctorCheck[];
   /** doctor 注入：部分端口覆盖（未注入 checks 时生效）。 */
@@ -444,70 +430,28 @@ async function handleAcp(rest: readonly string[], io: SubcommandIo, deps: Subcom
 }
 
 // ---------------------------------------------------------------------------
-// upgrade —— BI-00 锚点循环门（新建 v1；真实子进程仅生产路径）
+// upgrade —— 自升级真链（BI-29.2;BI-20.7 器官上妆,母体锚点替身退役）
 // ---------------------------------------------------------------------------
 
-const execFileP = promisify(execFile);
-
-/** 缺省脚本存在性探测：fs.access。 */
-async function probeScriptPresent(scriptPath: string): Promise<boolean> {
-  try {
-    await access(scriptPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 缺省 check 步：python3 真实子进程执行 upstream_sync.py check（仅生产路径）。 */
-async function realUpgradeCheck(scriptPath: string, args: readonly string[]): Promise<UpgradeCheckResult> {
-  try {
-    const r = await execFileP("python3", [scriptPath, ...args], {
-      encoding: "utf8",
-      timeout: 120_000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    return { code: 0, stdout: r.stdout, stderr: r.stderr };
-  } catch (error) {
-    const e = error as { code?: number | string; stdout?: string; stderr?: string; message?: string };
-    return {
-      code: typeof e.code === "number" ? e.code : 1,
-      stdout: e.stdout ?? "",
-      stderr: e.stderr ?? e.message ?? String(error),
-    };
-  }
-}
-
-/** `bi upgrade [--no-net]`：探测锚点引擎存在性 → 执行 check；脚本缺失 → exit 4。 */
+/** `bi upgrade [--check] [--manifest-url <url>]`:manifest 源解析 → 真实升级链。 */
 async function handleUpgrade(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
-  const args = parseSubArgs(rest, new Set<string>(), new Set<string>(["--no-net"]));
+  const args = parseSubArgs(rest, new Set<string>(["--manifest-url"]), new Set<string>(["--check"]));
   if (args.positionals.length > 0) {
     throw new SubUsageError(`upgrade 不接受位置参数: ${args.positionals.join(" ")}`);
   }
-  const scriptPath = deps.upgradeScriptPath ?? DEFAULT_UPGRADE_SCRIPT;
-  const present =
-    deps.upgradeProbe !== undefined ? await deps.upgradeProbe(scriptPath) : await probeScriptPresent(scriptPath);
-  if (!present) {
-    io.err(`bi upgrade: 锚点引擎不在位（${scriptPath}）——BI-00 锚点循环门未装配，本次退出。`);
-    return 4;
-  }
-  const checkArgs = args.flags.has("--no-net") ? ["check", "--no-net"] : ["check"];
-  const result =
-    deps.upgradeCheck !== undefined
-      ? await deps.upgradeCheck({ scriptPath, args: checkArgs })
-      : await realUpgradeCheck(scriptPath, checkArgs);
-  if (result.stdout.trim().length > 0) {
-    io.out(result.stdout.replace(/\n$/, ""));
-  }
-  if (result.code === 0) {
-    io.err(`bi upgrade: check 完成（${scriptPath}）`);
-    return 0;
-  }
-  if (result.stderr.trim().length > 0) {
-    io.err(result.stderr.replace(/\n$/, ""));
-  }
-  io.err(`bi upgrade: check 失败（exit ${result.code}）`);
-  return 1;
+  const flagUrl = args.flags.get("--manifest-url");
+  const manifestUrl =
+    typeof flagUrl === "string"
+      ? flagUrl
+      : (deps.upgradeDeps?.manifestUrl ?? process.env.BI_UPGRADE_MANIFEST_URL ?? "");
+  return runUpgradeSubcommand(
+    {
+      ...(deps.upgradeDeps !== undefined ? deps.upgradeDeps : {}),
+      checkOnly: args.flags.has("--check"),
+      manifestUrl,
+    },
+    io,
+  );
 }
 
 // ---------------------------------------------------------------------------

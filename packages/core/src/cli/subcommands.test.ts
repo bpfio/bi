@@ -13,6 +13,7 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBi } from "./main";
+import { UpgradeError } from "./update/upgrade-command";
 import { SessionManager } from "../session/manager";
 
 let dirs: string[] = [];
@@ -325,57 +326,155 @@ describe("BI-24.1 acp（最小握手帧，注入 IO）", () => {
 // upgrade
 // ---------------------------------------------------------------------------
 
-describe("BI-24.1 upgrade（BI-00 锚点循环门，注入替身零外呼）", () => {
-  test("happy：probe 在位 + check 替身 code 0 → 透传 stdout；--no-net 透传给 check", async () => {
-    const seen: Array<{ scriptPath: string; args: readonly string[] }> = [];
-    const { io, outs } = collect();
-    const code = await runBi(["upgrade", "--no-net"], {
+describe("BI-29.2 upgrade（自升级真链:manifest → sha256 → native-swap,注入替身零外呼）", () => {
+  test("happy:注入 checkFn 新版本 + download/swap 替身 → exit 0 报告升级区间", async () => {
+    const seenUrls: string[] = [];
+    const { io, outs, errs } = collect();
+    const code = await runBi(["upgrade", "--manifest-url", "https://dl.example.internal/bi/manifest.json"], {
       ...io,
       deps: {
-        upgradeProbe: () => true,
-        upgradeCheck: async (input) => {
-          seen.push(input);
-          return { code: 0, stdout: "check ok: 6 trees", stderr: "" };
+        upgradeDeps: {
+          currentVersion: "0.2.0",
+          stagingDir: "/tmp/bi-upgrade-test",
+          checkFn: async (url) => {
+            seenUrls.push(url);
+            return { version: "0.3.0", url: "https://dl.example.internal/bi/bi-0.3.0.bin", sha256: "a".repeat(64) };
+          },
+          downloadFn: async () => ({ stagedPath: "/tmp/bi-upgrade-test/staged.bin", bytes: 2048, sha256: "a".repeat(64) }),
+          swapFn: async () => {},
+          lockFn: async () => ({ path: "/tmp/bi-upgrade-test/bi-upgrade.lock", release: () => {} }),
         },
       },
     });
     expect(code).toBe(0);
-    expect(outs.join("\n")).toContain("check ok: 6 trees");
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.args).toEqual(["check", "--no-net"]);
-    expect(seen[0]!.scriptPath).toContain("upstream_sync.py");
+    expect(seenUrls).toEqual(["https://dl.example.internal/bi/manifest.json"]);
+    expect(outs.join("\n")).toContain("0.2.0 → 0.3.0");
+    expect(outs.join("\n")).toContain("重启 bi 生效");
+    expect(errs).toHaveLength(0);
   });
 
-  test("边界：锚点引擎脚本缺失 → 结构化 exit 4，check 不执行", async () => {
-    let checkRan = false;
+  test("--check:只拉 manifest 即止,不下载不替换", async () => {
+    let downloaded = false;
+    const { io, outs } = collect();
+    const code = await runBi(["upgrade", "--check", "--manifest-url=https://dl.example.internal/m.json"], {
+      ...io,
+      deps: {
+        upgradeDeps: {
+          currentVersion: "0.2.0",
+          checkFn: async () => ({ version: "9.9.9", url: "https://dl.example.internal/bin", sha256: "b".repeat(64) }),
+          downloadFn: async () => {
+            downloaded = true;
+            throw new Error("不应下载");
+          },
+        },
+      },
+    });
+    expect(code).toBe(0);
+    expect(downloaded).toBe(false);
+    expect(outs.join("\n")).toContain("9.9.9");
+    expect(outs.join("\n")).toContain("去掉 --check");
+  });
+
+  test("manifest 版本不高于当前 → up-to-date exit 0", async () => {
+    const { io, outs } = collect();
+    const code = await runBi(["upgrade", "--manifest-url", "https://dl.example.internal/m.json"], {
+      ...io,
+      deps: {
+        upgradeDeps: {
+          currentVersion: "1.0.0",
+          checkFn: async () => ({ version: "1.0.0", url: "https://dl.example.internal/bin", sha256: "c".repeat(64) }),
+        },
+      },
+    });
+    expect(code).toBe(0);
+    expect(outs.join("\n")).toContain("已是最新");
+  });
+
+  test("无 manifest 源(无旗标/无环境变量) → 结构化 exit 4,不执行任何下载", async () => {
+    let checked = false;
     const { io, errs } = collect();
     const code = await runBi(["upgrade"], {
       ...io,
       deps: {
-        upgradeProbe: () => false,
-        upgradeCheck: async () => {
-          checkRan = true;
-          return { code: 0, stdout: "", stderr: "" };
+        upgradeDeps: {
+          checkFn: async () => {
+            checked = true;
+            throw new Error("不应拉取");
+          },
         },
       },
     });
     expect(code).toBe(4);
-    expect(checkRan).toBe(false);
-    expect(errs.join("\n")).toContain("锚点引擎不在位");
+    expect(checked).toBe(false);
+    expect(errs.join("\n")).toContain("未配置 manifest 源");
+    expect(errs.join("\n")).toContain("BI_UPGRADE_MANIFEST_URL");
   });
 
-  test("边界：check 非零退出 → exit 1 结构化透传 stderr", async () => {
-    const { io, errs, outs } = collect();
-    const code = await runBi(["upgrade"], {
+  test("他人持锁 → exit 1 结构化上报,不阻塞", async () => {
+    const { io, errs } = collect();
+    const code = await runBi(["upgrade", "--manifest-url", "https://dl.example.internal/m.json"], {
       ...io,
       deps: {
-        upgradeProbe: () => true,
-        upgradeCheck: async () => ({ code: 2, stdout: "", stderr: "upstream-moved: zcode" }),
+        upgradeDeps: {
+          currentVersion: "0.2.0",
+          stagingDir: "/tmp/bi-upgrade-test",
+          checkFn: async () => ({ version: "0.3.0", url: "https://dl.example.internal/bin", sha256: "d".repeat(64) }),
+          lockFn: async () => null,
+        },
       },
     });
     expect(code).toBe(1);
-    expect(outs).toHaveLength(0);
-    expect(errs.join("\n")).toContain("upstream-moved");
+    expect(errs.join("\n")).toContain("持锁");
+  });
+
+  test("sha256 门失败(UpgradeError) → exit 1 结构化 code 透传", async () => {
+    const { io, errs } = collect();
+    const code = await runBi(["upgrade", "--manifest-url", "https://dl.example.internal/m.json"], {
+      ...io,
+      deps: {
+        upgradeDeps: {
+          currentVersion: "0.2.0",
+          stagingDir: "/tmp/bi-upgrade-test",
+          checkFn: async () => ({ version: "0.3.0", url: "https://dl.example.internal/bin", sha256: "e".repeat(64) }),
+          lockFn: async () => ({ path: "/tmp/bi-upgrade-test/bi-upgrade.lock", release: () => {} }),
+          downloadFn: async () => {
+            throw new UpgradeError("hash-mismatch", "sha256 校验失败: expect e… got f…");
+          },
+        },
+      },
+    });
+    expect(code).toBe(1);
+    expect(errs.join("\n")).toContain("hash-mismatch");
+    expect(errs.join("\n")).toContain("code=hash-mismatch");
+  });
+
+  test("BI_UPGRADE_MANIFEST_URL 环境变量作为缺省源(注入 env 后无旗标可用)", async () => {
+    const seenUrls: string[] = [];
+    const { io, outs } = collect();
+    // env 由 deps.upgradeDeps.manifestUrl 承载生产语义的注入位;这里直注 manifestUrl 等价环境变量解析结果
+    const code = await runBi(["upgrade"], {
+      ...io,
+      deps: {
+        upgradeDeps: {
+          manifestUrl: "https://dl.example.internal/from-env.json",
+          currentVersion: "0.2.0",
+          stagingDir: "/tmp/bi-upgrade-test",
+          checkFn: async (url) => {
+            seenUrls.push(url);
+            return { version: "0.2.0", url: "https://dl.example.internal/bin", sha256: "f".repeat(64) };
+          },
+        },
+      },
+    });
+    expect(code).toBe(0);
+    expect(seenUrls).toEqual(["https://dl.example.internal/from-env.json"]);
+    expect(outs.join("\n")).toContain("已是最新");
+  });
+
+  test("边界:位置参数与未知旗标 → exit 2", async () => {
+    const { io, errs } = collect();
+    expect(await runBi(["upgrade", "now"], { ...io, deps: {} })).toBe(2);
+    expect(errs.join("\n")).toContain("upgrade");
   });
 });
 
