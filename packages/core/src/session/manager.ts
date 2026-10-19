@@ -334,8 +334,14 @@ export class SessionManager {
     try {
       const size = (await fh.stat()).size;
       if (size > cleanLength) {
-        // 崩溃残留区：物理截断到干净边界后再追加。
-        await fh.truncate(cleanLength);
+        // 超出旧净边界≠必为崩溃残留——并发写者可能刚追加了完整合法条目。
+        // 重解析全文件:成功则以新净边界为准(保留并发数据,只截真正撕裂的尾巴);
+        // 解析失败(meta 损坏)才回退旧口径截到旧边界。
+        const reparsed = parseSessionFileContent(await readFile(this.#pathOf(sessionId)));
+        const safeCut = reparsed.ok ? reparsed.cleanLength : cleanLength;
+        if (size > safeCut) {
+          await fh.truncate(safeCut);
+        }
       }
       await fh.writeFile(Buffer.from(line + "\n", "utf8"));
       await fh.sync();

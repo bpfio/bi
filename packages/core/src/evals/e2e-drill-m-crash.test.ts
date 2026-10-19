@@ -179,6 +179,26 @@ describe("BI-26.3 链路 3:并发会话", () => {
 		await managerA.append(meta.sessionId, entries.at(-1)!.id, { type: "assistant", payload: { text: "续" } });
 		expect(await managerA.entries(meta.sessionId)).toHaveLength(3);
 	});
+
+	test("同会话并发追加·风暴 20 轮:任意交错下两条都不得丢失(appendLine 截断回归)", async () => {
+		// 回归:双 manager 竞写时,#appendLine 的崩溃残留截断曾把并发写者刚落盘的
+		// 完整条目当残留截掉(单条丢失)。修复后截断前重解析,只截真撕裂尾巴。
+		for (let round = 0; round < 20; round++) {
+			const root = tmpRoot(`bi-drill-m-race-storm-${round}-`);
+			const managerA = new SessionManager({ rootDir: root });
+			const managerB = new SessionManager({ rootDir: root });
+			const meta = await managerA.createSession({ title: `风暴${round}` });
+			await Promise.all([
+				managerA.append(meta.sessionId, null, { type: "user", payload: { text: "X" } }),
+				managerB.append(meta.sessionId, null, { type: "user", payload: { text: "Y" } }),
+			]);
+			const texts = (await managerA.entries(meta.sessionId)).map(
+				(e) => (e.payload as { text: string }).text,
+			);
+			expect(texts).toContain("X");
+			expect(texts).toContain("Y");
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
