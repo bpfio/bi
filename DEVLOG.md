@@ -356,3 +356,18 @@ npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @b
 **并发风险留痕**:A 为自证 4 条失败属环境既有(os-sandbox landlock/bwrap、e2e-drill xlsx 链),在共享树做过 stash→纯净 HEAD 复跑→pop,窗口期与 B 写 args.ts 相撞,pop 中止后 A 依 /tmp/bi30-backup/ 备份恢复并集(A/B 双报告互证);主控全门禁复验安排在 C 完场后,含泄漏扫描。
 
 **台账通道**:SSH task_query 四连超时(NAS 雪崩,历史自愈),BI-30 卡面字段未取到前不做破坏性 upsert(TOOL-2);devlog_record 待通道恢复即补。
+
+### 十三·终态(BI-30 dogfood 关账,2026-10-19)
+
+三实例+主控脚手架全部落盘,origin 推送至 94cc84b。**BI-30.1/30.3/30.2a 完成,BI-30.2b 断点留档**。
+
+| 卡 | 终态 | 证据 |
+|---|---|---|
+| BI-30.1 斜杠命令执行面 | **closed** | agent-tui `{prompt}` 契约(string=本地 system 行不变;{prompt}=入模型回合)+bin 完整注册表+expandCommand 接线;tui 520/0;hy3 评审契约逐条符合 |
+| BI-30.3 --output-format | **closed** | 白名单 ["stream-json","text"];headless emit 形态门控(text 只落 finalText);main 接线;args+headless 31/0 |
+| BI-30.2a bwrap/buildBin 门控 | **closed** | `Bun.which("bwrap")`+`Bun.resolveSync` 能力探测,test.skipIf/describe.skipIf 门控;四场景矩阵(本机全绿 50/0;模拟缺失→结构化 skip 不误报);**buildBin 根因=ci.yml 无 bun install → bundler 解析缺 smol-toml/picomatch**(测试门控绕开,CI 已关故不再追) |
+| BI-30.2b 伪端点 openai e2e | **断点** | C2 三轮被超时/关账截停,零编辑;诊断线索:失败路径疑似 DeepSeekAdapter(openai kind 适配器选择链);简报/日志全量入仓 docs/dogfood/2026-10-19-BI-30/ |
+
+**门禁终态:4320 pass/0 fail(228 文件,BI_PTY_E2E=1),双 tsc 0。提交链:d833f1f(docs)→c5b28dd/a028072/04c7671(语料)→94cc84b(代码,10 文件 +502/-48)。**
+
+**dogfood 方法论沉淀**:①bi 本体修 bi 可行且高效——三工单实改 502 行,主控只出简报+验收;②无头回合上限须可调(--max-rounds),真实工单 8 回合必撞墙;③并发实例共树,互踩 stash 是真实风险(A 曾为自证 stash→pop 撞上 B 写 args.ts,靠备份恢复并集);④codebuddy 免费模型(hy3/step-5-preview)接评审/分析类子任务,--allowedTools/--disallowedTools 静默失效 bug 只用 --tools;⑤台账通道故障时,结论+简报+转录+日志全量先落仓(docs/dogfood/),台账恢复后补记。
