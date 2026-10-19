@@ -433,3 +433,7 @@ D2c 差距分析(7 维矩阵双侧 file:line):**转录投影层已同构对齐**
 **门禁终态:4437 pass/0 fail(234 文件,BI_PTY_E2E=1)+双 tsc 0。提交链:32c2ff6(C1)→898cbe1(C2)→1b292a1(deflake)→6e63f94(C3);CI 全绿 run 39244807093(1b292a1)。派工档案:docs/dispatch/2026-10-19-subcmd2/(简报×3+报告×3)。**
 
 **诚实边界**:vis 生产接线 attachSignals:false(默认 SIGINT 终止而非优雅停服,本地只读服务无状态,外观级备案);转录区点击 v1 仅忽略(无选区/跳转);Esc 拒绝审批保留硬编码兜底未入注册表;多行草稿按摊平行换算,不做视觉行↔逻辑行映射;kimi vis 的 8 tab 全家桶明确不做(v1 封顶)。
+
+### 十六·附 终验补遗 (2026-10-19,用户口令"实质性验收后落盘")
+
+C1/C2/C3 已按验收四步闭卡;本轮补最后一层实质验收:**真浏览器渲染测试不可执行**——宿主机无 Chrome/Chromium(browser-use 运行时报 "No installed Chrome or Chromium executable"),bi vis 的 DOM 渲染面验收止步于 HTTP+结构断言级,如实备案为环境边界。可做的补位检验已做:内联 JS 经 bun build 解析与 node --check 双解析器验证通过;实服页面 `src=`/`href=` 计数为 0(零外链声明在实服产物上复核)。REPL 输入面真机冒烟同样受环境限制(无 dogfood 密钥不可真启 REPL),以 pty 套件(BI_PTY_E2E=1 全绿)为证据链。**待环境具备时的两件补测**:装 Chromium 后浏览器实测 vis 渲染交互;配置凭据后真 REPL 手感(键位改绑/鼠标点击/搜索)。
