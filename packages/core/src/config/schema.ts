@@ -705,6 +705,40 @@ export const cronSchema = sObj({
 });
 export type CronSection = InferSchema<typeof cronSchema>;
 
+// ---------------------------------------------------------------------------
+// BI-05.3（W3-D7）· 上下文引擎挂载式分区
+// ---------------------------------------------------------------------------
+
+/**
+ * [context] 挂载式分区（仿 [verify]/[subagent]/[ptc]/[cron]，不进 17 根键）。
+ *
+ * 语义钉死：
+ * - 全部开关缺省关闭（false / 0），未显式声明时 `config.context === undefined`，
+ *   合并结果同样不含 context 键——缺省路径逐字节等价于现状；
+ * - 显式声明才物化，并经 backfill 补全叶子默认；
+ * - 子键未知/类型不符照常记 issue（不冒充合法）。
+ *
+ * 接入器官（最小诚实装配，W3-D7）：
+ * - time_context：注入当前时钟上下文到 system 面（time-context 器官）；
+ * - date_change_sensor：跨日翻转披露（date-change-sensor 器官）；
+ * - tool_result_prune：工具结果二级修剪，紧接 boundToolText（tool-result-pruner 器官）；
+ * - max_history_entries：历史条目上限裁剪，window-manager 视窗门禁驱动（>0 生效，0 = off）；
+ * - timezone：time_context / date_change_sensor 共用的 IANA 时区。
+ */
+export const contextSchema = sObj({
+  /** true = 向 system 面注入当前时钟上下文（时区自适应）；缺省 false = off（逐字节等价）。 */
+  time_context: sBool(false),
+  /** true = 跨日翻转披露（host 时钟过 00:00 时每自然日至多一次注入提示）；缺省 false = off。 */
+  date_change_sensor: sBool(false),
+  /** true = 工具结果二级修剪（紧接 boundToolText 之后，>8192 码点保头尾抹中段）；缺省 false = off。 */
+  tool_result_prune: sBool(false),
+  /** 历史条目上限裁剪（window-manager 视窗门禁驱动）：>0 时每轮保留最近 N 条历史；0 = off（缺省，逐字节等价）。 */
+  max_history_entries: sInt(0),
+  /** IANA 时区（time_context / date_change_sensor 共用）。缺省 Asia/Shanghai。 */
+  timezone: sStr("Asia/Shanghai"),
+});
+export type ContextSection = InferSchema<typeof contextSchema>;
+
 export const subagentSchema = sObj({
   /** true = 注入 SubagentRunner 并经装配面注册 spawn_subagent 模型工具；缺省 false = 不注册（既有工具面零变动）。 */
   enabled: sBool(false),
@@ -765,20 +799,23 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     const subagentRaw = isPlainObject(raw) ? raw["subagent"] : undefined;
     const ptcRaw = isPlainObject(raw) ? raw["ptc"] : undefined;
     const cronRaw = isPlainObject(raw) ? raw["cron"] : undefined;
+    const contextRaw = isPlainObject(raw) ? raw["context"] : undefined;
     const withoutMounted = isPlainObject(raw)
-      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron"))
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron" && key !== "context"))
       : raw;
     const sections = rootSectionsSchema.validateLayer(withoutMounted, path, issues);
     const verifyLayer = verifySchema.validateLayer(verifyRaw, joinPath(path, "verify"), issues);
     const subagentLayer = subagentSchema.validateLayer(subagentRaw, joinPath(path, "subagent"), issues);
     const ptcLayer = ptcSchema.validateLayer(ptcRaw, joinPath(path, "ptc"), issues);
     const cronLayer = cronSchema.validateLayer(cronRaw, joinPath(path, "cron"), issues);
+    const contextLayer = contextSchema.validateLayer(contextRaw, joinPath(path, "context"), issues);
     if (
       sections === undefined &&
       verifyLayer === undefined &&
       subagentLayer === undefined &&
       ptcLayer === undefined &&
-      cronLayer === undefined
+      cronLayer === undefined &&
+      contextLayer === undefined
     )
       return undefined;
     return {
@@ -787,6 +824,7 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
       ...(subagentLayer !== undefined ? { subagent: subagentLayer } : {}),
       ...(ptcLayer !== undefined ? { ptc: ptcLayer } : {}),
       ...(cronLayer !== undefined ? { cron: cronLayer } : {}),
+      ...(contextLayer !== undefined ? { context: contextLayer } : {}),
     };
   },
   () => rootSectionsSchema.defaultValue(),
@@ -804,6 +842,9 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     if (isPlainObject(value) && isPlainObject(value["cron"])) {
       cronSchema.backfill?.(value["cron"]);
     }
+    if (isPlainObject(value) && isPlainObject(value["context"])) {
+      contextSchema.backfill?.(value["context"]);
+    }
   },
 );
 
@@ -818,7 +859,7 @@ type RootBiConfig = {
  * BI_CONFIG_SCHEMA 注释）；未声明时恒 undefined，消费方 Optional chaining。
  * 可变性与其余 17 分区一致（装载/测试面按分区赋值）。
  */
-export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection };
+export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection; context?: ContextSection };
 
 /** BiConfig 的顶层分区名联合（供 TUI /config 面板导航使用）。 */
 export type BiConfigSectionName = keyof BiConfig;

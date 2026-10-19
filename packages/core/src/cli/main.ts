@@ -223,6 +223,9 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const subagentSection = loadedConfig?.subagent;
 	// BI-16.2：config [ptc] 分区；enabled 缺省 false。
 	const ptcSection = loadedConfig?.ptc;
+	// BI-05.3（W3-D7）：config [context] 挂载式分区；任一子键显式声明才物化，
+	// 缺省 config.context === undefined → 不传 → headless 全部开关恒关（逐字节等价）。
+	const contextSection = loadedConfig?.context;
 	const subagentRunner =
 		subagentSection?.enabled === true
 			? createSubagentRunner({
@@ -275,6 +278,19 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 				: {}),
 			// BI-07.4：子智能体装配（config [subagent] enabled 才注入 spawn_subagent 工具）。
 			...(subagentRunner !== undefined ? { subagentRunner } : {}),
+			// BI-05.3：上下文引擎装配（config [context] 声明才下发；各开关缺省关，
+			// 子键经映射传入 headless 装配面，未声明 = 不传 = 现状路径逐字节等价）。
+			...(contextSection !== undefined
+				? {
+						context: {
+							timeContext: contextSection.time_context === true,
+							dateChangeSensor: contextSection.date_change_sensor === true,
+							toolResultPrune: contextSection.tool_result_prune === true,
+							maxHistoryEntries: contextSection.max_history_entries > 0 ? contextSection.max_history_entries : 0,
+							timezone: contextSection.timezone,
+						},
+					}
+				: {}),
 			...(options.out !== undefined ? { out: options.out } : {}),
 		});
 		return result.exitCode;

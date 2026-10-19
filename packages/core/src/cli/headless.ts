@@ -38,6 +38,10 @@ import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRequest } from "../guard/types";
 import type { WorkspaceTrustState } from "../guard/workspace-trust";
 import { boundToolText } from "../context/bounded-tool-text";
+import { buildTimeContext, DEFAULT_TIMEZONE } from "../context/time-context";
+import { DateChangeSensor } from "../context/date-change-sensor";
+import { pruneToolResult } from "../context/tool-result-pruner";
+import { WindowManager } from "../context/window-manager";
 import { sanitizeErrorPayload } from "../observability/endpoint-sanitizer";
 import {
 	DEFAULT_SHELL_RUNNER,
@@ -150,6 +154,28 @@ export interface HeadlessOptions {
 	 * 保留注入的 options.tools）。缺省 = 不追加（既有工具面零变动）。
 	 */
 	readonly subagentRunner?: SubagentRunner;
+	/**
+	 * BI-05.3（W3-D7）上下文引擎装配面（对应 config [context] 挂载式分区）。
+	 * 缺省不提供 = 全部开关恒关（现状路径逐字节等价）。每个子开关独立缺省关，
+	 * 装配层按 config [context] 显式声明才生效——不静默开启任何行为。
+	 */
+	readonly context?: HeadlessContextOptions;
+}
+
+/** BI-05.3 上下文引擎装配选项（config [context] 子键映射；全部缺省关）。 */
+export interface HeadlessContextOptions {
+	/** time-context：注入当前时钟上下文到 system 面。缺省 false = off。 */
+	readonly timeContext?: boolean;
+	/** date-change-sensor：跨日翻转披露（每自然日至多一次）。缺省 false = off。 */
+	readonly dateChangeSensor?: boolean;
+	/** tool-result-pruner：工具结果二级修剪（紧接 boundToolText）。缺省 false = off。 */
+	readonly toolResultPrune?: boolean;
+	/** window-manager：历史条目上限裁剪（>0 生效，0 = off）。 */
+	readonly maxHistoryEntries?: number;
+	/** 共用 IANA 时区（time_context / date_change_sensor）。缺省 Asia/Shanghai。 */
+	readonly timezone?: string;
+	/** 注入时钟（测试确定性）。缺省 Date.now。 */
+	readonly now?: () => number;
 }
 
 export interface HeadlessResult {
@@ -253,6 +279,16 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	};
 	// BI-08.1：输出上限（码点）；缺省 / ≤0 = 关闭（现状路径逐字节等价）。
 	const outputLimitBytes = options.outputLimitBytes ?? 0;
+	// BI-05.3（W3-D7）：上下文引擎开关解析（全部缺省关；context 未提供 = 恒关）。
+	const ctx = options.context ?? {};
+	const ctxTime = ctx.timeContext === true;
+	const ctxDate = ctx.dateChangeSensor === true;
+	const ctxPrune = ctx.toolResultPrune === true;
+	const ctxMaxHist = ctx.maxHistoryEntries ?? 0;
+	const ctxTz = ctx.timezone ?? DEFAULT_TIMEZONE;
+	const ctxNow = ctx.now ?? Date.now;
+	// 跨日感知器（内部态持久跨轮；discloseDateChange 每轮调用推进基线）。
+	const dateSensor = ctxDate ? new DateChangeSensor({ timezone: ctxTz }) : undefined;
 	/** 会话装配错误统一抛出口：sanitizeErrors 开启时消息先过脱敏器（BI-11.1）。 */
 	const failSession = (
 		code: HeadlessError["code"],
@@ -349,6 +385,12 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			const bounded = boundToolText(text, { maxChars: outputLimitBytes });
 			if (bounded.bounded) boundedValue = bounded.text;
 		}
+		// BI-05.3（W3-D7）：tool-result-pruner 二级修剪（紧接 boundToolText 之后，
+		// 纵深防御）。仅当 ctxPrune 开启且当前值为字符串时生效；未超限（≤8192 码点）
+		// 原样返回，零变形。缺省 ctxPrune=false = 不修剪（现状逐字节等价）。
+		if (ctxPrune === true && typeof boundedValue === "string") {
+			boundedValue = pruneToolResult(boundedValue);
+		}
 
 		const post = await hookRunner.run("PostToolUse", { ...hookInput("PostToolUse", call.name, call.args), sessionId, cwd: options.cwd });
 		hookRecords.push(...post.records); // PostToolUse block 仅记录（执行已完成），不阻断
@@ -362,12 +404,63 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 
 	// ---- 装配序 ④：模型对话驱动器 ----
 	// BI-20.2b：--agent-file 内容作为系统指令前置（系统消息面；无则单条 user）。
+	// BI-05.3（W3-D7）：time-context 当前时钟块作为 system 面追加（缺省 ctxTime=false
+	// 不追加，逐字节等价）；date-change-sensor 基线在首轮 discloseDateChange 建立。
+	const systemParts: string[] = [];
+	if (options.systemInstruction !== undefined) systemParts.push(options.systemInstruction);
+	if (ctxTime) {
+		systemParts.push(buildTimeContext({ isoNow: new Date(ctxNow()).toISOString(), timezone: ctxTz }));
+	}
 	const messages: AgentMessage[] = [
-		...(options.systemInstruction !== undefined
-			? [{ role: "system" as const, content: options.systemInstruction }]
-			: []),
+		...(systemParts.length > 0 ? [{ role: "system" as const, content: systemParts.join("\n") }] : []),
 		{ role: "user", content: options.prompt },
 	];
+	/**
+	 * BI-05.3 date-change-sensor：每轮开始前检查注入时钟；跨 00:00 翻转时把披露提示
+	 * 注入 system 面（每自然日至多一次，内部态天然去重）。缺省 ctxDate=false 时
+	 * dateSensor 为 undefined，本函数立即返回（零开销零行为差；现状路径逐字节等价）。
+	 */
+	const discloseDateChange = (): void => {
+		if (dateSensor === undefined) return;
+		const { marker } = dateSensor.check(ctxNow());
+		if (marker === null) return;
+		const existing = messages.find((m) => m.role === "system");
+		if (existing !== undefined) {
+			const cur = typeof existing.content === "string" ? existing.content : "";
+			existing.content = `${cur}\n${marker.note}`;
+		} else {
+			messages.unshift({ role: "system", content: marker.note });
+		}
+	};
+	/**
+	 * BI-05.3 window-manager（重·最小一件）：历史条目上限裁剪。max_history_entries>0
+	 * 时每轮保留最近 N 条历史（头部 system 消息恒保留，避免系统指令/时钟块被裁掉）；
+	 * 0/缺省 = 不裁（现状逐字节等价）。WindowManager 实例被真实喂入每轮估算 token 数
+	 * 作遥测（snapshot 可查），但裁剪动作由条目数门禁驱动——其完整 token 水位紧缩
+	 * 需配合 AutoCompactor（本批归档，不接）。
+	 */
+	const windowManager = ctxMaxHist > 0 ? new WindowManager() : undefined;
+	const applyHistoryCap = (): void => {
+		if (windowManager === undefined) return;
+		// 估算 prompt token（字符/4）喂遥测；截断发生时记一击。
+		let estTokens = 0;
+		for (const m of messages) {
+			const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+			estTokens += Math.ceil(c.length / 4);
+		}
+		windowManager.updateUsage(estTokens, Math.max(1, ctxMaxHist * 600));
+		if (messages.length <= ctxMaxHist) return;
+		const head = messages.filter((m) => m.role === "system");
+		const tail = messages.slice(-ctxMaxHist);
+		if (tail.some((m) => m.role === "system")) {
+			messages.length = 0;
+			messages.push(...tail);
+		} else {
+			messages.length = 0;
+			messages.push(...head, ...tail);
+		}
+		windowManager.recordCompaction();
+	};
 	const maxRounds = options.maxRounds ?? 8;
 	let finalText = "";
 	let rounds = 0;
@@ -387,6 +480,9 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		// 状态机契约：beginTurn 只走 idle→thinking；工具回合落定后已在 thinking，
 		// 直接进入下一轮 executeTools（thinking→tool-executing）。
 		if (agentLoop.state === "idle") agentLoop.beginTurn();
+		// BI-05.3：每轮开始前先跑上下文面两项注入（缺省关 → 零开销零行为差）。
+		discloseDateChange(); // 跨日翻转披露
+		applyHistoryCap(); // window-manager 历史条目上限裁剪
 		let text = "";
 		const blocks: ContentBlock[] = [];
 		const assembler = new ToolCallAssembler();
