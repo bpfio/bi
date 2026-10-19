@@ -1,0 +1,15 @@
+工单 ORGAN-WIRE W3-D7(BI-05.3):context 上下文引擎最小诚实装配(本批最重单,headless 面独占)。
+
+器官现状(cwd=/home/yupeng/bi):
+- packages/core/src/context/ 16 源文件全家族,零装配;其中 bounded-tool-text 已于 W1-D3 接入(勿重做);
+- 家族清单:compactor/pruner/window-manager(长会话窗口管理三件套,重)/spill-store/tool-pairing/tool-result-pruner/tool-history-normalizer(工具史面)/time-context/date-change-sensor(时间面,轻)/cache-continuity/image-offload/media-compress/interruption-recovery/recovery-pointer(恢复面)。
+装配策略(主控定框架,你按证据细化):
+1) 先逐文件读头注与 export 面,产出家族分级表:【轻·可即接】纯函数+注入即用 vs【重·需设计】改循环结构;
+2) 装配【轻】子集(建议至少:time-context 当前时间注入 system 面与 date-change-sensor 跨日翻转,config [context] 门控缺省关)+【重】子集里挑"不改循环骨架可实现"的最小一件(如 window-manager 的条数/字节上限裁剪,config [context] maxHistoryEntries 缺省 off);
+3) 【重·不接】的(compactor/ spill-store 等)逐一一句话备案原因与建议卡,不许硬塞;
+4) 硬约束沿用:现有测试零改动、缺省路径逐字节等价、新行为 config 显式开启;[context] 仿 [verify]/[subagent] 挂载式分区(不进 DEFAULT_BI_CONFIG 17 根键);
+5) 测试:每个接入器官的 on/off 对照 + 缺省等价回归 + schema 校验。
+
+边界:packages/core/src/cli/commands/**、export/、session/、subagent-adapter.ts(刚落地的 D4 面,只读消费)、bin/bi.ts;context/ 器官本体只读消费(缺陷只报告);不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/ ./packages/tui/ 全绿(既有零改动)+ 双 tsc 0。
+最终回复(结论清单):家族分级表(轻接/重备逐一)/接入子集语义/新 config 键面/测试数+双 tsc/备案清单。

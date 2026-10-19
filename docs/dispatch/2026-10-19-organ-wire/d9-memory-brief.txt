@@ -1,0 +1,14 @@
+工单 ORGAN-WIRE W4-D9(BI-05.1):Dream 记忆沉淀装配——战役压轴单(headless 面独占)。
+
+器官现状(cwd=/home/yupeng/bi):
+- packages/core/src/memory/dream.ts——BI-05.1 Dream Cycle 仿生做梦记忆沉淀中枢:DREAM_FILE_FILENAME="BI.dream.md"、DREAM_LOCK_FILENAME=".consolidate-lock"、DEFAULT_DREAM_IDLE_MS=30min、锁陈旧阈值 1h(export 面自行 grep);
+- 注入面先例:headless.ts 的 systemInstruction(W1 前 BI-20.2b 落地,--agent-file 同管道)。
+装配目标(config [memory] 挂载式分区,仿 [verify]/[subagent],缺省全关零变化):
+1) 会话收尾沉淀:headless 会话结束(finalText 落定/正常退出)时,若 [memory] dreamEnabled=true → 调 dream 器官做沉淀(空闲阈值判定用器官既有常量;锁文件防并发);沉淀产物写 <cwd>/BI.dream.md(已存在走器官的合并语义,读器官 API 定);
+2) 会话启动注入:[memory] injectEnabled=true 时,启动读 <cwd>/BI.dream.md 存在则内容经 systemInstruction 前缀注入(与 --agent-file 共存时:agent-file 优先,dream 追加其后);
+3) 测试:沉淀触发(开/关对照)、锁文件防并发、注入存在/缺失两态、与 agent-file 共存顺序、缺省全关零变化回归;
+4) CLI 面不暴露(bi dream 手动触发归后续备案);doctor 增一项 BI.dream.md 健康面可做可不做(备案)。
+
+边界:packages/core/src/cli/commands/**、export/、session/、subagent-adapter.ts、toolset.ts;memory/ 器官本体只读消费(缺陷只报告);headless.ts/main.ts 允许最小装配改动;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/ 全绿(既有零改动)+ cd packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/沉淀与注入语义/config 键面/测试数+tsc/未尽边界。
