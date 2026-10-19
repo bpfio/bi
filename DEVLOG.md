@@ -338,3 +338,21 @@ npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @b
 **技术裁决**:acp 演练输入流必须 pull 式 ReadableStream 按真实协议顺序供帧(write 回调反压注入僵死读泵);prompt 回执只含 stopReason(文本走 session/update);fake-endpoint 双协议按 URL 路径自适应无 mode 选项;worktree 验证提交态前必须 bun install。
 
 **门禁:4310 pass/0 fail(228 文件,50953 expect,含 BI_PTY_E2E=1)+root tsc 0,origin=本提交。诚实边界**:自定义斜杠命令执行面未接线(候选可补全,提交回"执行面归后续卡"应答);B2 备案 headless permissionMode 仍可经注入面覆盖;BI-30(dogfood 用 bi 修 bi)为下一波开工卡。
+
+## 十三、BI-30 dogfood 生产标冲刺 (2026-10-19,进行中)
+
+用户口令"BI-30 dogfood 打生产标开工,另关闭 github bi 项目 ci 任务"。执行形态:**bi 本体修 bi**——bin/bi.ts 无头真模型(mimo-v2.6-flash,messages 协议)驱动,合成 HOME=/tmp/bi-dogfood(config yolo,密钥仅经 BI_MIMO_API_KEY 环境注入),三张真实工单分三实例,文件分区并发。
+
+**前置**:①GitHub CI 已关(`gh workflow disable` → disabled_manually;关停原因留档:ubuntu-latest 上 24 fail/19 errors 全为环境依赖测试——bwrap 探针套件/buildBin 真实构建 e2e/伪端点 openai 模式 e2e,5 连败 ~40s);②`bi doctor` 本机 5/5(凭据门/网络级联语义实证);③无头冒烟 finalText="就绪" 全链路通。
+
+**dogfood 发现 #1(主控即时修)**:无头回合上限恒 8 且 CLI 不可调,真实工单两轮撞墙("模型回合超过上限 8/24")→ 补 `--max-rounds` 全局旗标(args.ts 正整数校验 + main.ts CLI 优先于 deps 透传 + 6 测试用例)。
+
+| 卡 | 工单 | 实例 | 状态(实例自报,主控复验中) |
+|---|---|---|---|
+| BI-30.1 | 自定义斜杠命令执行面(agent-tui `{prompt}` 契约+bin 注册表+expandCommand 接线) | A(断点续作,前任两轮撞回合上限留树 +254 行) | 完成:tui 520/0(新增 3 用例:prompt 入回合/string 本地回归/!ok 展开失败),双 tsc 0;custom-commands 只消费未改 |
+| BI-30.3 | --output-format 真消费(白名单 +["text"],headless emit 形态门控,main 接线) | B | 完成:args 19/0、headless 12/0(新增 5)、bin e2e 2/0、core tsc 0;text 形态 out 恰为 finalText 一段 |
+| BI-30.2 | 测试可移植性门控(bwrap/buildBin/伪端点 openai e2e 三簇) | C | 后台进行中 |
+
+**并发风险留痕**:A 为自证 4 条失败属环境既有(os-sandbox landlock/bwrap、e2e-drill xlsx 链),在共享树做过 stash→纯净 HEAD 复跑→pop,窗口期与 B 写 args.ts 相撞,pop 中止后 A 依 /tmp/bi30-backup/ 备份恢复并集(A/B 双报告互证);主控全门禁复验安排在 C 完场后,含泄漏扫描。
+
+**台账通道**:SSH task_query 四连超时(NAS 雪崩,历史自愈),BI-30 卡面字段未取到前不做破坏性 upsert(TOOL-2);devlog_record 待通道恢复即补。
