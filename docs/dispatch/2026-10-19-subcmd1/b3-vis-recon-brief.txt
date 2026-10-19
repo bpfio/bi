@@ -1,0 +1,13 @@
+工单 BI-20.5a(只读侦察):bi vis 最小面拆单前的 kimi vis 结构侦察。零写入:不建文件不改码,结论全部走最终回复。
+
+侦察对象(全部只读):
+A. /home/yupeng/references/kimi-code/apps/vis/(独立 app:package.json/server/web/scripts)——是独立包还是 kimi 主包组成部分?构建栈(打包静态 web?什么框架?)、server 路由面(哪些 endpoint 送什么数据)、web 端渲染什么(DAG?时间线?diff?);
+B. /home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/vis.ts 与同目录 web/——主 CLI 怎么拉起 vis(端口/令牌轮转 rotate-token/access-urls 多网卡地址打印)、会话数据怎么喂给 web;
+C. bi 侧数据可得性(仓库 cwd=/home/yupeng/bi,只读):packages/core/src/session/{manager.ts,jsonl.ts,index.ts} 会话存储字段面——消息流/工具调用/耗时/分支树在 bi 会话文件里各有哪些、缺哪些。
+
+交付(最终回复=结论清单,不复述过程):
+1) kimi vis 架构一页纸:包结构/构建栈/server 路由清单(每行 endpoint→数据)/web 渲染面清单;
+2) 拉起链一句话:bi vis 从命令到浏览器可见的最短路径(kimi 的做法);
+3) bi 数据可得性三栏表:直接可得 / 需补记 / 不可得(各注 bi 文件:行号证据);
+4) 最小面拆单提案:bi vis v1 只做哪 2-3 块(按用户可感知度/工作量排序),新增文件布局提案(如 packages/core/src/cli/commands/vis.ts + web 静态资源放哪),工作量 S/M/L,风险两条(安全=本地回环+令牌;范围=防全家桶蔓延);
+5) 明确"v1 不做"清单。

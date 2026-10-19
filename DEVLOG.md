@@ -399,3 +399,21 @@ D2c 差距分析(7 维矩阵双侧 file:line):**转录投影层已同构对齐**
 **门禁终态:4374 pass/0 fail(231 文件,51206 expect,BI_PTY_E2E=1)+双 tsc 0(自十三节 4320/228 增 54 测试)。提交链:832da15(D3)→429562c(D4)→8267972(docs)→148ac0e(D5+D6)→edb0eeb(D7);CI 全绿 run 39220601240、39230194421。派工档案:docs/dispatch/{2026-10-19-wave,2026-10-19-tui-align2}/(简报+报告全档)。**
 
 **诚实边界**:ctrl-f 让位搜索(非 readline forward-char,前移用右箭头);D7 申报的"越界"为其自身简报留档(untracked docs),无害保留;TUI 剩余"部分"差距(支柱二子命令面 bi vis/config、渲染布局树)未动;BI-30 里程碑卡仍 planned。
+
+## 十五、TUI-ALIGN-3 第一波:子命令面三单并发 (2026-10-19,当日第四波)
+
+用户口令"下批开工,依然通过dispatch派codebuddy,派出3个并发任务"→完工后"已完工任务验收落盘,文档写入devlog和logbook,推送至bpfio/bi"。执行形态:**主控只做策划与验收,3 单并发全派 codebuddy hy3**(B1/B2 写模式 -y,B3 只读 --tools "Read,Grep,Glob");文件面互斥划界(B1=main/headless/args 面,B2=export 面,B3 零写入),简报互写禁动边界,亲验零互踩。
+
+| 单 | 工单 | 落点 | 要点 | 测试 |
+|---|---|---|---|---|
+| B1 | BI-20.2b flag 装配消费 | main.ts(+31)/headless.ts(+20)/agent-file-addir.test.ts(新) | --agent-file 读 Markdown 作系统指令前置为首条 {role:"system"};--add-dir 逐项存在性+目录校验(缺失/非目录结构化 exit 2)透传 HeadlessResult;重复 flag 沿用 args 既有 duplicate-flag | 新 6/0(主控复跑) |
+| B2 | BI-20.3 export --format html | export.ts + export/html-exporter.ts(重写)+ ansi-to-html.ts(复用)+ dispatch.ts usage | 单文件自含 HTML:内联 CSS+Dark 默认+工具卡 <details>+<pre><code> 纯文本+全量转义(<script> 用例钉死);白名单终态 [markdown,json,html] | cli 侧 +5 例、export 侧 12 例 |
+| B3 | BI-20.5a vis 只读侦察 | 报告 docs/dispatch/2026-10-19-subcmd1/b3-vis-recon-report.md | kimi vis=独立 app(Hono 回环+8 tab SPA);bi 数据三栏表(列表/分支树/消息流/工具配对直接可得,耗时/token 账本缺失);v1 提案=列表+分支树+消息流(M)+工具配对(S);**纠正主控前提**:令牌轮转/多网卡属 kimi web 命令不属 vis | 只读零写入 |
+
+**关键发现:fc30d5f 孤儿实现**——BI-20.3 导出库(双主题+tool-renderers)早期已建但 **CLI 从未接线**(推送前 HEAD 的 EXPORT_FORMATS 仅 markdown/json),"库存在≠功能存在,验收要查接线面"。B2 实际动作为重写导出器+补接线,并删除零外部引用的 tool-renderers 死码(全仓 grep 仅旧 html-exporter 自引),历史可溯 fc30d5f。
+
+**方法论三条(本波新增)**:①主控建简报前必须 `git log <目标路径>` 核实 HEAD 现状——本波 B2 简报误写"新文件"实为已存在,B2 临场改判(删死码+复用 ansi-to-html)处置合格,缺口在主控材料;②本机 gh 缺省解析到无关仓库(kingsword09/zcode-cli),查 CI 必须 `gh run list --repo bpfio/bi` 显式指定;③门禁跑在工作树而提交面可能小于门禁面——主控 add 遗漏 export.test.ts 即属此类,提交内容必须等于门禁内容(本波由补提交收口)。
+
+**门禁终态:4370 pass/0 fail(231 文件,51240 expect,BI_PTY_E2E=1)+双 tsc 0(自十四节 4374 净减 4=tool-renderers 死测试删除)。提交链:db0fd75(B1)→9591d37(B2)→test 补提交→docs;代码门 CI run 39237969413 绿。派工档案:docs/dispatch/2026-10-19-subcmd1/(简报×3+侦察报告)。**
+
+**诚实边界**:--add-dir 未进工具访问面(toolset 单根,校验+透传+备案,待后续工单);html 导出 Dark 单主题(fc30d5f 旧库曾双主题,重写收敛,历史可溯);kimi agentFiles 复数 vs bi 单文件契约差异备案;B3 侦察仅提案,BI-20.5b 未开工待派;codebuddy print 模式无 sessionId 回显,续作句柄不可用(以简报重派替代)。

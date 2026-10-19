@@ -1,0 +1,16 @@
+工单 BI-20.3:bi export 增 --format html——零外部依赖的独立 HTML 会话报告。
+
+现状锚点(仓库 cwd=/home/yupeng/bi):
+- packages/core/src/cli/commands/export.ts(163 行):EXPORT_FORMATS 白名单(现 markdown/json)、invalid-format 结构化错误、format==="json" 分支(92 行附近)——新增 "html" 分支,结构化错误/io-error 面与现有两分支同风格;session 定位与读取复用本文件既有链路;
+- pi 参考(只读,移植思想不搬依赖):/home/yupeng/references/pi/packages/coding-agent/src/core/export-html/{index.ts(ToolHtmlRenderer 接口/ExportOptions)、ansi-to-html.ts、template.css/html/js、vendor/}。
+
+交付目标:
+1) 新文件 packages/core/src/export/html-exporter.ts:会话 → 单文件自含 HTML(内联 CSS;零 npm 依赖、零外链、零 CDN、零图片);默认 Dark 主题;工具调用卡用 <details> 折叠(输入/输出);代码与 diff 用 <pre><code> 纯文本(不做语法高亮,不许引 vendor 大库);
+2) 新文件 packages/core/src/export/ansi-to-html.ts:ANSI→内联 span 最小实现(SGR 颜色/粗体;未知码安全剥离),思路参考 pi、代码自写;
+3) export.ts 接线:EXPORT_FORMATS +["html"],usage/帮助文本同步;输出文件名与路径语义对齐 markdown 分支;
+4) 测试:新测试文件与实现同目录(export/html-exporter.test.ts)+ export.test.ts 扩 html 分支——断言:合法导出含关键结构、非法格式 invalid-format、转义安全(会话内容含 <script> 时输出必须已转义);不做重快照框架,断言关键子串即可。
+
+边界(并行工单面,一律勿动):bin/bi.ts、packages/core/src/cli/main.ts、packages/core/src/cli/commands/args.ts(并行 B1 在接 flag);packages/tui/**;不 commit 不 push,留工作树主控验收。
+
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/cli/commands/ 全绿,且新测试文件单独跑全绿;cd /home/yupeng/bi/packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单,不复述过程):改动/新增文件清单/导出面语义(格式白名单终态、文件名规则)/测试数/tsc 结果/未尽边界(主题切换、ToolHtmlRenderer 插件面等未做项如实列)。

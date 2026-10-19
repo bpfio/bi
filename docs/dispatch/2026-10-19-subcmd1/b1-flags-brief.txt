@@ -1,0 +1,18 @@
+工单 BI-20.2b:把已解析未消费的全局 flag 接进装配面。--output-format/--max-rounds 已接(BI-30.3 先例,勿动),--prompt 已消费;本单只接 --agent-file 与 --add-dir。
+
+现状锚点(仓库 cwd=/home/yupeng/bi):
+- packages/core/src/cli/commands/args.ts:35-79 三 flag spec 与结果字段(agentFile 单值 / addDirs 聚合保序 / prompt);171-173 解析赋值——解析后无人消费;
+- packages/core/src/cli/main.ts:122-125 无头路径只消费 parsed.prompt;164-184 runHeadless 透传面(outputFormat/maxRounds 接线先例在 177-182);
+- bin/bi.ts:180-184 真入口:无参=REPL,带参=runBi;
+- 工具集装配:packages/core/src/cli/toolset.ts buildDefaultToolset(cwd)——先读它判定 --add-dir 最小诚实接法;
+- kimi 语义参考(只读):/home/yupeng/references/kimi-code/apps/kimi-code/src/main.ts:157-160(prompt/agentFiles 默认值)、252(prompt→run prompt 分流)。
+
+交付目标(最小诚实消费,不许假冒成功):
+1) --agent-file <path>:读 Markdown agent 定义文件,内容作为本次无头会话的 agent 指令注入(系统指令面;runHeadless 若无注入参数,允许加最小可选参数);文件缺失/不可读=结构化参数错误 exit 2;kimi 为 agentFiles 复数,bi 保持单文件契约并在最终回复备案差异;
+2) --add-dir <path>(可重复):聚合多个可访问目录;最小诚实接法自定——能进工具集访问面就进;若 toolset 暂不支持多根,则做:存在性校验(缺失=结构化 exit 2)+ 透传进会话上下文,并在最终回复备案边界,不许静默丢弃;
+3) 测试:packages/core/src/cli/ 下补装配消费面单测(替身 model,不吃真凭据;args 解析面已覆盖的不必重复)。
+
+边界(并行工单面,一律勿动):packages/core/src/cli/commands/export.ts、packages/core/src/export/**(并行 B2 在做 html 导出);packages/tui/**;不 commit 不 push,留工作树主控验收。
+
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/cli/ 全绿;cd /home/yupeng/bi/packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单,不复述过程):改动文件清单(每文件一句话)/消费语义(agent-file、add-dir 各一行)+差异备案/测试数/tsc 结果/未尽边界。
