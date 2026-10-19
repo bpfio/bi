@@ -1,5 +1,5 @@
 /**
- * BI-24.1 —— 子命令分发接线（init/session/fork/export/transfer/acp/upgrade/doctor/vis/config）。
+ * BI-24.1 —— 子命令分发接线（init/session/fork/export/transfer/acp/upgrade/doctor/vis/config/copy）。
  *
  * 职责：把 main 切出的子命令名与原始剩余 argv 派发到真实处理器，统一退出码语义：
  *   0 = 成功；
@@ -58,6 +58,7 @@ import type { ModelPort } from "../headless";
 import { createStdioChannels } from "./acp-command";
 import { AcpSessionConnection } from "./acp-session";
 import { ExportError, exportSession, type ExportOptions } from "./export";
+import { HTML_THEMES } from "../../export/html-exporter";
 import { ForkError, forkSession } from "./fork";
 import { listSessions } from "./session";
 import { transferCommand } from "./transfer";
@@ -67,6 +68,7 @@ import {
   type UpgradeSubcommandOptions,
 } from "../update/upgrade-subcommand";
 import { handleConfig } from "./config";
+import { handleCopy } from "./copy";
 
 /** 已接线的子命令全集（main 用法文本与子命令定位共用）。 */
 export const SUBCOMMANDS: readonly string[] = [
@@ -80,6 +82,7 @@ export const SUBCOMMANDS: readonly string[] = [
   "doctor",
   "vis",
   "config",
+  "copy",
 ];
 
 /** 子命令输出汇（与 main 的 out/err 同形）。 */
@@ -117,6 +120,12 @@ export interface SubcommandDeps {
   doctorChecks?: readonly DoctorCheck[];
   /** doctor 注入：部分端口覆盖（未注入 checks 时生效）。 */
   doctorPorts?: Partial<DoctorPorts>;
+  /** copy 注入：命令执行替身（探活 + 写入剪贴板）；测试零外呼，缺省走真实进程。 */
+  cmdRunner?: import("./copy").CmdRunner;
+  /** copy 注入：平台覆盖（缺省由 OSTYPE/process.platform 探测）；测试覆盖三平台分派。 */
+  osPlatform?: NodeJS.Platform;
+  /** copy 注入：OSTYPE 环境变量覆盖（如 msys/cygwin/linux/darwin）；测试覆盖 GitBash 等。 */
+  osType?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,24 +376,32 @@ async function handleFork(rest: readonly string[], io: SubcommandIo, deps: Subco
 // export —— 会话导出 markdown/json/html（BI-20.2 / BI-20.3 库面）
 // ---------------------------------------------------------------------------
 
-/** `bi export <sessionId> [--format markdown|json|html] [--out <path>]`；无 --out 时内容直出。 */
+/** `bi export <sessionId> [--format markdown|json|html] [--theme dark|light] [--out <path>]`；无 --out 时内容直出。 */
 async function handleExport(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
-  const args = parseSubArgs(rest, new Set<string>(["--format", "--out"]));
+  const args = parseSubArgs(rest, new Set<string>(["--format", "--out", "--theme"]));
   if (args.positionals.length !== 1) {
-    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json|html] [--out <path>]");
+    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json|html] [--theme dark|light] [--out <path>]");
   }
   const sessionId = args.positionals[0];
   if (sessionId === undefined) {
-    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json|html] [--out <path>]");
+    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json|html] [--theme dark|light] [--out <path>]");
   }
   const format = args.flags.get("--format");
   if (format !== undefined && format !== "markdown" && format !== "json" && format !== "html") {
     throw new SubUsageError(`--format 非法: ${String(format)}（允许: markdown | json | html）`);
   }
   const outPath = args.flags.get("--out");
+  const theme = args.flags.get("--theme");
+  if (
+    theme !== undefined &&
+    (typeof theme !== "string" || !HTML_THEMES.includes(theme as (typeof HTML_THEMES)[number]))
+  ) {
+    throw new SubUsageError(`--theme 非法: ${String(theme)}（允许: dark | light）`);
+  }
   const options: ExportOptions = {};
   if (format === "markdown" || format === "json" || format === "html") options.format = format;
   if (typeof outPath === "string") options.out = outPath;
+  if (theme !== undefined && format === "html") options.theme = theme as (typeof HTML_THEMES)[number];
 
   const manager = makeSessionManager(deps);
   try {
@@ -546,6 +563,7 @@ const DISPATCH: Readonly<Record<string, SubcommandHandler>> = {
   doctor: handleDoctor,
   vis: handleVisCommand,
   config: handleConfig,
+  copy: handleCopy,
 };
 
 /**
