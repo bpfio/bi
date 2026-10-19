@@ -1,0 +1,15 @@
+工单 D5 / TUI-ALIGN-2①:bi TUI 转录内搜索(find-in-transcript)——快赢提案 A 实现单。
+
+背景:bi(/home/yupeng/bi)TUI 对齐 kimi-code 的差距分析已闭(提案全文 docs/dispatch/2026-10-19-wave/d2c-tui-gap-report.md 提案A)。主因#1:长会话无转录内搜索,只能滚轮。上游参照树(只读,铁律禁改):/home/yupeng/references/kimi-code。
+
+实现规格(吸收机制;kimi 侧 file:line 仅为阅读锚点,bi 侧重实现,不引新依赖):
+- 语料构建 + 正则匹配 + 增量缓存:参考 /home/yupeng/references/kimi-code/packages/pi-tui/src/alt-screen-search.ts 的 buildSearchCorpus(:34-106)、findSearchCorpusMatches(:116-148)、AltScreenSearchIndex(:156-184);
+- UI:搜索条 overlay(画在转录状态行上方),交互仿 AltScreenSearchComponent(:197-342):查询回显、命中计数 n/N、next/prev 循环(wrap-around)、Esc 关闭清零并复原转录;
+- 键位:对齐 kimi tui.altScreen.search / searchNext / searchPrevious(:192-207)的语义,bi 侧挂进 packages/tui/src/mount/agent-tui.ts 的按键路由;
+- 落点(硬约束):只准改 packages/tui/src/mount/agent-tui.ts + 新增 packages/tui/src/mount/transcript-search.ts + transcript-search.test.ts;不得动 repl.ts / candidate-menu.ts / engine/**(另一并行工单地盘)与参考树;不得动 package.json / bun.lock;禁 git commit / push;禁联网。
+
+测试(必须全绿):
+1) bun test packages/tui/src/mount/transcript-search.test.ts——覆盖:ANSI 剥离后正则命中计数、next/prev 跳转与 wrap-around、关闭后转录复原、Esc 清零;纯函数零 TTY 可测;
+2) 零回归:bun test packages/tui && cd packages/tui && bunx tsc --noEmit。
+
+交付(最终回复):diff 摘要(文件+增删行数)+ 测试计数(pass/fail)+ 一句话结论。若发现必须动约束外文件才能闭合,停下写明最小方案交主控裁决,不得静默越界。

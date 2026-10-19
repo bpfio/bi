@@ -30,6 +30,7 @@
  */
 
 import { charWidth, textWidth } from "../components/cjk-width";
+import type { FileCompletionItem } from "./file-completion";
 
 /** 单条候选（与 core SlashCommandSurfaceEntry 字段同构；name 不含前导 "/"）。 */
 export interface Candidate {
@@ -163,9 +164,32 @@ export class CandidateMenu {
   #items: readonly Candidate[] = [];
   #selected = 0;
   #visible = false;
+  /**
+   * 当前模式：slash = 斜杠命令候选（BI-27.4）；file = 文件/路径/@ 候选
+   * （BI-19.8 快赢提案 B，经 repl.ts Tab 路由注入）；none = 关闭。两模式
+   * 互斥，menu.visible 由各自路径置位，sync() 每次重算斜杠态时复位 file 态。
+   */
+  #mode: "none" | "slash" | "file" = "none";
+  #fileItems: readonly FileCompletionItem[] = [];
 
   constructor(provider: CandidatesProvider = builtinCandidatesProvider()) {
     this.#provider = provider;
+  }
+
+  /** 菜单模式（none/slash/file）；宿主据此区分接受语义。 */
+  get mode(): "none" | "slash" | "file" {
+    return this.#mode;
+  }
+
+  /** 文件候选集（mode === "file" 时有效）。 */
+  get fileItems(): readonly FileCompletionItem[] {
+    return this.#fileItems;
+  }
+
+  /** 当前选中的文件候选（mode !== "file" 时为 undefined）。 */
+  get selectedFileItem(): FileCompletionItem | undefined {
+    if (this.#mode !== "file") return undefined;
+    return this.#fileItems[this.#selected];
   }
 
   /** 菜单是否可见（有候选可展示）。 */
@@ -193,6 +217,9 @@ export class CandidateMenu {
    * 菜单并按草稿过滤；其余草稿关闭。草稿变化即复位选择到 0。
    */
   sync(draft: string): void {
+    // 任何草稿变化都先复位文件候选态（编辑即关文件菜单），再重算斜杠态。
+    this.#mode = "none";
+    this.#fileItems = [];
     const active = draft === "/" || (draft.startsWith("/") && !/\s/.test(draft));
     if (!active) {
       this.#items = [];
@@ -203,15 +230,44 @@ export class CandidateMenu {
     this.#items = filterSlashCandidates(draft, this.#provider(draft));
     this.#selected = 0;
     this.#visible = this.#items.length > 0;
+    this.#mode = this.#visible ? "slash" : "none";
+  }
+
+  /**
+   * 注入文件/路径/@ 候选集并显示菜单（BI-19.8；由 repl.ts Tab 多候选路径调用）。
+   * 空集视为关闭；非空置 file 态并令 menu.visible=true（agent-tui 渲染组件
+   * 已按 menu.visible/lines 通用渲染，无需改动 agent-tui.ts）。
+   */
+  showFileCandidates(items: readonly FileCompletionItem[]): void {
+    this.#items = [];
+    if (items.length === 0) {
+      this.#visible = false;
+      this.#mode = "none";
+      this.#fileItems = [];
+      this.#selected = 0;
+      return;
+    }
+    this.#fileItems = items;
+    this.#mode = "file";
+    this.#selected = 0;
+    this.#visible = true;
   }
 
   /** 上移选择（顶端钳制不绕回）。 */
   moveUp(): void {
+    if (this.#mode === "file") {
+      if (this.#selected > 0) this.#selected -= 1;
+      return;
+    }
     if (this.#selected > 0) this.#selected -= 1;
   }
 
   /** 下移选择（底端钳制不绕回）。 */
   moveDown(): void {
+    if (this.#mode === "file") {
+      if (this.#selected < this.#fileItems.length - 1) this.#selected += 1;
+      return;
+    }
     if (this.#selected < this.#items.length - 1) this.#selected += 1;
   }
 
@@ -220,10 +276,16 @@ export class CandidateMenu {
    * 菜单不可见/空集返回 undefined（调用方维持原路径，不吞键）。
    */
   accept(): string | undefined {
-    if (!this.#visible) return undefined;
+    if (!this.#visible || this.#mode !== "slash") return undefined;
     const item = this.#items[this.#selected];
     if (item === undefined) return undefined;
     return `/${item.name} `;
+  }
+
+  /** 接受当前选中的文件候选（mode !== "file" 时 undefined；调用方做 token 替换）。 */
+  acceptFile(): FileCompletionItem | undefined {
+    if (!this.#visible || this.#mode !== "file") return undefined;
+    return this.#fileItems[this.#selected];
   }
 
   /** 关闭菜单（Esc 语义）；返回关闭前是否可见（供调用方判定键是否消费）。 */
@@ -232,6 +294,8 @@ export class CandidateMenu {
     this.#items = [];
     this.#selected = 0;
     this.#visible = false;
+    this.#mode = "none";
+    this.#fileItems = [];
     return was;
   }
 
@@ -251,6 +315,15 @@ export class CandidateMenu {
   lines(cols: number): string[] {
     if (!this.#visible) return [];
     const width = Math.max(1, Math.trunc(cols));
+    if (this.#mode === "file") {
+      const nameWidth = Math.max(...this.#fileItems.map((c) => textWidth(c.label)));
+      return this.#fileItems.map((item, i) => {
+        const marker = i === this.#selected ? "❯ " : "  ";
+        const pad = " ".repeat(Math.max(0, nameWidth - textWidth(item.label)));
+        const kind = item.isDirectory ? "(dir)" : "(file)";
+        return truncateToWidth(`${marker}${item.label}${pad}  ${kind}`, width);
+      });
+    }
     const nameWidth = Math.max(...this.#items.map((c) => textWidth(c.name)));
     return this.#items.map((item, i) => {
       const marker = i === this.#selected ? "❯ " : "  ";

@@ -80,6 +80,7 @@ import { TranscriptProjection, type TranscriptKind } from "../transcript-project
 import { StyledTranscript } from "../transcript-styled";
 import type { MarkdownRow } from "../render/markdown";
 import { builtinSlashCandidates, CandidateMenu, type CandidatesProvider } from "./candidate-menu";
+import { TranscriptSearch } from "./transcript-search";
 
 /** SGR 鼠标上报开关序列（BI-27.5 滚轮历史）：1000=按键上报，1006=SGR 编码。 */
 export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
@@ -318,6 +319,33 @@ class CandidateMenuView implements Component {
 	}
 }
 
+/**
+ * 转录内搜索条（BI-19.1-search）：搜索激活态下画在转录状态行（rows-2）正上方
+ * （rows-3，与流式预览/候选菜单同位但栈顶覆盖）。仅回显查询与命中计数
+ * `n/N`；命中高亮与滚回由 AgentTuiSession 消费 TranscriptSearch 状态实现。
+ * 不消费按键（搜索态按键由 AgentTuiSession.handleKey 显式路由）。
+ */
+class SearchBarView implements Component {
+	constructor(
+		private readonly session: AgentTuiSession,
+		private readonly search: TranscriptSearch,
+	) {}
+
+	render(term: VirtualTerminal): void {
+		if (!this.search.active) return; // 非激活态不落格（不触碰状态行/转录）
+		const y = Math.max(0, this.session.rows - 3);
+		const query = this.search.query;
+		const count = this.search.matchCount;
+		const idx = this.search.currentIndex;
+		const status = query === "" ? "" : count === 0 ? "  无匹配" : `  ${idx + 1}/${count}`;
+		term.write(0, y, `find: ${query}${status}`);
+	}
+
+	wantsKey(_key: ParsedKey): boolean {
+		return false;
+	}
+}
+
 /** TUI 挂载会话：submit() 驱动的交互式对话流（投影渲染 + 审批回路 + Esc 二段取消）。 */
 export class AgentTuiSession {
 	readonly projection: TranscriptProjection;
@@ -349,6 +377,10 @@ export class AgentTuiSession {
 	readonly candidateMenu: CandidateMenu;
 	/** BI-27.2：流式预览缓冲（content_delta 追加；流收束清空，文本改走 transcribe）。 */
 	#streamText = "";
+	/** BI-19.1-search：转录内搜索控制器（纯状态机）。 */
+	readonly #search = new TranscriptSearch();
+	/** BI-19.1-search：搜索激活前保存的滚回偏移，关闭时复原转录视图。 */
+	#searchSavedScroll = 0;
 	/** BI-27.2：上次流式出帧时刻（-∞ 保证首个 delta 立即出帧）。 */
 	#lastStreamFrameAt = Number.NEGATIVE_INFINITY;
 	/** BI-27.2：本回合起始时刻（状态行秒数源；回合收束清位）。 */
@@ -372,6 +404,7 @@ export class AgentTuiSession {
 		this.app.push(new TranscriptView(this));
 		this.app.push(new StreamView(this)); // BI-27.2：流式预览（缓冲空时不落格）
 		this.app.push(new CandidateMenuView(this)); // BI-27.4：斜杠候选菜单（不可见时不落格）
+		this.app.push(new SearchBarView(this, this.#search)); // BI-19.1-search：转录内搜索条（激活态落格）
 		this.#styled = new StyledTranscript(this.#cols);
 		this.candidateMenu = new CandidateMenu(options.candidates ?? (() => builtinSlashCandidates));
 		this.#gate = options.gate ?? new PermissionGate({ mode: options.permissionMode ?? "manual" });
@@ -508,6 +541,29 @@ export class AgentTuiSession {
 		this.#frame();
 	}
 
+	/**
+	 * 转录全量源行（BI-19.1-search）：StyledTranscript 全部视图行拼为纯文本，
+	 * 供搜索语料构建（ANSI 已无——视图行为样式分段文本，聚合即纯文本面）。
+	 */
+	#transcriptSourceLines(): string[] {
+		return this.#styled.rows().map((row) => row.spans.map((span) => span.text).join(""));
+	}
+
+	/** BI-19.1-search：按当前命中把转录窗滚回，使命中点进入可见尾窗（无命中不滚）。 */
+	#scrollToSearchMatch(): void {
+		const match = this.#search.currentMatch;
+		if (match === undefined) return;
+		const total = this.#styled.rows().length;
+		// 让命中行落在尾窗底部附近：offset = total - (row + 1)，按当前窗高钳制。
+		const target = Math.max(0, total - (match.row + 1));
+		this.#scrollOffset = Math.min(target, this.#maxScrollOffset());
+	}
+
+	/** BI-19.1-search：以新查询重算命中并复位到首个命中（增量缓存）。 */
+	#setSearchQuery(query: string): void {
+		this.#search.setQuery(this.#transcriptSourceLines(), query);
+	}
+
 	#frame(): void {
 		this.app.render();
 		const lines = this.projection.render();
@@ -557,6 +613,35 @@ export class AgentTuiSession {
 	 * 滚回（全态可用——审批挂起/回合在飞时同样可翻历史）。
 	 */
 	async handleKey(key: ParsedKey): Promise<void> {
+		// ── BI-19.1-search：转录内搜索（激活态优先拦截全部按键）──
+		// 对齐 kimi tui.altScreen.search/searchNext/searchPrevious/searchClose 语义：
+		// 激活态下 Enter=下一命中、Ctrl+G=上一命中、Esc=关闭清零并复原转录。
+		if (this.#search.active) {
+			if (key.kind === "esc") {
+				this.#search.close();
+				this.#scrollOffset = this.#searchSavedScroll; // 复原转录滚回偏移
+			} else if (key.kind === "enter") {
+				this.#search.next();
+				this.#scrollToSearchMatch();
+			} else if (key.kind === "ctrl" && key.char === "g") {
+				this.#search.prev();
+				this.#scrollToSearchMatch();
+			} else if (key.kind === "backspace") {
+				this.#setSearchQuery(this.#search.query.slice(0, -1));
+			} else if (key.kind === "char") {
+				this.#setSearchQuery(this.#search.query + key.char);
+			}
+			// 其余按键（方向/分页/Tab/其它 Ctrl）在搜索态吞掉，避免误触转录/取消
+			this.#frame();
+			return;
+		}
+		// 激活搜索条：Ctrl+F（对齐 kimi tui.altScreen.search 语义；键位经 repl 路由转发）
+		if (key.kind === "ctrl" && key.char === "f") {
+			this.#searchSavedScroll = this.#scrollOffset;
+			this.#search.open();
+			this.#frame();
+			return;
+		}
 		if (key.kind === "wheel-up") {
 			this.scrollTranscript(WHEEL_SCROLL_LINES);
 			return;

@@ -1,0 +1,16 @@
+工单 D6 / TUI-ALIGN-2②:bi TUI 文件/路径/@ 自动补全——快赢提案 B 实现单。
+
+背景:同差距分析(docs/dispatch/2026-10-19-wave/d2c-tui-gap-report.md 提案B)。主因#2:输入面无文件/路径/@候选。上游参照树(只读,铁律禁改):/home/yupeng/references/kimi-code。
+
+实现规格(吸收机制;kimi file:line 仅为阅读锚点,bi 侧重实现,不引新依赖):
+- 路径补全:参考 kimi packages/pi-tui/src/autocomplete.ts getFileSuggestions(:589-722)的前缀抽取与 readdirSync 递归;bi 用 Node/Bun readdir 实现(fan-out 才需 fd,bi 降级路径即纯 readdir);
+- 模糊排名:参考 packages/pi-tui/src/fuzzy.ts:99-137 fuzzyFilter,移植打分函数为 bi 侧纯函数;
+- 应用补全光标数学:参考 autocomplete.ts applyCompletion(:389-474);@ 附件候选走同一路径机制;
+- Tab 行为:唯一候选→整稿补全;多候选→补首公共前缀+候选菜单;无候选→保持原样;
+- 落点(硬约束):只准改 packages/tui/src/mount/candidate-menu.ts、packages/tui/src/mount/repl.ts + 新增 packages/tui/src/mount/file-completion.ts + file-completion.test.ts;不得动 agent-tui.ts(并行工单地盘;若发现必须经 agent-tui 接线才能生效,停下说明交主控裁决)、engine/**、参考树;不得动 package.json / bun.lock;禁 git commit / push;禁联网。
+
+测试(必须全绿):
+1) bun test packages/tui/src/mount/file-completion.test.ts——临时目录下:路径前缀补全、@ 附件补全、目录 vs 文件后缀(目录补 '/',文件补空格)、fuzzy 排名序、Tab 唯一/多候选/无候选;零 TTY 可测;
+2) 零回归:bun test packages/tui && cd packages/tui && bunx tsc --noEmit。
+
+交付(最终回复):diff 摘要 + 测试计数 + 一句话结论;约束冲突停下申报,不得静默越界。

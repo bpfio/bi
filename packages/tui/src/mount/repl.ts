@@ -85,8 +85,10 @@ import type { VirtualTerminal } from "../engine/virtual-terminal";
 import type { Component } from "../components/tui-app";
 import { editPromptCommand } from "../commands/edit-prompt";
 import { editExternally as defaultEditExternally, type EditResult } from "../editor/external-editor";
+import { cwd } from "node:process";
 
 import { AgentTuiSession, type TuiSessionResult, type TuiSessionState } from "./agent-tui";
+import { applyFileCompletion, completeFileAtCursor, extractToken, isPathLikePrefix } from "./file-completion";
 
 /** pageup/pagedown 单键跳页条数（BI-27.1；连发累计，最旧/草稿槽双端钳制）。 */
 const PAGE_JUMP_LINES = 10;
@@ -128,6 +130,12 @@ export class LineEditor {
   replaceAll(text: string): void {
     this.clear();
     this.insert(text);
+  }
+
+  /** 整稿替换并显式置光标（文件补全光标数学需要精确落点，replaceAllRaw 恒置行尾不适用）。 */
+  replaceWithCursor(text: string, cursor: number): void {
+    this.#draft = text;
+    this.#cursor = Math.max(0, Math.min(cursor, text.length));
   }
 
   /**
@@ -463,6 +471,8 @@ export interface ReplOptions {
    * BI-27.4 起与候选菜单并存：历史补全无进益时经 session.candidateMenu 的
    * provider 前缀延伸补全（候选面注入点=AgentTuiSession options.candidates）。 */
   readonly completions?: CompletionsFn;
+  /** 文件/路径/@ 补全基目录（BI-19.8；缺省 process.cwd()）。 */
+  readonly cwd?: string;
 }
 
 export interface ReplResult {
@@ -493,6 +503,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   const editBridge = options.editExternally ?? defaultEditExternally;
   const history = new PromptHistory();
   const completions = options.completions ?? historyCompletions(history);
+  const basePath = options.cwd ?? cwd();
   const editor = new LineEditor();
   const prompt = new PromptView();
 
@@ -573,12 +584,24 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           else menu.moveDown();
           session.app.render(); // 仅选择移动：草稿不变，重绘菜单即可
         } else if (menu.visible && (key.kind === "tab" || key.kind === "enter")) {
-          const accepted = menu.accept();
-          if (accepted !== undefined) {
-            editor.replaceAllRaw(accepted); // 补全草稿 "/name "（菜单随 sync 关闭）
-            redraw();
+          if (menu.mode === "file") {
+            // BI-19.8：文件菜单选中 → 对光标前 token 做精确替换（含目录/文件后缀）。
+            const item = menu.acceptFile();
+            if (item !== undefined) {
+              const res = applyFileCompletion(editor.draft, editor.cursor, item);
+              editor.replaceWithCursor(res.draft, res.cursor);
+              menu.dismiss(); // 接受即关文件菜单（sync 在 redraw 内复位状态）
+              redraw();
+            }
+            // 防御：可见但无选中（空集不可见，理论不可达）——不吞提交，落空。
+          } else {
+            const accepted = menu.accept();
+            if (accepted !== undefined) {
+              editor.replaceAllRaw(accepted); // 补全草稿 "/name "（菜单随 sync 关闭）
+              redraw();
+            }
+            // 防御：可见但无选中（空集不可见，理论不可达）——不吞提交，落空。
           }
-          // 防御：可见但无选中（空集不可见，理论不可达）——不吞提交，落空。
         } else if (menu.visible && key.kind === "esc") {
           menu.dismiss(); // Esc 第一义=关菜单（会话取消语义不被触发）
           session.app.render();
@@ -605,16 +628,36 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           }
           // no-op（无历史/已在草稿槽）：草稿不动。
         } else if (key.kind === "tab") {
-          // BI-25.3 缺省历史补全优先（既有语义不变）；无进益时经候选菜单的
-          // provider 前缀延伸补全（BI-27.4；斜杠草稿归菜单，此处恒 undefined）。
-          const completed =
-            completeDraft(editor.draft, completions(editor.draft)) ??
-            menu.completeNonSlash(editor.draft);
-          if (completed !== undefined) {
-            editor.replaceAllRaw(completed);
-            redraw();
+          // BI-19.8：文件/路径/@ 补全优先于历史补全（唯一→整稿、多候选→补公共
+          // 前缀并开文件菜单、无候选→undefined 落空）；其后回退 BI-25.3 历史补全。
+          // 仅当光标前 token 像路径（@/./~/含 /）才走文件补全，避免抢历史词前缀。
+          const token = extractToken(editor.draft.slice(0, editor.cursor)).prefix;
+          const file = isPathLikePrefix(token)
+            ? completeFileAtCursor(editor.draft, editor.cursor, basePath)
+            : undefined;
+          if (file !== undefined && file.kind !== "none") {
+            editor.replaceWithCursor(file.draft, file.cursor);
+            if (file.kind === "common") {
+              // 多候选：补首公共前缀后开文件菜单（不调用 redraw/sync 以免关菜单）。
+              session.candidateMenu.showFileCandidates(file.items);
+              prompt.update(editor.draft, editor.cursor);
+              onPrompt(editor.draft);
+              session.app.render();
+            } else {
+              redraw();
+            }
+          } else {
+            // BI-25.3 缺省历史补全（既有语义不变）；无进益时经候选菜单的
+            // provider 前缀延伸补全（BI-27.4；斜杠草稿归菜单，此处恒 undefined）。
+            const completed =
+              completeDraft(editor.draft, completions(editor.draft)) ??
+              menu.completeNonSlash(editor.draft);
+            if (completed !== undefined) {
+              editor.replaceAllRaw(completed);
+              redraw();
+            }
+            // 无候选/无进益：no-op。
           }
-          // 无候选/无进益：no-op。
         } else {
           const action = editor.feed(key);
           if (action.kind === "edit") {
