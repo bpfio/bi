@@ -1,0 +1,15 @@
+工单 ORGAN-WIRE W2-D5(BI-20.3b):export html 增强——主题切换与工具渲染器插件面(清 W1 前十五节未尽边界)。
+
+现状锚点(cwd=/home/yupeng/bi):
+- packages/core/src/export/html-exporter.ts(W1 前重写版):单 Dark 主题、<details> 工具卡、<pre><code> 纯文本、escapeHtml/ansiToHtml 链;renderHtml(meta, entries) 为入口;
+- pi 参考(只读):/home/yupeng/references/pi/packages/coding-agent/src/core/export-html/{index.ts 的 ToolHtmlRenderer 接口,template 双主题};
+- 既有测试:export/html-exporter.test.ts(12 例)+ cli/commands/export.test.ts——既有用例零改动是硬约束。
+
+交付目标:
+1) 双主题:renderHtml 增可选 options.theme("dark"|"light",缺省 dark=现产物逐字节不变);light 色表自拟(可读性优先,风格与 Dark 同构);export 子命令与 dispatch 的 --theme 旗标接线(合法值校验,非法=结构化 invalid-theme);
+2) ToolHtmlRenderer 最小插件面:export 函数增可选 renderers 参数(按 toolName 的 callHtml/resultHtml 覆盖,pi 接口语义简化版);缺省 undefined=现路径逐字节不变;插件渲染同样强制转义契约(宿主自渲 HTML 的责任边界写进头注);CLI 面本单不暴露(纯库面),备案;
+3) 测试:主题对照(dark 缺省逐字节不变回归/light 关键结构)、--theme 非法值、插件渲染命中与未命中回退、插件输出不二次转义契约;既有 12 例零改动。
+
+边界(并行工单面,一律勿动):dispatch.ts(并行 D6)、bin/bi.ts、session/、toolset.ts;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/cli/commands/ ./packages/core/src/export/ 全绿 + cd packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/主题语义与 light 色表要点/插件面契约/测试数+tsc/未尽边界。

@@ -1,0 +1,16 @@
+工单 ORGAN-WIRE W2-D6(BI-CLI-COPY):bi copy 子命令(低频面清账)+ 会话 ID 复制语义。
+
+现状锚点(cwd=/home/yupeng/bi):
+- SUBCOMMANDS 与查表派发:packages/core/src/cli/commands/dispatch.ts:64(先例:W1-D2 config 子命令的注入面/结构化错误风格);
+- 会话面:session/manager.ts listSessions/entries;最新会话判定=listSessions 首条(createdAt 降序已排序);
+- kimi 对照(只读):/home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/ 无 copy 亦可独立设计(与 config 同理,备案即可)。
+
+交付目标:
+1) bi copy [sessionId] [-f field]:缺省复制"最近会话"的 ID 到剪贴板;field 可选 id|title|last-reply(last-reply=会话末条 assistant 文本);sessionId 给定则复制该会话对应字段;
+2) 剪贴板落地策略(诚实,不假冒):按平台探测 OSTYPE——Linux 走 xclip/wl-copy(存在才用,`2>/dev/null` 探测)、macOS 走 pbcopy、Windows(GitBash)走 clip;全部缺失=降级为 stdout 直出并结构化提示"剪贴板工具缺失,已打印到 stdout";依赖注入 CmdRunner 供测试替身;
+3) 结构化错误:session-missing/copy-tool-missing/invalid-field,风格对齐既有子命令;SUBCOMMANDS+usage 同步;
+4) 测试:四字段语义/最近会话缺省/显式 id/剪贴板工具三平台分派(替身)/全缺失降级/未知会话。
+
+边界(并行工单面,一律勿动):export/(并行 D5)、bin/bi.ts、headless.ts、main.ts、session/ 器官本体(只读消费);不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/cli/ 全绿 + cd packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/copy 语义表(字段×平台)/降级链/测试数+tsc/未尽边界。
