@@ -130,7 +130,12 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 
 		const session = new AgentTuiSession({
 			model: selection.port,
-			tools: buildDefaultToolset(process.cwd()),
+			tools: buildDefaultToolset(process.cwd(), {
+				// BI-16.2：config [ptc] enabled 才注入 PTC 执行边界（缺省不挂，零变化）。
+				...(config.ptc?.enabled === true
+					? { ptcDeps: { timeoutMs: config.ptc.timeout_ms, maxToolCalls: config.ptc.max_tool_calls } }
+					: {}),
+			}),
 			cwd: process.cwd(),
 			gate,
 			candidates: () => menuCandidates,
@@ -195,4 +200,4 @@ const argv = process.argv.slice(2);
 process.exitCode =
 	argv.length === 0
 		? await runReplMain(process.stdin as RawCapableStdin)
-		: await runBi(argv, { headless: { tools: buildDefaultToolset(process.cwd()) } });
+		: await runBi(argv, { headless: {} });

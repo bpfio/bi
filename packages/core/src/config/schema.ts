@@ -666,6 +666,45 @@ export type TuiSection = InferSchema<typeof tuiSchema>;
  * 仅 config 显式声明 [subagent] 才物化（挂载式拓扑，见 BI_CONFIG_SCHEMA 注释），
  * 未声明时恒 undefined，消费方 Optional chaining。
  */
+// ---------------------------------------------------------------------------
+// [ptc] 分区（BI-16.2 PTC 程序化工具调用 · 注册门）
+// ---------------------------------------------------------------------------
+
+/**
+ * [ptc] 分区：PTC（Programmatic Tool Calling）脚本工具 run_ptc_script 的注册门
+ * 与执行边界。缺省 enabled=false = 不注册（既有工具面零变化）；仅显式声明 [ptc]
+ * 才物化（挂载式拓扑，同 [subagent]/[verify]），未声明时恒 undefined。
+ * 脚本内 `await tools.<name>(args)` 程序化调用的工具被钉死为 5 件只读子集
+ * （read_file/grep/glob/web_search/web_fetch）；bash/edit/write 不开放（程序化
+ * 调用禁写禁执行，安全边界在 cli/toolset.ts 工具头注钉死）。
+ */
+export const ptcSchema = sObj({
+  /** true = 注册 run_ptc_script 工具；缺省 false = 不注册（既有工具面零变动）。 */
+  enabled: sBool(false),
+  /** 单轮脚本执行超时毫秒（缺省 30_000；与 PtcRunner 缺省一致）。 */
+  timeout_ms: sInt(30_000),
+  /** 工具调用次数上限（缺省 64；与 PtcRunner 缺省一致；0 = 禁止调用）。 */
+  max_tool_calls: sInt(64),
+});
+export type PtcSection = InferSchema<typeof ptcSchema>;
+
+// ---------------------------------------------------------------------------
+// [cron] 分区（BI-07.7 会话内 Cron 调度器 · 注册门）
+// ---------------------------------------------------------------------------
+
+/**
+ * [cron] 分区：会话内 cron 三件套（cron_schedule/cron_list/cron_remove）注册门。
+ * 缺省 enabled=false = 不注册（既有工具面零变动）；仅显式声明 [cron] 才物化
+ * （挂载式拓扑，同 [subagent]/[verify]）。实际定时触发（CronService.tick）归宿主
+ * 运行环——本分区只管条目管理/列表/注销三工具的注册，绝不假冒"已可定时执行"
+ * （触发动作 onFire 由 host 注入，core CLI 不 import workflow 的 CronCorePort）。
+ */
+export const cronSchema = sObj({
+  /** true = 注册 cron_schedule/cron_list/cron_remove 三工具；缺省 false = 不注册（既有工具面零变动）。 */
+  enabled: sBool(false),
+});
+export type CronSection = InferSchema<typeof cronSchema>;
+
 export const subagentSchema = sObj({
   /** true = 注入 SubagentRunner 并经装配面注册 spawn_subagent 模型工具；缺省 false = 不注册（既有工具面零变动）。 */
   enabled: sBool(false),
@@ -724,17 +763,30 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
   (raw, path, issues) => {
     const verifyRaw = isPlainObject(raw) ? raw["verify"] : undefined;
     const subagentRaw = isPlainObject(raw) ? raw["subagent"] : undefined;
+    const ptcRaw = isPlainObject(raw) ? raw["ptc"] : undefined;
+    const cronRaw = isPlainObject(raw) ? raw["cron"] : undefined;
     const withoutMounted = isPlainObject(raw)
-      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent"))
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron"))
       : raw;
     const sections = rootSectionsSchema.validateLayer(withoutMounted, path, issues);
     const verifyLayer = verifySchema.validateLayer(verifyRaw, joinPath(path, "verify"), issues);
     const subagentLayer = subagentSchema.validateLayer(subagentRaw, joinPath(path, "subagent"), issues);
-    if (sections === undefined && verifyLayer === undefined && subagentLayer === undefined) return undefined;
+    const ptcLayer = ptcSchema.validateLayer(ptcRaw, joinPath(path, "ptc"), issues);
+    const cronLayer = cronSchema.validateLayer(cronRaw, joinPath(path, "cron"), issues);
+    if (
+      sections === undefined &&
+      verifyLayer === undefined &&
+      subagentLayer === undefined &&
+      ptcLayer === undefined &&
+      cronLayer === undefined
+    )
+      return undefined;
     return {
       ...(isPlainObject(sections) ? sections : {}),
       ...(verifyLayer !== undefined ? { verify: verifyLayer } : {}),
       ...(subagentLayer !== undefined ? { subagent: subagentLayer } : {}),
+      ...(ptcLayer !== undefined ? { ptc: ptcLayer } : {}),
+      ...(cronLayer !== undefined ? { cron: cronLayer } : {}),
     };
   },
   () => rootSectionsSchema.defaultValue(),
@@ -745,6 +797,12 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     }
     if (isPlainObject(value) && isPlainObject(value["subagent"])) {
       subagentSchema.backfill?.(value["subagent"]);
+    }
+    if (isPlainObject(value) && isPlainObject(value["ptc"])) {
+      ptcSchema.backfill?.(value["ptc"]);
+    }
+    if (isPlainObject(value) && isPlainObject(value["cron"])) {
+      cronSchema.backfill?.(value["cron"]);
     }
   },
 );
@@ -760,7 +818,7 @@ type RootBiConfig = {
  * BI_CONFIG_SCHEMA 注释）；未声明时恒 undefined，消费方 Optional chaining。
  * 可变性与其余 17 分区一致（装载/测试面按分区赋值）。
  */
-export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection };
+export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection };
 
 /** BiConfig 的顶层分区名联合（供 TUI /config 面板导航使用）。 */
 export type BiConfigSectionName = keyof BiConfig;

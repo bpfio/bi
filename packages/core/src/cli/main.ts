@@ -21,6 +21,7 @@ import {
 } from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { buildVerifyContract, runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
+import { buildDefaultToolset } from "./toolset";
 import {
 	createSubagentRunner,
 	SUBAGENT_DEFAULT_MAX_ITERATIONS,
@@ -220,6 +221,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	// BI-07.4：config [subagent] enabled 时装配 SubagentRunner 并经 headless 注入
 	// spawn_subagent 工具（缺省 enabled=false = 不装配，既有工具面与对话流零变动）。
 	const subagentSection = loadedConfig?.subagent;
+	// BI-16.2：config [ptc] 分区；enabled 缺省 false。
+	const ptcSection = loadedConfig?.ptc;
 	const subagentRunner =
 		subagentSection?.enabled === true
 			? createSubagentRunner({
@@ -236,7 +239,18 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			prompt: parsed.prompt,
 			cwd: h.cwd ?? process.cwd(),
 			model,
-			tools: h.tools ?? [],
+			// BI-16.2：仅 config [ptc] enabled 时才自建工具集（含 ptc 边界）；
+			// 未开启保持既有缺省 []——不改变直连调用方（测试/嵌入）的工具面。
+			tools:
+				h.tools ??
+				(ptcSection?.enabled === true
+					? buildDefaultToolset(h.cwd ?? process.cwd(), {
+							ptcDeps: {
+								timeoutMs: ptcSection.timeout_ms,
+								maxToolCalls: ptcSection.max_tool_calls,
+							},
+						})
+					: []),
 			...(h.hooks !== undefined ? { hooks: h.hooks } : {}),
 			...(h.sessionsRoot !== undefined ? { sessionsRoot: h.sessionsRoot } : {}),
 			...(h.permissionMode !== undefined ? { permissionMode: h.permissionMode } : {}),

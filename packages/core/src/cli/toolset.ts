@@ -74,6 +74,9 @@ import { UserQuestionService } from "../interaction/user-questions";
 import { AskUserTool, ASK_USER_QUESTION_TOOL_SPEC } from "../interaction/ask-user-tool";
 import { SubagentRunner } from "../subagent/runner";
 import { spawnSubagentBinding } from "./subagent-adapter";
+import { runPtcScript, type PtcRunResult } from "../ptc/ptc-runner";
+import { CronService, type CronEntry } from "../cron/cron-service";
+import { CronTools } from "../cron/cron-tools";
 
 // ---------------------------------------------------------------------------
 // 公共面
@@ -163,6 +166,20 @@ export interface BuildDefaultToolsetOptions {
 	 * 由运行器官（SubagentRunner + subagent-adapter 的 LoopFactory）保证。
 	 */
 	readonly subagentRunner?: SubagentRunner;
+	/**
+	 * BI-16.2 PTC 注册门：提供即注册 run_ptc_script 工具（缺省不挂，既有工具面零变动）。
+	 * host 按 config [ptc] enabled 实例化并注入；本卡仅做绑定装配。脚本内
+	 * `await tools.<name>(args)` 程序化调用的工具被钉死为 5 件只读子集，详见
+	 * runPtcScriptBinding 头注（安全边界）。timeout_ms/max_tool_calls 透传 PtcRunner。
+	 */
+	readonly ptcDeps?: { readonly timeoutMs?: number; readonly maxToolCalls?: number };
+	/**
+	 * BI-07.7 会话内 Cron 注册门：提供即注册 cron_schedule/cron_list/cron_remove 三工具
+	 * （缺省不挂，既有工具面零变动）。CronService 由 host 注入（已带 CronCorePort——
+	 * core 不 import workflow，端口来自宿主运行环）；本卡只做条目管理/列表/注销三动作
+	 * 的注册，定时触发归 host 运行环 tick，绝不假冒"已可定时执行"。
+	 */
+	readonly cronService?: CronService;
 }
 
 /**
@@ -200,6 +217,23 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 	// spawn_subagent：仅当 host 注入 SubagentRunner 才注册（保持缺省工具面零变动）。
 	if (options.subagentRunner !== undefined) {
 		tools.push(spawnSubagentBinding(options.subagentRunner));
+	}
+	// BI-16.2：run_ptc_script —— 仅当 host 注入 ptcDeps 才注册（缺省不挂）。
+	// 脚本内程序化调用的工具钉死为 5 件只读子集（见 runPtcScriptBinding 头注）。
+	if (options.ptcDeps !== undefined) {
+		tools.push(
+			runPtcScriptBinding(root, pathJail, {
+				fetchImpl,
+				env,
+				apiKeyEnv,
+				cache: searchCache,
+				limiter: searchLimiter,
+			}, options.ptcDeps),
+		);
+	}
+	// BI-07.7：cron_schedule/cron_list/cron_remove —— 仅当 host 注入 cronService 才注册（缺省不挂）。
+	if (options.cronService !== undefined) {
+		tools.push(...cronBindings(options.cronService));
 	}
 	return tools;
 }
@@ -943,4 +977,157 @@ function withSignal<T>(signal: AbortSignal, start: () => Promise<T>): Promise<T>
 			},
 		);
 	});
+}
+
+// ---------------------------------------------------------------------------
+// BI-16.2 · run_ptc_script —— PTC 程序化工具调用（5 件只读子集白名单）
+// ---------------------------------------------------------------------------
+
+/**
+ * PTC 安全边界（钉死，不可绕过）：脚本内 `await tools.<name>(args)` 程序化调用
+ * 的工具被钉死为以下 5 件**只读**子集：read_file / grep / glob / web_search /
+ * web_fetch。bash / edit / write 一律不开放——程序化调用不允许写与执行（防脚本
+ * 经工具面逃逸出只读语义；逃逸面另由 PtcRunner 静态扫描 + 受限作用域双重拦截）。
+ * 白名单外工具名 → 代理侧 PtcUnknownToolError 拒派发（双重保险）。
+ */
+export const PTC_READONLY_WHITELIST = ["read_file", "grep", "glob", "web_search", "web_fetch"] as const;
+
+type PtcWebSearchDeps = {
+	readonly fetchImpl: FetchExecutor;
+	readonly env: Record<string, string | undefined>;
+	readonly apiKeyEnv: string;
+	readonly cache: TtlResultCache;
+	readonly limiter: TokenBucketRateLimiter;
+};
+
+/**
+ * run_ptc_script 绑定：喂模型定义 + 受限执行（白名单转发）。
+ * 内部自建 5 件只读绑定（复用既有绑定工厂，零新造轮子），脚本内每次
+ * tools.<name> 调用经 executor 转发到对应绑定 execute(args, signal)。
+ * 不开放白名单外工具：executor 内不在白名单即拒绝，绝不派发到 bash/edit/write。
+ */
+function runPtcScriptBinding(
+	root: string,
+	jail: PathJail,
+	webSearchDeps: PtcWebSearchDeps,
+	deps: { readonly timeoutMs?: number; readonly maxToolCalls?: number },
+): ToolBinding {
+	const whitelist = new Set<string>(PTC_READONLY_WHITELIST);
+	// 依白名单自建 5 件只读绑定（与缺省注册表同款实例，但只暴露只读面）。
+	const byName = new Map<string, ToolBinding>(
+		[
+			readFileBinding(root),
+			grepBinding(root, jail),
+			globBinding(root, jail),
+			webFetchBinding(webSearchDeps.fetchImpl),
+			webSearchBinding(webSearchDeps),
+		].map((b) => [b.definition.name, b] as const),
+	);
+	const knownTools = [...byName.keys()];
+	return {
+		definition: {
+			name: "run_ptc_script",
+			description:
+				"执行一段模型生成的精算脚本（单轮）：脚本体内以 `await tools.<name>(args)` 程序化调用工具。" +
+				"仅允许 5 件只读工具：read_file / grep / glob / web_search / web_fetch（程序化调用禁写禁执行）。" +
+				"脚本支持循环/分支/Promise.all 并发；执行前静态扫描拒绝 import/require/eval 等逃逸面，并有超时与调用次数上限。",
+			inputSchema: {
+				type: "object",
+				properties: {
+					script: { type: "string", description: "PTC 脚本本体（内部 await tools.<name>(args) 程序化调用工具）" },
+				},
+				required: ["script"],
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeArg(args, "script"),
+		execute: async (args, signal) => {
+			const script = takeStringArg(args, "script");
+			const result: PtcRunResult = await runPtcScript(script, {
+				executor: async (name, a) => {
+					if (!whitelist.has(name)) {
+						throw new Error(`ptc-tool-not-whitelisted: ${name}（仅允许 ${[...whitelist].join("/")}）`);
+					}
+					const tool = byName.get(name);
+					if (tool === undefined) throw new Error(`ptc-tool-missing: ${name}`);
+					return await tool.execute(a, signal);
+				},
+				timeoutMs: deps.timeoutMs,
+				maxToolCalls: deps.maxToolCalls,
+				knownTools,
+			});
+			return JSON.stringify(result);
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// BI-07.7 · cron_schedule / cron_list / cron_remove —— 会话内 Cron 三件套
+// ---------------------------------------------------------------------------
+
+/**
+ * 三件 cron 工具绑定（委托既有 CronTools，零新造轮子）。
+ * 仅做条目管理（schedule 登记）/ 列表巡检（list）/ 注销（remove）三动作注册；
+ * 定时触发（到点 action 回调）归宿主运行环经 CronService.tick 推进——本卡绝不
+ * 假冒"已可定时执行"，触发动作 onFire 由 host 注入（core 不 import workflow 端口）。
+ */
+export function cronBindings(service: CronService): ToolBinding[] {
+	const cronTools = new CronTools({ service });
+
+	const scheduleBinding: ToolBinding = {
+		definition: {
+			name: "cron_schedule",
+			description:
+				"在当前会话内登记一条 cron 周期任务（5 字段表达式：分 时 日 月 周）。" +
+				"到点由运行时触发宿主注入的动作回调（本工具仅登记名称与表达式，不执行）。同名重复登记幂等返回既有条目。",
+			inputSchema: {
+				type: "object",
+				properties: {
+					name: { type: "string", description: "任务名（会话内唯一，幂等键）" },
+					cron_expr: { type: "string", description: "5 字段 cron 表达式：分 时 日 月 周" },
+				},
+				required: ["name", "cron_expr"],
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => {
+			const name = optionalStringArg(args, "name");
+			const expr = optionalStringArg(args, "cron_expr");
+			return `name=${name} cron_expr=${expr}`;
+		},
+		execute: async (args) => JSON.stringify(await cronTools.runCreate(args)),
+	};
+
+	const listBinding: ToolBinding = {
+		definition: {
+			name: "cron_list",
+			description: "列出当前会话内已登记的 cron 任务（含下次触发时刻与最近触发留痕）。",
+			inputSchema: { type: "object", properties: {} },
+		},
+		readOnly: true,
+		argSummary: () => "cron_list",
+		execute: () => JSON.stringify(cronTools.runList()),
+	};
+
+	const removeBinding: ToolBinding = {
+		definition: {
+			name: "cron_remove",
+			description: "按 id 注销一条会话内 cron 任务（幂等；未知 id 结构化返回 unknown-cron）。",
+			inputSchema: {
+				type: "object",
+				properties: { id: { type: "string", description: "cron_list 返回的任务 id" } },
+				required: ["id"],
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => `id=${optionalStringArg(args, "id")}`,
+		execute: async (args) => JSON.stringify(cronTools.runDelete(args)),
+	};
+
+	return [scheduleBinding, listBinding, removeBinding];
+}
+
+/** 仅供测试/装配层取白名单面（依赖注入校验用）。 */
+export function ptcReadonlyBindings(): readonly string[] {
+	return [...PTC_READONLY_WHITELIST];
 }
