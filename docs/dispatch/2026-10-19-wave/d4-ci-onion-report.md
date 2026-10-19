@@ -20,4 +20,4 @@ D4 发现主控简报里的**文件路径笔误**(白名单实际在 e2e-drill-d
 - D4 自验:本机 38/0 + worktree 模拟 CI 38/0(并诚实标注 worktree 内 pip 受 PEP 668 限制、openpyxl 本机预装的等价性说明);
 - 终验=CI 实跑(workflow 触发),见本报告附录。
 
-**附录(2026-10-19 补)**:CI run <见 git log 后续> 全绿后此行由主控回填。
+**附录(2026-10-19 补)**:CI run 39220601240(commit 429562c)**全绿**(gates 1m0s success)——近期首条全绿 CI,CI-GREEN-1 闭环。
