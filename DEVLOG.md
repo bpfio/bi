@@ -463,3 +463,19 @@ W1 收尾全量门禁间歇红(7/8 绿),捕获定性:**BI-26.3 双 manager 同�
 **门禁终态:4515 pass/0 fail(241 文件,BI_PTY_E2E=1)+双 tsc 0,双连跑确认;CI 绿 30814b0。提交链:e401039(D2)→276e847(D3)→f337b70(D1@xhub)→30814b0(session fix)。派工档案:docs/dispatch/2026-10-19-organ-wire/(简报×4+报告×4+diff 存档)。**
 
 **诚实边界**:三开关缺省全关(0.3.0 再议默认值策略);spill 落盘未接线(无 logDir 面);回注模型的 tool_result 错误文本不脱敏;verify 失败复用退出码 1;ask overlay/TUI 面归 W2-D4;cli/sub/init.ts 平行未接线实现待清理;本机 hy3 额度 23:13 重置前单节点运转。
+
+## 十八、ORGAN-WIRE 战役收官:九器官全装配 (2026-10-19 深夜,W2 后半+W3+W4)
+
+用户裁定"step-5-preview 额度消耗大,降兜底"后,余下五单全走 hy3 双节点轮转。本段跨夜间额度窗口:本机 hy3 两次 429、xhub hy3 一次 429,靠"限流即换节点+定时探针自动重派"清完。
+
+| 单 | 卡 | 落点 | 要点 | 验收 |
+|---|---|---|---|---|
+| D7 | BI-05.3 | headless/main/schema+context 消费 | **context 家族分级**:4 轻接入(time-context 时间注入/date-change-sensor 跨日披露/tool-result-pruner 二级修剪/window-manager 条数裁剪)+**10 重逐条归档**(compactor 需 summarizer 端口/window-manager 完整体需 token 水位等,一句话理由备案);[context] 挂载分区缺省全关 | 25 新测试;xhub 2 失败本机复验=openpyxl 环境项;全仓 4601/0 |
+| D8 | BI-16.2+07.7 | toolset/main/schema/bin | run_ptc_script(只读五件白名单,PtcRunner knownTools+executor **双重拒绝**,30s/64 次有界)+cron_schedule/list/remove(触发归 host 诚实备案);[ptc]/[cron] 挂载分区缺省关 | 16 新测试;**主控抓语义漂移**:runBi `h.tools??[]` 被改成 `??全量默认工具集`,收紧回仅 ptc enabled 才构建 |
+| D9 | BI-05.1 | headless/main/schema+memory 消费 | Dream 记忆:会话收尾沉淀(.consolidate-lock 原子锁+append-only BI.dream.md)+启动注入(systemInstruction,与 --agent-file 共存顺序 indexOf 钉死);[memory] 两开关缺省关 | 23 新测试;xhub 2 失败 stash 实证=openpyxl 环境项;全仓 4621/0 |
+
+**派工通道演化(本段新沉淀)**:xhub 的 nohup 后台姿势神秘失效(sleep 可活但 runner 不启),换**本地后台+前台 ssh 持久通道**(进程树根植本机,完成自动通知,产出直落本机)——从此远端派工不再依赖远端后台语义。
+
+**战役总记分**:14 卡全闭(9 装配+5 备案);12 单派工(hy3×10+step-5-preview×1+429 重派×1)+主控手术 4 台(session 竞态/uuid7 deflake/D6 剪贴板管道/D8 语义漂移收紧);门禁 4621 pass/0 fail(253 文件)+双 tsc 0;提交链 1ffe666→6f65667→7102599→783c870→91dae53+W1/W2 前段,CI 全绿贯穿。
+
+**诚实边界(全战役)**:所有新行为 config 显式开启才生效(缺省逐字节等价,九单一致);[context]/[verify]/[subagent]/[ptc]/[cron]/[memory] 六个挂载式分区不进 bi config 42 键面(手工 TOML 才能开,bi config 结构化键面增强归后续);PTC 定时触发/cron 触发/ask overlay/bi dream 手动触发/doctor 健康面/Spill 落盘等宿主环能力归后续卡;context 十重器官归档件各附建议卡。
