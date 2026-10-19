@@ -25,6 +25,8 @@
  * 15. 光标可视化（BI-27.1）：▏条随输入/左移/插入推移（writer 渲染面，ASCII/CJK）；
  * 16. pageup/pagedown（BI-27.1）：12 条历史十条跳页、双端钳制、编辑稿暂存一次
  *     并被 pagedown 原样还原；PromptHistory 连续 up 暂存不重复覆盖（单元）。
+ * 17. TUI-ALIGN-4b 鼠标点击定位：提示行落点移光标（writer 渲染面，ASCII/CJK）、
+ *     转录区同行点击忽略、审批挂起态点击不吞 y 键；LineEditor.setCursor 钳制（单元）。
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -209,6 +211,18 @@ describe("BI-24.2 · LineEditor 键位单元", () => {
     ed.insert("y");
     expect(ed.feed(ctrlE)).toEqual({ kind: "external-edit" });
     expect(ed.draft).toBe("y"); // 草稿保留，由主回路执行外编桥回填
+  });
+
+  test("TUI-ALIGN-4b · setCursor 越界钳制（纯定位，不动草稿）", () => {
+    const ed = new LineEditor();
+    ed.insert("abc");
+    ed.setCursor(2);
+    expect(ed.cursor).toBe(2);
+    ed.setCursor(99);
+    expect(ed.cursor).toBe(3); // 上钳到 draft.length
+    ed.setCursor(-5);
+    expect(ed.cursor).toBe(0); // 下钳到 0
+    expect(ed.draft).toBe("abc"); // 草稿不动
   });
 });
 
@@ -1031,6 +1045,117 @@ describe("BI-27.1 · 光标可视化", () => {
       await until(() => writer.output.includes("❯ 你▏好")); // 码元切分落在两汉字之间
       stream.push(ctrlD);
       await done;
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TUI-ALIGN-4b · 鼠标点击定位光标（runRepl 接线，writer 渲染面）
+// ---------------------------------------------------------------------------
+
+describe("TUI-ALIGN-4b · 鼠标点击定位光标", () => {
+  test("提示行点击移光标；转录区同列点击忽略（v1）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const writer = new MemoryWriter();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6, // 提示行 = 第 5 行（0 基）
+        cols: 60,
+        writer,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+
+      for (const key of text("abc")) stream.push(key);
+      await until(() => writer.output.includes("❯ abc▏")); // 光标在尾
+
+      // 转录区（y=2）同列点击：忽略（零帧变化，光标不动）
+      stream.push({ kind: "mouse-click", x: 3, y: 2 });
+      await Bun.sleep(5);
+      expect(writer.output).not.toContain("❯ a▏bc");
+
+      // 提示行（y=5）x=3 命中 'b' → 光标 1
+      stream.push({ kind: "mouse-click", x: 3, y: 5 });
+      await until(() => writer.output.includes("❯ a▏bc"));
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("CJK：宽字符右半落点对齐码元起点", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const writer = new MemoryWriter();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        writer,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+
+      for (const key of text("你好")) stream.push(key);
+      await until(() => writer.output.includes("❯ 你好▏")); // 你@2-3 好@4-5 条@6
+      stream.push({ kind: "mouse-click", x: 3, y: 5 }); // 你 右半 → 码元 0
+      await until(() => writer.output.includes("❯ ▏你好")); // 条@2 你@3-4 好@5-6
+      stream.push({ kind: "mouse-click", x: 5, y: 5 }); // 好 左半 → 码元 1
+      await until(() => writer.output.includes("❯ 你▏好"));
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("审批挂起态点击忽略（v1）：不吞 y 键、审批回路照常放行", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const session = new AgentTuiSession({
+        model: scriptedModel([
+          [
+            { type: "tool_call_delta", index: 0, id: "call_1", name: "echo_tool", argumentsDelta: '{"text":"机密"}' },
+            { type: "done", stopReason: "tool_use" },
+          ],
+          [{ type: "content_delta", delta: "已放行。" }, { type: "done", stopReason: "stop" }],
+        ]),
+        tools: [echoBinding()],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "manual",
+        rows: 8,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+
+      for (const key of [...text("执行工具"), enter]) stream.push(key);
+      await until(() => sink.approvalFrames().length > 0); // 审批浮层可见
+      stream.push({ kind: "mouse-click", x: 5, y: 7 }); // 提示行落点：审批态忽略（v1）
+      await Bun.sleep(5);
+      stream.push({ kind: "char", char: "y" }); // y 键不被点击吞掉，照常放行
+      await until(() => session.state === "idle");
+      stream.push(ctrlD);
+      const result = await done;
+
+      expect(result.submittedLines).toBe(1);
+      expect(result.lastResult?.endedAs).toBe("finish");
+      expect(result.lastResult?.permissionDecisions).toContainEqual({ tool: "echo_tool", decision: "allow(approved)" });
     } finally {
       await cleanup();
     }

@@ -5,6 +5,7 @@ import {
   cup,
   EL,
   ESC_ALONE_TIMEOUT_MS,
+  parseSgrMouse,
 } from "./diff-renderer";
 import type { ParsedKey } from "./diff-renderer";
 import { FakeClock, ManualScheduler, MemoryWriter, enc, emptyReader } from "../testing";
@@ -324,5 +325,80 @@ describe("InputLoop —— PasteBurst 集成", () => {
     await Bun.sleep(60);
     loop.stop();
     expect(keys).toEqual([{ kind: "paste", text: "y".repeat(120) }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// InputLoop —— SGR 鼠标上报（BI-27.5 滚轮 + TUI-ALIGN-4b 左键点击）
+// ---------------------------------------------------------------------------
+
+describe("InputLoop —— SGR 鼠标上报", () => {
+  test("左键按下（b=0, 终字 M）→ mouse-click，坐标 1 基转 0 基", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("\x1b[<0;5;3M"));
+    expect(keys).toEqual([{ kind: "mouse-click", x: 4, y: 2 }]);
+  });
+
+  test("释放（终字 m）不派发；按下+释放连发仅一个 click", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("\x1b[<0;10;6M\x1b[<0;10;6m"));
+    expect(keys).toEqual([{ kind: "mouse-click", x: 9, y: 5 }]);
+  });
+
+  test("滚轮 64/65 保持 wheel-up/wheel-down；滚轮释放不误判为点击", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("\x1b[<64;5;3M\x1b[<65;5;3M"));
+    expect(keys).toEqual([{ kind: "wheel-up" }, { kind: "wheel-down" }]);
+    loop.pump(enc.encode("\x1b[<64;5;3m\x1b[<65;5;3m"));
+    expect(keys).toHaveLength(2); // 释放终字：滚轮与点击均不派发
+  });
+
+  test("拖动（b&32）/ 中键 / 右键 / 修饰组合 → 忽略", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("\x1b[<32;5;3M")); // 拖动（左键 + motion）
+    loop.pump(enc.encode("\x1b[<1;5;3M")); // 中键
+    loop.pump(enc.encode("\x1b[<2;5;3M")); // 右键
+    loop.pump(enc.encode("\x1b[<16;5;3M")); // ctrl+左键
+    loop.pump(enc.encode("\x1b[<4;5;3M")); // shift+左键
+    expect(keys).toEqual([]);
+  });
+
+  test("残包容错：字段缺失 / 非数字 / 无 < 前缀 → 零按键", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("\x1b[<0;5;M")); // 缺 y 值
+    loop.pump(enc.encode("\x1b[<;5;3M")); // 缺 b 值
+    loop.pump(enc.encode("\x1b[<0;:;3M")); // 非数字字段（':' 在 CSI 参数字节区内）
+    loop.pump(enc.encode("\x1b[0;5;3M")); // 无 < 前缀（旧式 X10 形态，合约外）
+    expect(keys).toEqual([]);
+  });
+
+  test("残包容错：终字区字节提前截断 → 不漏派鼠标事件（残余按普通键，既有成框行为）", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("\x1b[<0;a;3M")); // 'a'(0x61) 是 CSI 终字：序列在 '<0' 处成框
+    expect(keys.some((k) => k.kind === "mouse-click" || k.kind === "wheel-up" || k.kind === "wheel-down")).toBe(false);
+  });
+
+  test("鼠标序列与普通键混排：互不干扰", () => {
+    const { loop, keys } = makeLoop();
+    loop.pump(enc.encode("a\x1b[<0;2;2Mb"));
+    expect(keys).toEqual([
+      { kind: "char", char: "a" },
+      { kind: "mouse-click", x: 1, y: 1 },
+      { kind: "char", char: "b" },
+    ]);
+  });
+
+  test("parseSgrMouse 纯函数：按下/释放/滚轮/残容矩阵", () => {
+    expect(parseSgrMouse("<0;5;3", false)).toEqual({ kind: "click", x: 4, y: 2 });
+    expect(parseSgrMouse("<0;5;3", true)).toBeNull(); // 释放
+    expect(parseSgrMouse("<64;5;3", false)).toEqual({ kind: "wheel-up" });
+    expect(parseSgrMouse("<65;5;3", false)).toEqual({ kind: "wheel-down" });
+    expect(parseSgrMouse("<64;5;3", true)).toBeNull(); // 滚轮释放
+    expect(parseSgrMouse("<32;5;3", false)).toBeNull(); // 拖动
+    expect(parseSgrMouse("<1;5;3", false)).toBeNull(); // 中键
+    expect(parseSgrMouse("<0;5", false)).toBeNull(); // 缺段
+    expect(parseSgrMouse("<0;x;3", false)).toBeNull(); // 非数字
+    expect(parseSgrMouse("0;5;3", false)).toBeNull(); // 无 < 前缀
+    expect(parseSgrMouse("", false)).toBeNull(); // 空串
   });
 });

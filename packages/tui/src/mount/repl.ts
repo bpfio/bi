@@ -14,6 +14,13 @@
  * BI-27.5 —— 视口接线：wheel-up/wheel-down（SGR 1000/1006 鼠标上报）全态
  *   转发 session.handleKey = 转录窗滚回（步长 3 行/格，锚底钳顶，审批挂起/
  *   回合在飞时同样可翻历史且不触碰审批/取消路由）。
+ * TUI-ALIGN-4b —— 鼠标点击定位光标（kimi input.ts handleMouse 对齐）：idle
+ *   编辑态下提示行（rows-1）左键按下（InputLoop SGR 解析 mouse-click）经
+ *   promptClickToCursor（mount/mouse-cursor.ts 纯函数）换算为光标码元位——
+ *   横滚窗口起始列 + 前缀宽、光标条 ▏ 占列扣回、CJK 宽字符右半对齐码元
+ *   起点、超末尾贴尾；转录区点击 / 搜索态 / 审批态点击忽略（v1）。坐标
+ *   事件非键位，不进键位注册表（TUI-ALIGN-4a）；LineEditor.setCursor 为
+ *   本卡新增最小接口。
  *
  * 挂载面（器官全量复用、不改动；本文件为 mount 层新配件）：
  * - **LineEditor**：基于 ParsedKey（diff-renderer.ts）的单行编辑器。可见字符
@@ -51,7 +58,8 @@
  * - running：Esc → session.handleKey（二段取消语义， awaited）；其余键经
  *   dispatchKey 透传（无浮层则落空）；
  * - 编辑态（idle）：up/down=历史逐条翻页、pageup/pagedown=十条跳页（BI-27.1，
- *   复用同一暂存语义）、tab=补全先于编辑器裁决；其余交
+ *   复用同一暂存语义）、tab=补全先于编辑器裁决；mouse-click（TUI-ALIGN-4b，
+ *   提示行落点）=定位光标（非提示行落点/其余态忽略，v1）；其余交
  *   LineEditor.feed；Esc 落空（session.handleKey 对 idle 不消费）。
  *
  * 诚实边界（最小可用面，超出部分显式不做）：
@@ -89,6 +97,7 @@ import { cwd } from "node:process";
 
 import { AgentTuiSession, type TuiSessionResult, type TuiSessionState } from "./agent-tui";
 import { DEFAULT_KEYBINDINGS, actionForKey, type Keybindings } from "./keybindings";
+import { promptClickToCursor } from "./mouse-cursor";
 import { layoutPromptLine, segmentGraphemes } from "../components/cjk-width";
 import { applyFileCompletion, completeFileAtCursor, extractToken, isPathLikePrefix } from "./file-completion";
 import { KillRing, UndoStack, findWordBackward, findWordForward } from "./editor-history";
@@ -161,10 +170,21 @@ export class LineEditor {
     this.insert(text);
   }
 
-  /** 整稿替换并显式置光标（文件补全光标数学需要精确落点，replaceAllRaw 恒置行尾不适用）。 */
+  /**
+   * 整稿替换并显式置光标（文件补全光标数学需要精确落点，replaceAllRaw 恒置行尾不适用）。
+   */
   replaceWithCursor(text: string, cursor: number): void {
     this.#draft = text;
     this.#cursor = Math.max(0, Math.min(cursor, text.length));
+    this.#lastWasKill = false;
+  }
+
+  /**
+   * 显式置光标（TUI-ALIGN-4b 鼠标点击定位）：越界钳制到 0..draft.length；
+   * 不动草稿、不压撤销（纯定位动作，与 home/end 同级）。
+   */
+  setCursor(n: number): void {
+    this.#cursor = Math.max(0, Math.min(n, this.#draft.length));
     this.#lastWasKill = false;
   }
 
@@ -716,6 +736,23 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
       // 回合在飞时同样可翻历史，不影响审批/取消路由）。
       if (key.kind === "wheel-up" || key.kind === "wheel-down") {
         await session.handleKey(key);
+      } else if (key.kind === "mouse-click" && stateOf(session) === "idle" && !session.searchActive) {
+        // TUI-ALIGN-4b：提示行点击定位光标。v1 边界——仅 idle 编辑态生效
+        // （审批挂起/回合在飞时提示行隐藏、按键归浮层/透传，点击落空；搜索态
+        // 按键全部归搜索，点击忽略）；落点非提示行（转录区/状态行）由
+        // promptClickToCursor 行判定忽略。纯光标移动不走 onPrompt 探针
+        // （草稿未变；prompt.update + 出帧，与候选菜单选择移动同 pattern）。
+        const target = promptClickToCursor(key, {
+          draft: editor.draft,
+          cursor: editor.cursor,
+          cols: session.cols,
+          promptRow: session.rows - 1,
+        });
+        if (target !== undefined && target !== editor.cursor) {
+          editor.setCursor(target);
+          prompt.update(editor.draft, editor.cursor);
+          session.app.render();
+        }
       } else if (stateOf(session) === "awaiting-approval") {
         session.app.dispatchKey(key);
       } else if (stateOf(session) === "running") {

@@ -220,27 +220,40 @@ export function segmentGraphemes(text: string): readonly Grapheme[] {
 /** 提示行固定前缀 `❯ ` 的显示列宽（❯ 宽 1 + 空格宽 1 = 2）。 */
 const PROMPT_PREFIX = "❯ ";
 
+/** 提示行固定前缀显示列宽（layoutPromptLine 与鼠标点击换算共用的单一事实源）。 */
+export const PROMPT_PREFIX_WIDTH = textWidth(PROMPT_PREFIX);
+
 /** 显示端换行摊平（与 PromptView 同语义：\r\n/ 单独 \n 摊平为 ⏎，草稿内态不动）。 */
 function displayDraftLine(draft: string): string {
   return draft.replace(/\r\n?|\n/g, "⏎");
 }
 
 /**
- * 提示行布局（长行横向滚动）：给定草稿 / 光标 / 终端列数，返回渲染行
- * `❯ {before}▏{after}`——光标条 ▏ 恒在可视窗口内。可用列 = cols - promptW(2) -
- * 光标条(1)；草稿超宽时以光标显示列为中心切片并吸附字素边界（不劈宽字符 / 代理对）。
- * 纯函数；草稿未超宽时退化为整行（与旧 v1 渲染一致）。
- *
- * 说明：光标下标为 UTF-16 码元；经 displayDraftLine 摊平后映射为显示码元下标，
- * 再按字素列宽定位，保证 CJK/emoji 整字素切片。
+ * 提示行横向滚动窗口（UTF-16 码元区间作用于摊平显示稿；layoutPromptLine 与
+ * 鼠标点击换算共用的单一事实源）。窗口以光标显示列为中心（居中），不足则夹到 0；
+ * 起始边界向前吸附到首个字素（不劈宽字符 / 代理对）。
  */
-export function layoutPromptLine(draft: string, cursor: number, cols: number): string {
-  const promptW = textWidth(PROMPT_PREFIX);
+export interface PromptLineWindow {
+  /** 窗口起始码元下标（摊平稿内）。 */
+  readonly start: number;
+  /** 窗口结束码元下标（摊平稿内，半开）。 */
+  readonly end: number;
+  /** 窗口起始显示列（绝对列；未滚时为 0，横滚时可能因字素吸附大于理论 startCol）。 */
+  readonly startCol: number;
+  /** 光标显示列（摊平稿绝对列）。 */
+  readonly cursorCol: number;
+}
+
+/**
+ * 提示行布局窗口（D7 横滚；layoutPromptLine 委托本函数取 start/end）。
+ * 纯函数；草稿未超宽时退化为整行（start=0、end=摊平稿长）。
+ */
+export function promptLineWindow(draft: string, cursor: number, cols: number): PromptLineWindow {
+  const promptW = PROMPT_PREFIX_WIDTH;
   const barW = 1;
   const avail = Math.max(1, cols - promptW - barW);
   const flat = displayDraftLine(draft);
   const graphemes = segmentGraphemes(flat);
-  const widths = graphemes.map((g) => textWidth(g.segment));
 
   const safeCursor = Math.max(0, Math.min(cursor, draft.length));
   const cursorFlat = displayDraftLine(draft.slice(0, safeCursor)).length;
@@ -267,6 +280,13 @@ export function layoutPromptLine(draft: string, cursor: number, cols: number): s
     acc += textWidth(g.segment);
   }
 
+  // 窗口起始显示列（= winStart 之前的字素宽度和；吸附可能使其大于 startCol）。
+  let winStartCol = 0;
+  for (const g of graphemes) {
+    if (g.index >= winStart) break;
+    winStartCol += textWidth(g.segment);
+  }
+
   // 结束字素边界（从 winStart 起累计宽度超过 avail 即停）。
   let winEnd = flat.length;
   acc = 0;
@@ -280,7 +300,24 @@ export function layoutPromptLine(draft: string, cursor: number, cols: number): s
     winEnd = g.index + g.segment.length;
   }
 
-  const before = flat.slice(winStart, cursorFlat);
-  const after = flat.slice(cursorFlat, winEnd);
+  return { start: winStart, end: winEnd, startCol: winStartCol, cursorCol };
+}
+
+/**
+ * 提示行布局（长行横向滚动）：给定草稿 / 光标 / 终端列数，返回渲染行
+ * `❯ {before}▏{after}`——光标条 ▏ 恒在可视窗口内。可用列 = cols - promptW(2) -
+ * 光标条(1)；草稿超宽时以光标显示列为中心切片并吸附字素边界（不劈宽字符 / 代理对）。
+ * 纯函数；草稿未超宽时退化为整行（与旧 v1 渲染一致）。
+ *
+ * 说明：光标下标为 UTF-16 码元；经 displayDraftLine 摊平后映射为显示码元下标，
+ * 再按字素列宽定位，保证 CJK/emoji 整字素切片。
+ */
+export function layoutPromptLine(draft: string, cursor: number, cols: number): string {
+  const win = promptLineWindow(draft, cursor, cols);
+  const flat = displayDraftLine(draft);
+  const safeCursor = Math.max(0, Math.min(cursor, draft.length));
+  const cursorFlat = displayDraftLine(draft.slice(0, safeCursor)).length;
+  const before = flat.slice(win.start, cursorFlat);
+  const after = flat.slice(cursorFlat, win.end);
   return `${PROMPT_PREFIX}${before}▏${after}`;
 }

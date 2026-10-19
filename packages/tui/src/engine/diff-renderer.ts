@@ -25,7 +25,8 @@ export interface Writer {
 }
 
 /** 解析后的按键。paste 事件由 PasteBurst 聚合产生，text 为整段粘贴文本。
- * wheel-up/wheel-down（BI-27.5）为 SGR 鼠标滚轮上报（1000/1006 模式）。 */
+ * wheel-up/wheel-down（BI-27.5）为 SGR 鼠标滚轮上报（1000/1006 模式）。
+ * mouse-click（TUI-ALIGN-4b）为 SGR 鼠标左键按下上报，x/y 为 0 基终端坐标。 */
 export interface ParsedKey {
   kind:
     | "char"
@@ -44,11 +45,16 @@ export interface ParsedKey {
     | "ctrl"
     | "paste"
     | "wheel-up"
-    | "wheel-down";
+    | "wheel-down"
+    | "mouse-click";
   /** kind === "char" 时的字符；kind === "ctrl" 时的字母（小写）。 */
   char?: string;
   /** kind === "paste" 时的聚合文本。 */
   text?: string;
+  /** kind === "mouse-click" 时的 0 基列（SGR 上报 x-1）。 */
+  x?: number;
+  /** kind === "mouse-click" 时的 0 基行（SGR 上报 y-1）。 */
+  y?: number;
 }
 
 /** ESC 歧义消解超时（毫秒）：单独到达的 ESC 等待该时长后判定为 ESC 键。 */
@@ -393,13 +399,17 @@ export class InputLoop {
     this.escHold = [];
     const finalByte = hold[hold.length - 1] as number;
     const params = String.fromCharCode(...hold.slice(2, hold.length - 1));
-    // SGR 鼠标上报（BI-27.5，1000/1006 模式）：`ESC [ < btn ; col ; row M`。
-    // 滚轮 64=上 / 65=下，仅在按下终字 'M' 分发；其余按键/松开（'m'）忽略。
-    if (finalByte === 0x4d && params.startsWith("<")) {
-      const btn = params.slice(1).split(";")[0];
-      if (btn === "64") this.onKey({ kind: "wheel-up" });
-      else if (btn === "65") this.onKey({ kind: "wheel-down" });
-      return; // 点击/拖拽等其余按钮码：合约按键集之外，忽略
+    // SGR 鼠标上报（1000/1006 模式）：`ESC [ < btn ; col ; row M`（按下）/ `m`（释放）。
+    // 滚轮 64=上 / 65=下（BI-27.5，仅按下终字分发）；左键按下（btn=0）→ mouse-click
+    // （TUI-ALIGN-4b，0 基坐标）；释放 / 拖动 / 其余按钮 → 忽略。
+    if ((finalByte === 0x4d || finalByte === 0x6d) && params.startsWith("<")) {
+      const event = parseSgrMouse(params, finalByte === 0x6d);
+      if (event !== null) {
+        if (event.kind === "wheel-up") this.onKey({ kind: "wheel-up" });
+        else if (event.kind === "wheel-down") this.onKey({ kind: "wheel-down" });
+        else this.onKey({ kind: "mouse-click", x: event.x, y: event.y });
+      }
+      return; // 解析失败或合约事件集之外的鼠标上报：忽略
     }
     let key: ParsedKey["kind"] | null = null;
     switch (finalByte) {
@@ -533,4 +543,36 @@ function csiTildeKey(params: string): ParsedKey["kind"] | null {
     default:
       return null; // 3~(Delete)、2~(Insert) 等：合约按键集之外。
   }
+}
+
+// ---------------------------------------------------------------------------
+// SGR 鼠标上报解析（1006 增强坐标；BI-27.5 滚轮 + TUI-ALIGN-4b 点击）
+// ---------------------------------------------------------------------------
+
+/** SGR 鼠标上报解析结果（合约事件面）。 */
+export type SgrMouseEvent =
+  | { readonly kind: "wheel-up" }
+  | { readonly kind: "wheel-down" }
+  | { readonly kind: "click"; readonly x: number; readonly y: number };
+
+/**
+ * 解析 SGR 鼠标上报（1006）：params = CSI `<` 之后的 `btn ; x ; y`（1 基坐标），
+ * release = 终字是否为 `m`（松开；`M` = 按下）。纯函数，零 TTY 可测。
+ * - 滚轮 btn=64/65（仅按下）→ wheel-up / wheel-down（BI-27.5 路径）；
+ * - 左键按下 btn=0 → click（x/y 转 0 基）；
+ * - 松开（release）、拖动（btn&32）、中/右键（btn&3≠0）、修饰组合
+ *   （shift=4 / alt=8 / ctrl=16）→ null（v1 不处理）；
+ * - 残容（非 `<数字;数字;数字` 三段结构、非数字字段）→ null。
+ */
+export function parseSgrMouse(params: string, release: boolean): SgrMouseEvent | null {
+  if (!params.startsWith("<")) return null;
+  const parts = params.slice(1).split(";");
+  if (parts.length !== 3) return null;
+  const [btnRaw, xRaw, yRaw] = parts as [string, string, string];
+  if (!/^\d+$/.test(btnRaw) || !/^\d+$/.test(xRaw) || !/^\d+$/.test(yRaw)) return null;
+  const btn = Number(btnRaw);
+  if (btn === 64) return release ? null : { kind: "wheel-up" };
+  if (btn === 65) return release ? null : { kind: "wheel-down" };
+  if (release || btn !== 0) return null; // 松开 / 拖动 / 中右键 / 修饰组合：忽略
+  return { kind: "click", x: Number(xRaw) - 1, y: Number(yRaw) - 1 }; // SGR 坐标为 1 基
 }
