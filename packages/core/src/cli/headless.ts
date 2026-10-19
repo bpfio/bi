@@ -37,6 +37,16 @@ import {
 import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRequest } from "../guard/types";
 import type { WorkspaceTrustState } from "../guard/workspace-trust";
+import { boundToolText } from "../context/bounded-tool-text";
+import { sanitizeErrorPayload } from "../observability/endpoint-sanitizer";
+import {
+	DEFAULT_SHELL_RUNNER,
+	TargetVerifier,
+	type CommandRunner,
+	type TargetContract,
+	type VerificationResult,
+} from "../verifier/target-verifier";
+import type { VerifySection } from "../config/schema";
 import { HookRunner, type HookSpawnImpl } from "../hooks/hook-runner";
 import type { HookRunRecord } from "../hooks/types";
 import { loadHooksConfig } from "../config/hooks-adapter";
@@ -108,6 +118,29 @@ export interface HeadlessOptions {
 	 * 文件工具访问面，边界在最终回复备案；不许静默丢弃。
 	 */
 	readonly additionalDirs?: readonly string[];
+	/**
+	 * BI-08.1 有界截断上限（Unicode 码点；对应 config [tools] output_limit_bytes）。
+	 * 缺省 / ≤0 = 不截断（与现状逐字节等价）；>0 时工具**成功输出**超限经
+	 * boundToolText 两级预算截断，替换为带结构化标记行的有界文本；未超限不截。
+	 */
+	readonly outputLimitBytes?: number;
+	/**
+	 * BI-11.1 脱敏开关（对应 config [telemetry] sanitize_errors）。true = 会话
+	 * 错误文本（HeadlessError 抛出口）先经 sanitizeErrorPayload 再抛出；
+	 * 缺省 false = 原样（现状）。
+	 */
+	readonly sanitizeErrors?: boolean;
+	/**
+	 * BI-21.1 完工自验看门狗（对应 config [verify] on_completion）。提供即在
+	 * 会话收尾前跑 TargetVerifier：通过 = 原路输出 + verification 回执；
+	 * 不通过 = 结构化差距报告 + HeadlessError("verify-failed")（装配方转非零
+	 * 退出码，不假冒成功）。缺省不提供 = 零开销零行为差。
+	 */
+	readonly verify?: {
+		readonly contract: TargetContract;
+		/** 命令执行器（缺省 target-verifier 既有 shell spawn 面；测试注入脚本化替身）。 */
+		readonly runner?: CommandRunner;
+	};
 }
 
 export interface HeadlessResult {
@@ -121,6 +154,8 @@ export interface HeadlessResult {
 	readonly permissionDecisions: ReadonlyArray<{ tool: string; decision: string }>;
 	/** 附加目录透传面（BI-20.2b；供验收确认未静默丢弃；toolset 单根边界见备案）。 */
 	readonly additionalDirs: readonly string[];
+	/** 收尾自验回执（仅 [verify] on_completion 开启且实际跑过时存在）。 */
+	readonly verification?: VerificationResult;
 }
 
 /** 工具调用增量按 index 拼装缓冲（BI-23.2 TUI 挂载复用）。 */
@@ -155,12 +190,45 @@ export class ToolCallAssembler {
 
 /** 会话级装配错误（main 捕获转退出码）。 */
 export class HeadlessError extends Error {
-	readonly code: "hook-blocked" | "adapter-error" | "rounds-exceeded";
-	constructor(code: "hook-blocked" | "adapter-error" | "rounds-exceeded", message: string) {
+	readonly code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed";
+	/** verify-failed 时的结构化自验结果（含 gaps；其余 code 缺省）。 */
+	readonly verification?: VerificationResult;
+	constructor(
+		code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed",
+		message: string,
+		verification?: VerificationResult,
+	) {
 		super(message);
 		this.name = "HeadlessError";
 		this.code = code;
+		if (verification !== undefined) this.verification = verification;
 	}
+}
+
+/**
+ * config [verify] 分区 → TargetContract（装配层转换，纯函数）。
+ * 语义钉死：
+ * - TOML 只能声明 command 检查（predicate 是代码面，不可配置化）→ kind 恒 "command"；
+ * - tolerance 恒 "best-effort"：命令失败降级为 gap 收集**完整**自愈清单，
+ *   而非 strict 快失败中断（完工门的产物是差距清单，不是第一个错误）；
+ * - path 原样传递：相对路径由 verifier 以会话 cwd 为 workspaceRoot 解析。
+ */
+export function buildVerifyContract(section: VerifySection): TargetContract {
+	return {
+		objective: section.objective,
+		deliverables: section.deliverables.map((d) => ({
+			path: d.path,
+			mustExist: d.must_exist,
+			mustContain: [...d.must_contain],
+		})),
+		checks: section.checks.map((c) => ({
+			id: c.id,
+			kind: "command" as const,
+			command: c.command,
+			description: c.description,
+		})),
+		tolerance: "best-effort",
+	};
 }
 
 /**
@@ -174,9 +242,24 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	const emit = (event: unknown): void => {
 		if (outputFormat === "stream-json") out(JSON.stringify(event));
 	};
+	// BI-08.1：输出上限（码点）；缺省 / ≤0 = 关闭（现状路径逐字节等价）。
+	const outputLimitBytes = options.outputLimitBytes ?? 0;
+	/** 会话装配错误统一抛出口：sanitizeErrors 开启时消息先过脱敏器（BI-11.1）。 */
+	const failSession = (
+		code: HeadlessError["code"],
+		message: string,
+		verification?: VerificationResult,
+	): HeadlessError =>
+		new HeadlessError(
+			code,
+			options.sanitizeErrors === true ? sanitizeErrorPayload(message) : message,
+			verification,
+		);
 	const toolResults: ToolResult[] = [];
 	const hookRecords: HookRunRecord[] = [];
 	const permissionDecisions: Array<{ tool: string; decision: string }> = [];
+	/** 收尾自验回执（BI-21.1；仅 verify 开关生效时赋值）。 */
+	let verificationResult: VerificationResult | undefined;
 
 	// ---- 装配序 ①：钩子（config [[hooks]] → BI-01.1 适配器 → BI-06.4 runner）----
 	const loadedHooks = loadHooksConfig(options.hooks ?? { enabled: true, entries: [] });
@@ -215,7 +298,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	hookRecords.push(...startOutcome.records);
 	if (startOutcome.action === "block") {
 		emit({ type: "session_done", sessionId, exit: "hook-blocked", reason: startOutcome.reason });
-		throw new HeadlessError("hook-blocked", `SessionStart 钩子阻断会话: ${startOutcome.reason ?? "no reason"}`);
+		throw failSession("hook-blocked", `SessionStart 钩子阻断会话: ${startOutcome.reason ?? "no reason"}`);
 	}
 
 	// ---- 装配序 ③：权限门（BI-06.5）与工具注册表 ----
@@ -243,10 +326,18 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		if (pre.action === "block") throw new Error(`hook-blocked: ${pre.reason ?? "no reason"}`);
 
 		const value = await binding.execute(call.args, signal);
+		// BI-08.1：上限 >0 时成功输出有界化（两级预算；未超限 = 原样返回，
+		// 只有 bounded 才替换为带结构化标记行的文本）。
+		let boundedValue: unknown = value;
+		if (outputLimitBytes > 0) {
+			const text = typeof value === "string" ? value : safeStringify(value);
+			const bounded = boundToolText(text, { maxChars: outputLimitBytes });
+			if (bounded.bounded) boundedValue = bounded.text;
+		}
 
 		const post = await hookRunner.run("PostToolUse", { ...hookInput("PostToolUse", call.name, call.args), sessionId, cwd: options.cwd });
 		hookRecords.push(...post.records); // PostToolUse block 仅记录（执行已完成），不阻断
-		return value;
+		return boundedValue;
 	};
 
 	const agentLoop = new AgentLoop({
@@ -294,7 +385,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			} else if (event.type === "done") {
 				stop = event.stopReason;
 			} else if (event.type === "error") {
-				throw new HeadlessError("adapter-error", `${event.error.code}: ${event.error.message}`);
+				throw failSession("adapter-error", `${event.error.code}: ${event.error.message}`);
 			}
 			emit(event);
 		}
@@ -308,6 +399,36 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			messages.push({ role: "assistant", content: blocks });
 			await appendChained({ type: "assistant", payload: { content: blocks } as unknown as JsonValue });
 			agentLoop.finishTurn();
+
+			// ---- 装配序 ⑤：完工自验（BI-21.1；仅装配层显式提供 verify 时生效）----
+			if (options.verify !== undefined) {
+				const runner = options.verify.runner ?? DEFAULT_SHELL_RUNNER;
+				const verifier = new TargetVerifier();
+				const verification = await verifier.verify(options.verify.contract, options.cwd, { runner });
+				if (!verification.passed) {
+					// 不假冒成功：结构化差距报告（stream-json 上线 + 错误消息携带
+					// formatGaps + verification 回执），非零退出码由装配方转换。
+					if (outputFormat === "stream-json") {
+						// gap 的 actual 可能带命令 stderr（凭据回显）——sanitizeErrors
+						// 开启时该输出面同样先过脱敏器（进程内 verification 保持原样）。
+						const gaps = options.sanitizeErrors === true
+							? verification.gaps.map((g) => ({
+									checkId: g.checkId,
+									expected: sanitizeErrorPayload(g.expected),
+									actual: sanitizeErrorPayload(g.actual),
+								}))
+							: verification.gaps;
+						emit({ type: "session_done", sessionId, exit: "verify-failed", rounds, gaps });
+					}
+					throw failSession(
+						"verify-failed",
+						`收尾自验未通过:\n${verifier.formatGaps(verification)}`,
+						verification,
+					);
+				}
+				verificationResult = verification;
+			}
+
 			if (outputFormat === "text") {
 				// text 形态：meta（session_done 等）不落 out，只落最终文本一段。
 				out(finalText);
@@ -323,12 +444,13 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 				hookRecords,
 				permissionDecisions,
 				additionalDirs: options.additionalDirs ?? [],
+				...(verificationResult !== undefined ? { verification: verificationResult } : {}),
 			};
 		}
 
 		if (stop !== "tool_use") {
 			agentLoop.finishTurn();
-			throw new HeadlessError("adapter-error", `不可继续的停止原因: ${String(stop)}`);
+			throw failSession("adapter-error", `不可继续的停止原因: ${String(stop)}`);
 		}
 
 		// tool_use 回合：assistant(含 tool_use 块) → 逐调用流水线 → tool_result 回填
@@ -365,7 +487,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		messages.push({ role: "user", content: resultBlocks });
 	}
 
-	throw new HeadlessError("rounds-exceeded", `模型回合超过上限 ${maxRounds}`);
+	throw failSession("rounds-exceeded", `模型回合超过上限 ${maxRounds}`);
 }
 
 function safeStringify(value: unknown): string {

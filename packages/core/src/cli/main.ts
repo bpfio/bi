@@ -10,7 +10,8 @@
  * - --version 直读 @bi/core VERSION。
  */
 import { ConfigService } from "../config/config-service";
-import { ConfigError } from "../config/schema";
+import { ConfigError, type BiConfig } from "../config/schema";
+import { sanitizeErrorPayload } from "../observability/endpoint-sanitizer";
 import { parseGlobalArgs, ArgParseError } from "./commands/args";
 import {
 	findSubcommandIndex,
@@ -19,7 +20,7 @@ import {
 	type SubcommandDeps,
 } from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
-import { runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
+import { buildVerifyContract, runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
 import { statSync } from "node:fs";
 import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRule } from "../guard/types";
@@ -38,6 +39,12 @@ export interface RunBiOptions {
 	err?: (line: string) => void;
 	/** BI-24.1 子命令注入面（临时根目录/IO/upgrade 检查替身等，详见 dispatch.ts）。 */
 	deps?: SubcommandDeps;
+	/**
+	 * 注入已装载配置（测试 / 装配复用面）。用于 model 注入场景：据此提取
+	 * 三开关而不触磁盘；model 未注入时仍走 ConfigService 真实装载（现状路径）。
+	 * 注入了 model 而未注本面 = 无配置面 = 三开关恒不生效（缺省路径逐字节等价）。
+	 */
+	config?: BiConfig;
 }
 
 const USAGE = `bi — CLI Agent（行走骨架）
@@ -159,6 +166,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const h = options.headless ?? {};
 	let model = options.model;
 	let configGate: PermissionGate | undefined;
+	/** 已装载配置（真实装载或注入面）；缺省 = 无配置面，三开关恒不生效。 */
+	let loadedConfig: BiConfig | undefined;
 	if (model === undefined) {
 		// BI-23.3：真实驱动装配 = 配置装载（三级 TOML+env）→ BI-02 凭据门 → BI-04.2 双模态适配器。
 		try {
@@ -167,6 +176,7 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 				...(h.cwd !== undefined ? { workDir: h.cwd } : {}),
 			});
 			const config = await service.load();
+			loadedConfig = config;
 			const selection = resolveModelPort(config, {
 				resolveApiKey: (name) => service.resolveProviderApiKey(name),
 			});
@@ -191,7 +201,16 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			}
 			throw cause;
 		}
+	} else if (options.config !== undefined) {
+		// 注入式装配：跳过磁盘装载，直接用注入配置提取三开关（测试确定性）。
+		loadedConfig = options.config;
 	}
+
+	// BI-08.1 / BI-11.1 / BI-21.1 三开关：仅 config 显式开启时才传进无头面；
+	// 缺省键值（0 / false / 未声明）= 不传 = 现状路径逐字节等价。
+	const outputLimitBytes = loadedConfig?.tools.output_limit_bytes ?? 0;
+	const sanitizeErrors = loadedConfig?.telemetry.sanitize_errors ?? false;
+	const verifySection = loadedConfig?.verify;
 
 	try {
 		const result = await runHeadless({
@@ -211,6 +230,12 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			// BI-20.2b 接线：--agent-file → 系统指令注入面；--add-dir → 附加目录透传面。
 			...(agentInstruction !== undefined ? { systemInstruction: agentInstruction } : {}),
 			...(additionalDirs.length > 0 ? { additionalDirs } : {}),
+			// BI-08.1 / BI-11.1 / BI-21.1 三开关（config 显式开启才生效）。
+			...(outputLimitBytes > 0 ? { outputLimitBytes } : {}),
+			...(sanitizeErrors ? { sanitizeErrors: true } : {}),
+			...(verifySection?.on_completion === true
+				? { verify: { contract: buildVerifyContract(verifySection) } }
+				: {}),
 			// CLI --max-rounds 优先于 deps 透传（BI-30 dogfood 发现：真实工单 8 回合不够）。
 			...((parsed.maxRounds ?? h.maxRounds) !== undefined
 				? { maxRounds: parsed.maxRounds ?? h.maxRounds }
@@ -219,7 +244,10 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 		});
 		return result.exitCode;
 	} catch (cause) {
-		const message = cause instanceof Error ? cause.message : String(cause);
+		// BI-11.1：会话错误文本输出前按 config [telemetry] sanitize_errors 脱敏
+		// （无配置面 = 现状原样输出）。
+		const rawMessage = cause instanceof Error ? cause.message : String(cause);
+		const message = sanitizeErrors ? sanitizeErrorPayload(rawMessage) : rawMessage;
 		err(`bi: 会话失败: ${message}`);
 		return 1;
 	}

@@ -177,8 +177,12 @@ export class CommandNotAllowedError extends Error {
   }
 }
 
-/** 缺省 runner：node:child_process shell 执行，捕获 stdout/stderr，超时杀进程。 */
-const DEFAULT_SHELL_RUNNER: CommandRunner = {
+/**
+ * 缺省 runner：node:child_process shell 执行，捕获 stdout/stderr，超时杀进程。
+ * 导出供装配层注入（BI-21.1 接线：headless 完工自验复用本既有 spawn 面，
+ * 不另造进程执行通道；测试仍可经 TargetVerifierOptions.runner 注入替身）。
+ */
+export const DEFAULT_SHELL_RUNNER: CommandRunner = {
   run(command, opts): Promise<CommandRunOutcome> {
     return new Promise((resolve) => {
       exec(

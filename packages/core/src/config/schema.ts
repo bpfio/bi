@@ -430,6 +430,13 @@ export type LoopControlSection = InferSchema<typeof loopControlSchema>;
 export const toolsSchema = sObj({
   allow: sStrList([]),
   deny: sStrList([]),
+  /**
+   * BI-08.1：单次工具输出有界截断上限（Unicode 码点）。
+   * 0（缺省）= 关闭；>0 时无头工具成功输出超限经 boundToolText 两级预算
+   * 截断（附结构化标记行）。≤0 一律按关闭处理——配置错误恒降级为现状，
+   * 不放大故障面。
+   */
+  output_limit_bytes: sInt(0),
 });
 export type ToolsSection = InferSchema<typeof toolsSchema>;
 
@@ -555,8 +562,57 @@ export type HooksSection = InferSchema<typeof hooksSchema>;
 /** 遥测（默认关闭）。 */
 export const telemetrySchema = sObj({
   enabled: sBool(false),
+  /**
+   * BI-11.1：true = 会话错误文本输出前经 endpoint-sanitizer 脱敏
+   * （main err 面 + headless 错误路径）；缺省 false = 原样输出（现状）。
+   */
+  sanitize_errors: sBool(false),
 });
 export type TelemetrySection = InferSchema<typeof telemetrySchema>;
+
+// ---------------------------------------------------------------------------
+// [verify] 分区（BI-21.1 任务完工前置自验看门狗）
+// ---------------------------------------------------------------------------
+
+/**
+ * [verify] deliverable 条目（fail-closed：未知键/类型不符整条丢弃）。
+ * path 相对路径由 verifier 以会话 cwd 为 workspaceRoot 解析。
+ */
+export const verifyDeliverableEntrySchema = sEntity({
+  path: sStr(""),
+  /** true = 缺失即 gap；false = 缺失容忍（存在时仍核验 must_contain）。 */
+  must_exist: sBool(true),
+  /** 必须逐条命中的子串清单（数组整体替换）。 */
+  must_contain: sStrList([]),
+});
+export type VerifyDeliverableEntry = InferSchema<typeof verifyDeliverableEntrySchema>;
+
+/**
+ * [verify] command 检查条目。TOML 只能声明 command 检查——predicate 是
+ * 代码面（不可序列化），config 声明面不假冒该能力。
+ */
+export const verifyCheckEntrySchema = sEntity({
+  /** 检查 ID（gap 清单 checkId）。 */
+  id: sStr(""),
+  /** 待执行命令串（verifier 白名单仅放行此处 verbatim 声明的命令）。 */
+  command: sStr(""),
+  /** 人类可读说明。 */
+  description: sStr(""),
+});
+export type VerifyCheckEntry = InferSchema<typeof verifyCheckEntrySchema>;
+
+/** [verify] 分区：完工自验开关 + 目标契约声明面。 */
+export const verifySchema = sObj({
+  /** true = 无头会话收尾前跑 TargetVerifier；缺省 false = off（零开销零行为差）。 */
+  on_completion: sBool(false),
+  /** 原始需求陈述（gap 回注时供模型对齐目标）。 */
+  objective: sStr(""),
+  /** 产物清单（数组整体替换）。 */
+  deliverables: sListOf(verifyDeliverableEntrySchema, []),
+  /** command 检查清单（数组整体替换）。 */
+  checks: sListOf(verifyCheckEntrySchema, []),
+});
+export type VerifySection = InferSchema<typeof verifySchema>;
 
 export const mcpServerEntrySchema = sEntity({
   /** stdio 启动命令；与 url 二选一。 */
@@ -604,8 +660,11 @@ export type TuiSection = InferSchema<typeof tuiSchema>;
 // 根 Schema 与内置默认值
 // ---------------------------------------------------------------------------
 
-/** BI 根配置 Schema（17 个分区）。 */
-export const BI_CONFIG_SCHEMA = sObj({
+/**
+ * 根分区表（17 个强类型分区；单一事实来源，键序即 DEFAULT_BI_CONFIG 键序）。
+ * [verify] 不在表内——挂载方式见 BI_CONFIG_SCHEMA 注释。
+ */
+const ROOT_SECTION_SCHEMAS = {
   workspace: workspaceSchema,
   providers: providersSchema,
   models: modelsSchema,
@@ -623,10 +682,55 @@ export const BI_CONFIG_SCHEMA = sObj({
   mcp: mcpSchema,
   a2a: a2aSchema,
   tui: tuiSchema,
-});
+};
 
-/** BI 配置根类型（17 个强类型分区）。 */
-export type BiConfig = InferSchema<typeof BI_CONFIG_SCHEMA>;
+const rootSectionsSchema = sObj(ROOT_SECTION_SCHEMAS);
+
+/**
+ * BI 根配置 Schema（17 个强类型分区 + 挂载式 [verify]）。
+ *
+ * 与纯 sObj 根的唯一差异：[verify] 在**校验期**从原始输入摘出单独校验
+ * （verifySchema），不进入默认值形状、也不由 backfill 注入——因此
+ * DEFAULT_BI_CONFIG / createDefaultConfig() 恒为 17 个根键（既有钉死断言
+ * 不红），配置层未声明 [verify] 时合并结果同样不含 verify 键（缺省路径
+ * 逐字节等价于现状）；显式声明了才物化，并由 backfill 补全叶子默认。
+ * [verify] 子键未知/类型不符照常记 issue（不冒充合法）。
+ */
+export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
+  (raw, path, issues) => {
+    const verifyRaw = isPlainObject(raw) ? raw["verify"] : undefined;
+    const withoutVerify = isPlainObject(raw)
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify"))
+      : raw;
+    const sections = rootSectionsSchema.validateLayer(withoutVerify, path, issues);
+    const verifyLayer = verifySchema.validateLayer(verifyRaw, joinPath(path, "verify"), issues);
+    if (sections === undefined && verifyLayer === undefined) return undefined;
+    return {
+      ...(isPlainObject(sections) ? sections : {}),
+      ...(verifyLayer !== undefined ? { verify: verifyLayer } : {}),
+    };
+  },
+  () => rootSectionsSchema.defaultValue(),
+  (value) => {
+    rootSectionsSchema.backfill?.(value);
+    if (isPlainObject(value) && isPlainObject(value["verify"])) {
+      verifySchema.backfill?.(value["verify"]);
+    }
+  },
+);
+
+/** 17 个根分区的推导类型（[verify] 之外的完整面）。 */
+type RootBiConfig = {
+  [K in keyof typeof ROOT_SECTION_SCHEMAS]: InferSchema<(typeof ROOT_SECTION_SCHEMAS)[K]>;
+};
+
+/**
+ * BI 配置根类型（17 个强类型分区 + 可选 [verify]）。
+ * verify 为可选：仅当配置层显式声明 [verify] 时物化（挂载式拓扑，见
+ * BI_CONFIG_SCHEMA 注释）；未声明时恒 undefined，消费方 Optional chaining。
+ * 可变性与其余 17 分区一致（装载/测试面按分区赋值）。
+ */
+export type BiConfig = RootBiConfig & { verify?: VerifySection };
 
 /** BiConfig 的顶层分区名联合（供 TUI /config 面板导航使用）。 */
 export type BiConfigSectionName = keyof BiConfig;
