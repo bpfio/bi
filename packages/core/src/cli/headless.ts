@@ -52,6 +52,8 @@ import type { HookRunRecord } from "../hooks/types";
 import { loadHooksConfig } from "../config/hooks-adapter";
 import type { HooksSection } from "../config/schema";
 import { scanShell } from "../sandbox/shell-scan";
+import { type SubagentRunner } from "../subagent/runner";
+import { spawnSubagentBinding } from "./subagent-adapter";
 import { SessionManager } from "../session/manager";
 import type { AppendEntryInput, JsonValue, SessionEntry } from "../session/types";
 import type { OutputFormat } from "./commands/args";
@@ -141,6 +143,13 @@ export interface HeadlessOptions {
 		/** 命令执行器（缺省 target-verifier 既有 shell spawn 面；测试注入脚本化替身）。 */
 		readonly runner?: CommandRunner;
 	};
+	/**
+	 * BI-07.4 子智能体装配（对应 config [subagent] enabled）。提供即把
+	 * spawn_subagent 工具追加进本次会话工具数组（与 buildDefaultToolset 的
+	 * subagentRunner 选项二选一装配；本面用于 headless 装配点跳过工具集重建、
+	 * 保留注入的 options.tools）。缺省 = 不追加（既有工具面零变动）。
+	 */
+	readonly subagentRunner?: SubagentRunner;
 }
 
 export interface HeadlessResult {
@@ -303,9 +312,15 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 
 	// ---- 装配序 ③：权限门（BI-06.5）与工具注册表 ----
 	const gate = options.gate ?? new PermissionGate({ mode: options.permissionMode ?? "auto" });
+	// BI-07.4：subagentRunner 注入即把 spawn_subagent 追加进本次会话工具数组
+	// （跳过工具集重建，保留注入的 options.tools；与 buildDefaultToolset 选项二选一）。
+	const tools: ToolBinding[] = [...options.tools];
+	if (options.subagentRunner !== undefined) {
+		tools.push(spawnSubagentBinding(options.subagentRunner));
+	}
 	const registry = new Map<string, ToolBinding>();
-	for (const binding of options.tools) registry.set(binding.definition.name, binding);
-	const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
+	for (const binding of tools) registry.set(binding.definition.name, binding);
+	const readOnlyTools = new Set(tools.filter((t) => t.readOnly).map((t) => t.definition.name));
 
 	/** 装配执行体：权限门 → PreToolUse 钩子 → 真实工具 → PostToolUse 钩子（AgentLoop 钩子固定序之外的装配层环节）。 */
 	const assembledExecutor: ToolExecutor = async (call: ToolCall, signal: AbortSignal): Promise<unknown> => {
@@ -377,7 +392,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		const assembler = new ToolCallAssembler();
 		let stop: StopReason = null;
 
-		for await (const event of options.model.stream({ messages, tools: options.tools.map((t) => t.definition) })) {
+		for await (const event of options.model.stream({ messages, tools: tools.map((t) => t.definition) })) {
 			if (event.type === "content_delta") {
 				text += event.delta;
 			} else if (event.type === "tool_call_delta") {

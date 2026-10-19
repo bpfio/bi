@@ -72,6 +72,8 @@ import { atomicWriteFile } from "../utils/atomic-write";
 import { matchOldText } from "../tool/edit-matchers";
 import { UserQuestionService } from "../interaction/user-questions";
 import { AskUserTool, ASK_USER_QUESTION_TOOL_SPEC } from "../interaction/ask-user-tool";
+import { SubagentRunner } from "../subagent/runner";
+import { spawnSubagentBinding } from "./subagent-adapter";
 
 // ---------------------------------------------------------------------------
 // 公共面
@@ -154,6 +156,13 @@ export interface BuildDefaultToolsetOptions {
 	 * 不悬挂不抛。仅当 userQuestionService 提供时生效。
 	 */
 	readonly askUserInteractive?: boolean;
+	/**
+	 * 注入 SubagentRunner：提供后 spawn_subagent 工具才注册进工具数组（缺省不挂，
+	 * 保持既有工具注册表面零变动）。host 运行环（cli/main.ts headless 装配）按
+	 * config [subagent] enabled 实例化并注入；本卡仅做绑定装配。子循环只读沙箱
+	 * 由运行器官（SubagentRunner + subagent-adapter 的 LoopFactory）保证。
+	 */
+	readonly subagentRunner?: SubagentRunner;
 }
 
 /**
@@ -187,6 +196,10 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 	if (options.userQuestionService !== undefined) {
 		const interactive = options.askUserInteractive ?? (process.stdout.isTTY === true);
 		tools.push(askUserBinding({ service: options.userQuestionService, interactive }));
+	}
+	// spawn_subagent：仅当 host 注入 SubagentRunner 才注册（保持缺省工具面零变动）。
+	if (options.subagentRunner !== undefined) {
+		tools.push(spawnSubagentBinding(options.subagentRunner));
 	}
 	return tools;
 }

@@ -657,6 +657,30 @@ export const tuiSchema = sObj({
 export type TuiSection = InferSchema<typeof tuiSchema>;
 
 // ---------------------------------------------------------------------------
+// [subagent] 分区（BI-07.4 子智能体 + BI-07.6 /btw 旁路问答总开关）
+// ---------------------------------------------------------------------------
+
+/**
+ * [subagent] 分区：子智能体装配与 /btw 旁路问答的总开关。
+ * 缺省 enabled=false = 不装配（缺省路径零变化，既有工具注册表与对话流逐字节等价）。
+ * 仅 config 显式声明 [subagent] 才物化（挂载式拓扑，见 BI_CONFIG_SCHEMA 注释），
+ * 未声明时恒 undefined，消费方 Optional chaining。
+ */
+export const subagentSchema = sObj({
+  /** true = 注入 SubagentRunner 并经装配面注册 spawn_subagent 模型工具；缺省 false = 不注册（既有工具面零变动）。 */
+  enabled: sBool(false),
+  /** 子循环最大回合上限（有界，防失控）。 */
+  max_iterations: sInt(8),
+  /** 子循环单轮超时毫秒（>0 启用协作取消；0 = 不限制，与现状路径等价）。 */
+  timeout_ms: sInt(60_000),
+  /** 缺省子角色（spawn_subagent 未显式指定 profile 时采用）。 */
+  default_profile: sEnum(["explore", "coder", "plan", "fork"] as const, "explore"),
+  /** true = 装配 BtwService 供 /btw 旁路问答使用；缺省 false = 不装配。 */
+  btw_enabled: sBool(false),
+});
+export type SubagentSection = InferSchema<typeof subagentSchema>;
+
+// ---------------------------------------------------------------------------
 // 根 Schema 与内置默认值
 // ---------------------------------------------------------------------------
 
@@ -699,15 +723,18 @@ const rootSectionsSchema = sObj(ROOT_SECTION_SCHEMAS);
 export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
   (raw, path, issues) => {
     const verifyRaw = isPlainObject(raw) ? raw["verify"] : undefined;
-    const withoutVerify = isPlainObject(raw)
-      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify"))
+    const subagentRaw = isPlainObject(raw) ? raw["subagent"] : undefined;
+    const withoutMounted = isPlainObject(raw)
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent"))
       : raw;
-    const sections = rootSectionsSchema.validateLayer(withoutVerify, path, issues);
+    const sections = rootSectionsSchema.validateLayer(withoutMounted, path, issues);
     const verifyLayer = verifySchema.validateLayer(verifyRaw, joinPath(path, "verify"), issues);
-    if (sections === undefined && verifyLayer === undefined) return undefined;
+    const subagentLayer = subagentSchema.validateLayer(subagentRaw, joinPath(path, "subagent"), issues);
+    if (sections === undefined && verifyLayer === undefined && subagentLayer === undefined) return undefined;
     return {
       ...(isPlainObject(sections) ? sections : {}),
       ...(verifyLayer !== undefined ? { verify: verifyLayer } : {}),
+      ...(subagentLayer !== undefined ? { subagent: subagentLayer } : {}),
     };
   },
   () => rootSectionsSchema.defaultValue(),
@@ -715,6 +742,9 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     rootSectionsSchema.backfill?.(value);
     if (isPlainObject(value) && isPlainObject(value["verify"])) {
       verifySchema.backfill?.(value["verify"]);
+    }
+    if (isPlainObject(value) && isPlainObject(value["subagent"])) {
+      subagentSchema.backfill?.(value["subagent"]);
     }
   },
 );
@@ -730,7 +760,7 @@ type RootBiConfig = {
  * BI_CONFIG_SCHEMA 注释）；未声明时恒 undefined，消费方 Optional chaining。
  * 可变性与其余 17 分区一致（装载/测试面按分区赋值）。
  */
-export type BiConfig = RootBiConfig & { verify?: VerifySection };
+export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection };
 
 /** BiConfig 的顶层分区名联合（供 TUI /config 面板导航使用）。 */
 export type BiConfigSectionName = keyof BiConfig;

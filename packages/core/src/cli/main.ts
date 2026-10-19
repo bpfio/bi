@@ -21,6 +21,11 @@ import {
 } from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { buildVerifyContract, runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
+import {
+	createSubagentRunner,
+	SUBAGENT_DEFAULT_MAX_ITERATIONS,
+	SUBAGENT_DEFAULT_TIMEOUT_MS,
+} from "./subagent-adapter";
 import { statSync } from "node:fs";
 import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRule } from "../guard/types";
@@ -212,6 +217,20 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const sanitizeErrors = loadedConfig?.telemetry.sanitize_errors ?? false;
 	const verifySection = loadedConfig?.verify;
 
+	// BI-07.4：config [subagent] enabled 时装配 SubagentRunner 并经 headless 注入
+	// spawn_subagent 工具（缺省 enabled=false = 不装配，既有工具面与对话流零变动）。
+	const subagentSection = loadedConfig?.subagent;
+	const subagentRunner =
+		subagentSection?.enabled === true
+			? createSubagentRunner({
+					model,
+					tools: h.tools ?? [],
+				sessionsRoot: h.sessionsRoot,
+				maxRounds: subagentSection.max_iterations ?? SUBAGENT_DEFAULT_MAX_ITERATIONS,
+				timeoutMs: subagentSection.timeout_ms ?? SUBAGENT_DEFAULT_TIMEOUT_MS,
+				})
+			: undefined;
+
 	try {
 		const result = await runHeadless({
 			prompt: parsed.prompt,
@@ -240,6 +259,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...((parsed.maxRounds ?? h.maxRounds) !== undefined
 				? { maxRounds: parsed.maxRounds ?? h.maxRounds }
 				: {}),
+			// BI-07.4：子智能体装配（config [subagent] enabled 才注入 spawn_subagent 工具）。
+			...(subagentRunner !== undefined ? { subagentRunner } : {}),
 			...(options.out !== undefined ? { out: options.out } : {}),
 		});
 		return result.exitCode;

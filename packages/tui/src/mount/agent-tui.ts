@@ -62,6 +62,7 @@ import { PermissionGate } from "../../../core/src/guard/permission-gate";
 import type { Clock } from "../../../core/src/guard/deadline";
 import type { PermissionRequest } from "../../../core/src/guard/types";
 import { SessionManager } from "../../../core/src/session/manager";
+import { type BtwService, type BtwAnswer } from "../../../core/src/subagent/btw-service";
 import type { AppendEntryInput, JsonValue } from "../../../core/src/session/types";
 import {
 	type AgentMessage,
@@ -191,6 +192,13 @@ export interface TuiSessionOptions {
 	readonly writer?: Writer;
 	/** 键位注册表（TUI-ALIGN-4a；缺省 DEFAULT_KEYBINDINGS）。 */
 	readonly keybindings?: Keybindings;
+	/**
+	 * /btw 旁路问答服务（BI-07.6）：注入后 REPL 内 `/btw <问题>` 走旁路子会话回答，
+	 * 主对话循环不被打断、主会话历史不被污染；未注入则 `/btw` 回本地结构化提示
+	 * （绝不假冒回答）。host 运行环（bin/bi.ts）按 config [subagent] btw_enabled
+	 * 实例化并注入；本卡仅消费此装配面。
+	 */
+	readonly btwService?: BtwService;
 }
 
 export interface TuiSessionResult {
@@ -394,6 +402,8 @@ export class AgentTuiSession {
 	readonly #clock: Clock | undefined;
 	/** 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面；缺省 undefined = 不拦截）。 */
 	readonly #slashCommand: ((line: string) => Promise<string | { prompt: string }>) | undefined;
+	/** /btw 旁路问答服务（BI-07.6；缺省 undefined = 未装配，/btw 回结构化提示）。 */
+	readonly #btwService: BtwService | undefined;
 	/** 键位注册表（TUI-ALIGN-4a；缺省 DEFAULT_KEYBINDINGS）。 */
 	readonly #bindings: Keybindings;
 
@@ -416,6 +426,7 @@ export class AgentTuiSession {
 		this.candidateMenu = new CandidateMenu(options.candidates ?? (() => builtinSlashCandidates));
 		this.#gate = options.gate ?? new PermissionGate({ mode: options.permissionMode ?? "manual" });
 		this.#slashCommand = options.slashCommand;
+		this.#btwService = options.btwService;
 		this.#bindings = options.keybindings ?? DEFAULT_KEYBINDINGS;
 		for (const binding of options.tools) this.#registry.set(binding.definition.name, binding);
 		const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
@@ -692,6 +703,11 @@ export class AgentTuiSession {
 		if (this.#state === "exited" || this.#agentLoop.state === "exit") {
 			throw new TuiSessionError("session-exited", "会话已退出（Esc 二段），不可继续提交");
 		}
+		// /btw 旁路问答（BI-07.6）：先于模型循环与 #slashCommand 拦截——主循环零打断、
+		// 主会话 JSONL 零追加（仅屏幕转录，#transcribe 不落盘），structured answer 上屏。
+		if (prompt.startsWith("/btw")) {
+			return await this.#handleBtw(prompt.slice("/btw".length).trim());
+		}
 		// 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面）：/ 开头且装配层注入了
 		// handler 时走命令面,返回两形态——
 		// - string = 本地回执:不入模型回合、不落会话 JSONL,输出以 system 行
@@ -859,6 +875,26 @@ export class AgentTuiSession {
 		};
 	}
 
+	/**
+	 * /btw 旁路问答（BI-07.6）：主循环零打断、主会话历史零污染。
+	 * - 已注入 BtwService：经旁路子会话取回答，结构化上屏（屏幕转录，不落主会话 JSONL）。
+	 * - 未装配：结构化本地提示，绝不假冒回答（诚实边界）。
+	 */
+	async #handleBtw(question: string): Promise<TuiSessionResult> {
+		if (this.#sessionId === undefined) {
+			throw new TuiSessionError("not-started", "会话未初始化：先调用 start()");
+		}
+		if (this.#btwService === undefined) {
+			this.#transcribe("system", "[btw] 旁路问答未装配（config [subagent] btw_enabled=false 或运行环未注入 BtwService）。");
+			this.#frame();
+			return this.#result("finish", "");
+		}
+		const answer = await this.#btwService.ask(question, { sessionId: this.#sessionId });
+		this.#transcribe("system", formatBtwAnswer(answer));
+		this.#frame();
+		return this.#result("finish", answer.answer);
+	}
+
 	async #appendChained(input: AppendEntryInput): Promise<void> {
 		const entry = await this.#manager.append(this.#sessionId!, this.#parentId ?? null, input);
 		this.#parentId = entry.id;
@@ -896,4 +932,18 @@ export class AgentTuiSession {
 function truncate(value: unknown, max = 60): string {
 	const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "undefined");
 	return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * /btw 回答上屏格式化（BI-07.6）：结构化呈现回答 + 旁路元信息（工具调用次数、
+ * 排队耗时、旁路会话 id、失败原因），与常规 assistant 转录区分可读。
+ */
+function formatBtwAnswer(answer: BtwAnswer): string {
+	const head = `[btw] ${answer.ok ? "回答" : "未完成"}`;
+	const meta =
+		`工具调用 ${answer.toolCalls} 次 · 排队 ${answer.queuedMs}ms` +
+		(answer.childSessionId !== undefined ? ` · 旁路会话 ${answer.childSessionId}` : "") +
+		(answer.error !== undefined ? ` · 错误: ${answer.error}` : "");
+	const body = answer.answer === "" ? "（无回答）" : answer.answer;
+	return `${head}\n${body}\n${meta}`;
 }
