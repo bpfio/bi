@@ -140,6 +140,22 @@ export class SessionApprovalStore {
     this.#entries.clear();
   }
 
+  /**
+   * 快照当前全部记忆条目（插入序；BI-28.3 /permissions 展示面用）。
+   * 过期但未触达清除的条目原样出现在快照里（惰性清除语义不变）。
+   */
+  list(): SessionApprovalEntry[] {
+    return [...this.#entries.values()];
+  }
+
+  /**
+   * 删除单条记忆（BI-28.3 /permissions revoke 撤销面）；命中并删除返回 true。
+   * pattern 按与 lookup 相同的归一化定键。
+   */
+  delete(tool: string, pattern: string): boolean {
+    return this.#entries.delete(SessionApprovalStore.key(tool, normalizeArgSummary(pattern)));
+  }
+
   /** 当前有效记忆条数（不含已过期但未触达清除的条目）。 */
   get size(): number {
     return this.#entries.size;
@@ -203,6 +219,19 @@ export class PermissionGate {
   /** 清空会话记忆（规则热更新时调用，防止旧 allow 记忆压过新 deny 规则）。 */
   clearRemembered(): void {
     this.#store.clear();
+  }
+
+  /**
+   * 会话记忆快照（BI-28.3 /permissions 展示面用；插入序）。
+   * 只读投影：修改须经 remember/revokeRemembered/clearRemembered。
+   */
+  remembered(): readonly SessionApprovalEntry[] {
+    return this.#store.list();
+  }
+
+  /** 撤销单条会话记忆（BI-28.3 /permissions revoke 面）；命中并删除返回 true。 */
+  revokeRemembered(tool: string, argSummary: string): boolean {
+    return this.#store.delete(tool, argSummary);
   }
 
   /**

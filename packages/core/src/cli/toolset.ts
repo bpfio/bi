@@ -20,6 +20,13 @@
  *   old_string 0 命中、或 >1 命中且未 replace_all = 结构化报错（报匹配数）；
  *   write 允许新建文件，父目录必须已存在。edit/write 的守卫在读写之前执行
  *   （较工单顺序更紧一档：根外路径一律 path-escape，绝不读入其内容）。
+ * - glob / grep（BI-28.5）：只读两件。glob = Bun.Glob 扫描（零依赖；--embed rg
+ *   面维持缓议，本卡不接，见 globBinding 注释）。grep = 递归正则扫描：跳过
+ *   node_modules/隐藏条目（.git/.bi 等点开头目录与文件）、二进制文件（NUL
+ *   启发式）、超 1MB 单文件；命中 200 条封顶 + 输出超 10KB 保留尾部（与 bash
+ *   截断风格一致）。两件都走 assertInsideRoot + PathJail read 裁决；grep 再
+ *   逐文件过 PathJail read（凭据文件名/工作区 .env 不入扫描结果，防内容外泄，
+ *   与器官读语义一致）。
  * - 信号透传：web 两器官自身不带 AbortSignal，绑定层 withSignal 竞出 abort
  *   （中止即 reject，绝不悬挂）；bash 自带 abort 竞出（先 kill 子进程再
  *   reject）；edit/write 的 fs 段走 withSignal；read_file 同步读无需透传。
@@ -46,9 +53,10 @@
  * 命令）；fs 用临时目录。
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { readdir } from "node:fs/promises";
 import type { ToolBinding } from "./headless";
 import { fetchWebPage, type FetchExecutor } from "../tools/web-fetch";
 import {
@@ -99,6 +107,17 @@ export const BASH_ARG_SUMMARY_MAX = 120;
 /** bash 输出截断标记行（加在保留尾部之前）。 */
 export const BASH_TRUNCATION_MARKER = "[bi] bash 输出超过 100KB，仅保留末尾 100KB（头部已截断）";
 
+/** glob 结果条数上限（超出截断并标注 truncated；防巨型树拖垮上下文）。 */
+export const GLOB_RESULT_LIMIT = 500;
+/** grep 命中条数上限（超出截断并标注 truncated）。 */
+export const GREP_MATCH_LIMIT = 200;
+/** grep 输出保留末尾的字节上限（10KB，风格与 bash 尾部截断一致）。 */
+export const GREP_OUTPUT_TAIL_LIMIT_BYTES = 10 * 1024;
+/** grep 单文件参与扫描的大小上限（超过整文件跳过，防巨文件/伪装文本拖垮）。 */
+export const GREP_FILE_SIZE_LIMIT_BYTES = 1024 * 1024;
+/** grep 输出截断标记行（加在保留尾部之前）。 */
+export const GREP_TRUNCATION_MARKER = "[bi] grep 输出超过 10KB，仅保留末尾 10KB（头部已截断）";
+
 /** 缺省 spawn 实现：真实 Bun.spawn（测试绝不触达——全部经 spawnImpl 注入替身）。 */
 const defaultSpawnImpl: SpawnImpl = (cmd, options) => {
 	const proc = Bun.spawn([...cmd], { ...options });
@@ -123,9 +142,10 @@ export interface BuildDefaultToolsetOptions {
 }
 
 /**
- * 缺省工具注册表面（BI-25.1 + BI-28.1/28.2）：read_file / web_fetch / web_search
- * （只读三件在前）+ bash / edit / write（写语义三件）。每个绑定 = definition
- * （喂模型）+ readOnly + argSummary（截断摘要）+ execute（真实器官调用，信号透传）。
+ * 缺省工具注册表面（BI-25.1 + BI-28.1/28.2 + BI-28.5）：read_file / web_fetch /
+ * web_search / glob / grep（只读五件在前）+ bash / edit / write（写语义三件）。
+ * 每个绑定 = definition（喂模型）+ readOnly + argSummary（截断摘要）+ execute
+ * （真实器官调用，信号透传）。
  */
 export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOptions = {}): ToolBinding[] {
 	const root = resolve(cwd);
@@ -133,7 +153,7 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 	const env = options.env ?? process.env;
 	const apiKeyEnv = options.searchApiKeyEnv ?? DEFAULT_SEARCH_API_KEY_ENV;
 	const spawnImpl: SpawnImpl = options.spawnImpl ?? defaultSpawnImpl;
-	// PathJail 写模式裁决（edit/write 第二层路径策略；home 取真实用户家目录）。
+	// PathJail 裁决（edit/write 第二层写策略；glob/grep 读策略；home 取真实用户家目录）。
 	const pathJail = new PathJail({ home: homedir(), workspaceRoot: root });
 	// 会话级缓存/限速：随工具集实例隔离（默认全局单例会跨测试与跨会话串味）。
 	const searchCache = new TtlResultCache();
@@ -142,6 +162,8 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 		readFileBinding(root),
 		webFetchBinding(fetchImpl),
 		webSearchBinding({ fetchImpl, env, apiKeyEnv, cache: searchCache, limiter: searchLimiter }),
+		globBinding(root, pathJail),
+		grepBinding(root, pathJail),
 		bashBinding({ root, spawnImpl }),
 		editBinding(root, pathJail),
 		writeBinding(root, pathJail),
@@ -192,6 +214,215 @@ function readFileBinding(root: string): ToolBinding {
 			return await withSignal(signal, () => Bun.file(abs).text());
 		},
 	};
+}
+
+// ---------------------------------------------------------------------------
+// glob / grep —— 工作区只读检索（BI-28.5；路径守卫 + PathJail read 裁决）
+// ---------------------------------------------------------------------------
+
+/**
+ * glob/grep 的读路径守卫：空 = 工作区根；段级前缀逃逸守卫 + PathJail read
+ * 裁决（第二层防御；根外路径一律 path-escape，绝不读入其内容）。
+ * 返回解析后的绝对路径（glob 扫描起点 / grep 搜索目标）。
+ */
+function guardReadPath(root: string, jail: PathJail, rawPath: string): string {
+	const abs = rawPath === "" ? root : resolve(root, rawPath);
+	assertInsideRoot(root, abs);
+	const verdict = jail.checkPath(abs, "read");
+	if (!verdict.allowed) throw new Error(`path-protected: ${verdict.reason ?? "protected"}`);
+	return abs;
+}
+
+/**
+ * glob —— 工作区文件模式匹配（Bun.Glob 扫描，零依赖）。
+ * rg --embed 内嵌检索面维持缓议（工单原文），本卡不接 rg。
+ * Bun.Glob 纯语义：不做 gitignore/node_modules 排除（dot:false 仅挡隐藏条目）；
+ * 巨型树由 GLOB_RESULT_LIMIT 封顶防护。匹配只泄漏文件名不泄漏内容，故不做
+ * 逐文件 PathJail 复核（grep 侧内容外泄面才需要，见 grepBinding）。
+ */
+function globBinding(root: string, jail: PathJail): ToolBinding {
+	return {
+		definition: {
+			name: "glob",
+			description:
+				"按 glob 模式列出工作区内文件（Bun.Glob 语义，隐藏条目不参与）。path 可选（相对工作区根的扫描起点，缺省根）。返回 JSON {matches, count, truncated?}；matches 为按字典序排序的相对路径，上限 500 条。",
+			inputSchema: {
+				type: "object",
+				properties: {
+					pattern: { type: "string", description: "glob 模式（如 **/*.ts）" },
+					path: { type: "string", description: "扫描起点（相对工作区根，可选，缺省根）" },
+				},
+				required: ["pattern"],
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeSearchArgs(args, "glob"),
+		execute: async (args, signal) => {
+			const pattern = takeStringArg(args, "pattern");
+			const pathArg = optionalStringArg(args, "path");
+			return await withSignal(signal, async () => {
+				const base = guardReadPath(root, jail, pathArg);
+				const glob = new Bun.Glob(pattern);
+				const matches: string[] = [];
+				let truncated = false;
+				for await (const rel of glob.scan({ cwd: base, onlyFiles: true, dot: false })) {
+					if (matches.length >= GLOB_RESULT_LIMIT) {
+						truncated = true;
+						break;
+					}
+					// scan 产出相对扫描起点的路径；统一改写为相对工作区根（与 grep 呈现一致）。
+					matches.push(relative(root, resolve(base, rel)));
+				}
+				matches.sort();
+				return JSON.stringify({ matches, count: matches.length, ...(truncated ? { truncated: true } : {}) });
+			});
+		},
+	};
+}
+
+/**
+ * grep —— 工作区递归正则搜索（只读；零依赖，不用 rg）。
+ * 跳过面：node_modules、点开头条目（.git/.bi 与隐藏文件，rg 同款缺省）、
+ * 二进制文件（内容含 NUL 即判）、超 GREP_FILE_SIZE_LIMIT_BYTES 的单文件；
+ * 符号链接一律不跟随（杜绝环与越界）。命中 file:line:text 行，条数与输出
+ * 双封顶（GREP_MATCH_LIMIT / GREP_OUTPUT_TAIL_LIMIT_BYTES，尾部截断风格与
+ * bash 一致）。
+ */
+function grepBinding(root: string, jail: PathJail): ToolBinding {
+	return {
+		definition: {
+			name: "grep",
+			description:
+				"在工作区内递归正则搜索文本文件（区分大小写）。跳过 node_modules/隐藏条目/二进制文件，单文件 1MB 上限；返回 JSON {count, output, truncated?, outputTruncated?}，output 为 file:line:text 行（上限 200 条，超 10KB 保留尾部）。include 可选（glob 过滤：无 / 时对文件名匹配如 *.ts，含 / 时对工作区相对路径匹配）。",
+			inputSchema: {
+				type: "object",
+				properties: {
+					pattern: { type: "string", description: "正则表达式（ECMAScript 语法）" },
+					path: { type: "string", description: "搜索起点（文件或目录，相对工作区根，可选，缺省根）" },
+					include: { type: "string", description: "文件名过滤 glob（如 *.ts；可选）" },
+				},
+				required: ["pattern"],
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeSearchArgs(args, "grep"),
+		execute: async (args, signal) => {
+			const pattern = takeStringArg(args, "pattern");
+			const pathArg = optionalStringArg(args, "path");
+			const include = optionalStringArg(args, "include");
+			return await withSignal(signal, async () => {
+				let regex: RegExp;
+				try {
+					regex = new RegExp(pattern);
+				} catch (cause) {
+					throw new Error(`grep-pattern-invalid: ${cause instanceof Error ? cause.message : String(cause)}`);
+				}
+				const base = guardReadPath(root, jail, pathArg);
+				const includeGlob = include === "" ? undefined : new Bun.Glob(include);
+				const files = await collectGrepFiles(base);
+				const matches: string[] = [];
+				let truncated = false;
+				search: for (const file of files) {
+					const rel = relative(root, file);
+					// include 过滤（rg 同款语义）：无 "/" 的 glob 对文件名匹配（*.ts 命中
+					// 任意深度的 .ts，如 sub/b.ts），含 "/" 的 glob 对工作区相对路径匹配。
+					if (includeGlob !== undefined && !includeGlob.match(include.includes("/") ? rel : basename(rel))) {
+						continue;
+					}
+					// 逐文件 PathJail read 复核：凭据文件名/工作区 .env 不入扫描结果（防内容外泄）。
+					if (!jail.checkPath(file, "read").allowed) continue;
+					let size = 0;
+					try {
+						size = statSync(file).size;
+					} catch {
+						continue; // 探测不到（竞态删除/权限）一律跳过——扫描面绝不让异常冒泡中断。
+					}
+					if (size > GREP_FILE_SIZE_LIMIT_BYTES) continue;
+					let text: string;
+					try {
+						text = await Bun.file(file).text();
+					} catch {
+						continue;
+					}
+					if (text.includes("\u0000")) continue; // 二进制启发式：含 NUL 即跳过
+					const lines = text.split("\n");
+					for (let i = 0; i < lines.length; i++) {
+						const line = lines[i] ?? "";
+						if (!regex.test(line)) continue;
+						if (matches.length >= GREP_MATCH_LIMIT) {
+							truncated = true;
+							break search;
+						}
+						matches.push(`${rel}:${i + 1}:${line}`);
+					}
+				}
+				return formatGrepResult(matches, truncated);
+			});
+		},
+	};
+}
+
+/**
+ * grep 扫描目标收集：目录 = 深度优先收集普通文件（跳过 node_modules 与
+ * 点开头条目；符号链接既非 isDirectory 也非 isFile，天然不跟随）；单文件 =
+ * 单元素。目标不存在 = 结构化报错。收集后按全路径字典序排序（确定性输出）。
+ */
+async function collectGrepFiles(base: string): Promise<string[]> {
+	let baseIsDir = false;
+	try {
+		baseIsDir = statSync(base).isDirectory();
+	} catch {
+		throw new Error("grep-path-not-found");
+	}
+	if (!baseIsDir) return [base];
+	const files: string[] = [];
+	const walk = async (dir: string): Promise<void> => {
+		let entries: Dirent[];
+		try {
+			entries = await readdir(dir, { withFileTypes: true });
+		} catch {
+			return; // 不可读目录跳过（不中断整体扫描）
+		}
+		const sorted = [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+		for (const entry of sorted) {
+			if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) await walk(full);
+			else if (entry.isFile()) files.push(full);
+		}
+	};
+	await walk(base);
+	return files;
+}
+
+/** 组装 grep 工具结果 JSON：条数 + 输出尾部 10KB 截断 + truncated/outputTruncated 标注。 */
+function formatGrepResult(matches: string[], truncated: boolean): string {
+	let output = matches.join("\n");
+	let outputTruncated = false;
+	const bytes = new TextEncoder().encode(output);
+	if (bytes.byteLength > GREP_OUTPUT_TAIL_LIMIT_BYTES) {
+		const tail = bytes.subarray(bytes.byteLength - GREP_OUTPUT_TAIL_LIMIT_BYTES);
+		output = `${GREP_TRUNCATION_MARKER}\n${new TextDecoder().decode(tail)}`;
+		outputTruncated = true;
+	}
+	return JSON.stringify({
+		count: matches.length,
+		output,
+		...(truncated ? { truncated: true } : {}),
+		...(outputTruncated ? { outputTruncated: true } : {}),
+	});
+}
+
+/** glob/grep argSummary：模式 + 起点 + 过滤器（审批浮层审计面）。 */
+function summarizeSearchArgs(args: unknown, tool: "glob" | "grep"): string {
+	const pattern = optionalStringArg(args, "pattern");
+	const path = optionalStringArg(args, "path");
+	const include = optionalStringArg(args, "include");
+	const head = pattern.length > 80 ? `${pattern.slice(0, 80)}…` : pattern;
+	const base = path === "" ? "." : path;
+	return tool === "glob"
+		? `pattern=${head} path=${base}`
+		: `pattern=${head} path=${base}${include === "" ? "" : ` include=${include}`}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +517,14 @@ async function runBashCommand(input: {
 		} catch {
 			// 被击杀进程的流可能以错误收尾：已收到的块照常计入。
 		} finally {
-			reader.releaseLock();
+			// releaseLock 防御：子进程管道异常收尾（实测嵌套 bun test 触发）时，
+			// 已出错的原生流 reader 释放锁可能抛原生错误——锁释放失败不影响已收
+			// 块，吞掉即可，绝不让 pump 的 finally 打翻整条结果管线。
+			try {
+				reader.releaseLock();
+			} catch {
+				// 忽略：流已出错时的锁释放失败。
+			}
 		}
 	};
 

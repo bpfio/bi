@@ -19,6 +19,10 @@
  *    new_string/字面 $ 语义）、write 新建与父目录存在性、原子写落盘（无临时
  *    文件残留）、共用路径守卫（逃逸三连 + PathJail 写裁决 .env/凭据文件名）、
  *    argSummary 审计面（匹配计数/字节数/首行片段）。
+ * 6. glob/grep（BI-28.5）：注入临时树的真实扫描——单星不递归/双星递归/起点
+ *    path、grep 跳过面（node_modules/隐藏条目/二进制/超限文件/凭据文件名）、
+ *    include 过滤、条数与输出双封顶、非法正则结构化报错、读路径守卫（逃逸
+ *    三连 + PathJail read 裁决）。
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm, readdir, readFile } from "node:fs/promises";
@@ -29,6 +33,10 @@ import {
 	DEFAULT_SEARCH_API_KEY_ENV,
 	DEFAULT_BASH_TOOL_TIMEOUT_MS,
 	BASH_TRUNCATION_MARKER,
+	GLOB_RESULT_LIMIT,
+	GREP_MATCH_LIMIT,
+	GREP_OUTPUT_TAIL_LIMIT_BYTES,
+	GREP_TRUNCATION_MARKER,
 	type SpawnImpl,
 	type BashSpawnOptions,
 } from "./toolset";
@@ -149,11 +157,22 @@ function explodingSpawn(): SpawnImpl {
 // ---------------------------------------------------------------------------
 
 describe("BI-25.1/28 · 注册表构成", () => {
-	test("六件工具全部在表：只读三件在前、写语义三件在后、definition/argSummary 面齐全", () => {
+	test("八件工具全部在表：只读五件在前、写语义三件在后、definition/argSummary 面齐全", () => {
 		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() });
-		expect(namesOf(tools)).toEqual(["read_file", "web_fetch", "web_search", "bash", "edit", "write"]);
+		expect(namesOf(tools)).toEqual([
+			"read_file",
+			"web_fetch",
+			"web_search",
+			"glob",
+			"grep",
+			"bash",
+			"edit",
+			"write",
+		]);
 		const readOnlyNames = new Set(tools.filter((t) => t.readOnly).map((t) => t.definition.name));
-		expect([...readOnlyNames].sort()).toEqual(["read_file", "web_fetch", "web_search"].sort());
+		expect([...readOnlyNames].sort()).toEqual(
+			["read_file", "web_fetch", "web_search", "glob", "grep"].sort(),
+		);
 		for (const tool of tools) {
 			expect(tool.definition.description).toBeTruthy();
 			expect(tool.definition.inputSchema).toHaveProperty("type", "object");
@@ -166,11 +185,10 @@ describe("BI-25.1/28 · 注册表构成", () => {
 		expect(webFetch.argSummary?.({ url: "https://x.test/" })).toBe("https://x.test/");
 	});
 
-	test("未挂面工具不在表：list_dir/grep/write_file 均未注册（器官在才挂）", () => {
+	test("未挂面工具不在表：list_dir/write_file 均未注册（器官在才挂；BI-28.5 起 grep/glob 已挂）", () => {
 		const names = new Set(namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() })));
 		expect(names.has("write_file")).toBe(false);
 		expect(names.has("list_dir")).toBe(false);
-		expect(names.has("grep")).toBe(false);
 	});
 });
 
@@ -663,6 +681,223 @@ describe("BI-28.2 · write（整文件原子写）", () => {
 });
 
 // ---------------------------------------------------------------------------
+// BI-28.5 · glob / grep（注入临时树的真实扫描，零网络）
+// ---------------------------------------------------------------------------
+
+/** glob/grep 共用扫描树：常规文件 + 各类应跳过面（二进制/超限/隐藏/凭据）。 */
+async function makeScanTree(): Promise<{ root: string; cleanup: () => Promise<void> }> {
+	const root = await mkdtemp(join(tmpdir(), "bi-scan-"));
+	await writeFile(join(root, "a.ts"), "TODO: 根级待办\nexport const a = 1;\n", "utf8");
+	await mkdir(join(root, "sub", "deep"), { recursive: true });
+	await writeFile(join(root, "sub", "b.ts"), "TODO: 子目录待办\n", "utf8");
+	await writeFile(join(root, "sub", "deep", "c.txt"), "TODO: 深层待办\n", "utf8");
+	await mkdir(join(root, "node_modules"), { recursive: true });
+	await writeFile(join(root, "node_modules", "vendored.ts"), "TODO: 三方包内\n", "utf8");
+	await mkdir(join(root, ".hidden"), { recursive: true });
+	await writeFile(join(root, ".hidden", "h.ts"), "TODO: 隐藏目录内\n", "utf8");
+	await writeFile(join(root, "blob.bin"), "TODO: 伪装文本\u0000二进制", "utf8");
+	// >1MB 的单文件（超 GREP_FILE_SIZE_LIMIT_BYTES，整文件跳过）
+	await writeFile(join(root, "big.log"), `x${"TODO: 巨文件".repeat(200_000)}`, "utf8");
+	await writeFile(join(root, "id_rsa"), "TODO: 凭据文件名\n", "utf8");
+	return { root, cleanup: () => rm(root, { recursive: true, force: true }) };
+}
+
+describe("BI-28.5 · glob（Bun.Glob 扫描）", () => {
+	test("单星不递归 + 双星递归 + 起点收窄：返回排序相对路径与计数", async () => {
+		const { root, cleanup } = await makeScanTree();
+		try {
+			const glob = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "glob");
+			const rootLevel = JSON.parse((await glob.execute({ pattern: "*.ts" }, SIGNAL)) as string) as {
+				matches: string[];
+				count: number;
+			};
+			expect(rootLevel.matches).toEqual(["a.ts"]); // 单星不跨目录；隐藏/子目录不入
+			expect(rootLevel.count).toBe(1);
+			const all = JSON.parse((await glob.execute({ pattern: "**/*.ts" }, SIGNAL)) as string) as {
+				matches: string[];
+			};
+			// Bun.Glob 纯语义：node_modules 不排除（dot:false 仅挡 .hidden），封顶防护
+			expect(all.matches).toEqual(["a.ts", "node_modules/vendored.ts", "sub/b.ts"]);
+			const scoped = JSON.parse(
+				(await glob.execute({ pattern: "*.ts", path: "sub" }, SIGNAL)) as string,
+			) as { matches: string[] };
+			expect(scoped.matches).toEqual(["sub/b.ts"]); // 相对工作区根呈现
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test(`封顶：超过 GLOB_RESULT_LIMIT=${GLOB_RESULT_LIMIT} 截断并标注 truncated=true`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "bi-glob-cap-"));
+		try {
+			for (let i = 0; i < GLOB_RESULT_LIMIT + 5; i++) {
+				await writeFile(join(root, `f${String(i).padStart(4, "0")}.txt`), "x", "utf8");
+			}
+			const glob = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "glob");
+			const parsed = JSON.parse((await glob.execute({ pattern: "*.txt" }, SIGNAL)) as string) as {
+				count: number;
+				truncated?: boolean;
+			};
+			expect(parsed.count).toBe(GLOB_RESULT_LIMIT);
+			expect(parsed.truncated).toBe(true);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("路径守卫：逃逸三连拒绝 + PathJail read 裁决（工作区 .env）", async () => {
+		const { root, cleanup } = await makeScanTree();
+		try {
+			const sibling = `${root}-sib`;
+			await mkdir(sibling, { recursive: true });
+			const glob = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "glob");
+			await expectPathEscape((path) => glob.execute({ pattern: "*.txt", path }, SIGNAL), basename(sibling));
+			await rm(sibling, { recursive: true, force: true });
+			await writeFile(join(root, ".env"), "K=1", "utf8");
+			try {
+				await glob.execute({ pattern: "*", path: ".env" }, SIGNAL);
+				expect.unreachable();
+			} catch (e) {
+				expect((e as Error).message).toBe("path-protected: workspace-env");
+			}
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("argSummary 与参数校验：pattern 缺参结构化报错", async () => {
+		const glob = byName(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() }), "glob");
+		expect(glob.argSummary?.({ pattern: "**/*.ts", path: "src" })).toBe("pattern=**/*.ts path=src");
+		for (const args of [undefined, {}, { pattern: "" }, { pattern: 42 }]) {
+			try {
+				await glob.execute(args, SIGNAL);
+				expect.unreachable();
+			} catch (e) {
+				expect((e as Error).message).toBe("pattern required");
+			}
+		}
+	});
+});
+
+describe("BI-28.5 · grep（递归正则扫描）", () => {
+	test("递归命中 file:line:text；跳过面全生效（node_modules/隐藏/二进制/超限/凭据文件名）", async () => {
+		const { root, cleanup } = await makeScanTree();
+		try {
+			const grep = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "grep");
+			const parsed = JSON.parse((await grep.execute({ pattern: "TODO" }, SIGNAL)) as string) as {
+				count: number;
+				output: string;
+			};
+			// 命中仅三个常规文件；node_modules/.hidden/blob.bin/big.log/id_rsa 全部不入结果
+			expect(parsed.count).toBe(3);
+			expect(parsed.output).toBe(
+				["a.ts:1:TODO: 根级待办", "sub/b.ts:1:TODO: 子目录待办", "sub/deep/c.txt:1:TODO: 深层待办"].join("\n"),
+			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("include 过滤（对相对路径 glob）与单文件起点、起点收窄", async () => {
+		const { root, cleanup } = await makeScanTree();
+		try {
+			const grep = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "grep");
+			const onlyTs = JSON.parse(
+				(await grep.execute({ pattern: "TODO", include: "*.ts" }, SIGNAL)) as string,
+			) as { count: number };
+			expect(onlyTs.count).toBe(2); // a.ts + sub/b.ts（c.txt 被过滤）
+			const onlySubTs = JSON.parse(
+				(await grep.execute({ pattern: "TODO", include: "sub/*.ts" }, SIGNAL)) as string,
+			) as { count: number; output: string };
+			// 含 "/" 的 glob 对工作区相对路径匹配：单星不跨段，只命中 sub/b.ts
+			expect(onlySubTs.count).toBe(1);
+			expect(onlySubTs.output).toBe("sub/b.ts:1:TODO: 子目录待办");
+			const subDir = JSON.parse(
+				(await grep.execute({ pattern: "TODO", path: "sub" }, SIGNAL)) as string,
+			) as { count: number; output: string };
+			expect(subDir.count).toBe(2);
+			expect(subDir.output).toContain("sub/b.ts:1:");
+			expect(subDir.output).toContain("sub/deep/c.txt:1:");
+			const single = JSON.parse(
+				(await grep.execute({ pattern: "TODO", path: "sub/b.ts" }, SIGNAL)) as string,
+			) as { count: number; output: string };
+			expect(single.count).toBe(1);
+			expect(single.output).toBe("sub/b.ts:1:TODO: 子目录待办");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test(`双封顶：命中 > GREP_MATCH_LIMIT=${GREP_MATCH_LIMIT} 截断；输出 > 10KB 保留尾部（bash 同款标记）`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "bi-grep-cap-"));
+		try {
+			// 250 行命中、每行约 100 字节：条数先顶到 GREP_MATCH_LIMIT，输出同时超 10KB
+			const line = `m${"z".repeat(90)}m\n`;
+			await writeFile(join(root, "many.txt"), line.repeat(GREP_MATCH_LIMIT + 50), "utf8");
+			const grep = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "grep");
+			const raw = (await grep.execute({ pattern: "^m.*m$" }, SIGNAL)) as string;
+			const parsed = JSON.parse(raw) as { count: number; output: string; truncated?: boolean; outputTruncated?: boolean };
+			expect(parsed.count).toBe(GREP_MATCH_LIMIT);
+			expect(parsed.truncated).toBe(true);
+			expect(parsed.outputTruncated).toBe(true);
+			expect(parsed.output.startsWith(`${GREP_TRUNCATION_MARKER}\n`)).toBe(true);
+			expect(parsed.output.length).toBeGreaterThan(GREP_OUTPUT_TAIL_LIMIT_BYTES);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("路径守卫：逃逸三连拒绝 + PathJail read 裁决（.env 起点）；路径不存在结构化报错", async () => {
+		const { root, cleanup } = await makeScanTree();
+		try {
+			const sibling = `${root}-sib`;
+			await mkdir(sibling, { recursive: true });
+			await writeFile(join(sibling, "outside.txt"), "TODO 界外", "utf8");
+			const grep = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "grep");
+			await expectPathEscape((path) => grep.execute({ pattern: "TODO", path }, SIGNAL), basename(sibling));
+			await rm(sibling, { recursive: true, force: true });
+			await writeFile(join(root, ".env"), "TODO SECRET=1", "utf8");
+			try {
+				await grep.execute({ pattern: "TODO", path: ".env" }, SIGNAL);
+				expect.unreachable();
+			} catch (e) {
+				expect((e as Error).message).toBe("path-protected: workspace-env");
+			}
+			try {
+				await grep.execute({ pattern: "TODO", path: "no-such-dir" }, SIGNAL);
+				expect.unreachable();
+			} catch (e) {
+				expect((e as Error).message).toBe("grep-path-not-found");
+			}
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("非法正则与缺参：结构化报错（不触 fs）；argSummary 审计面", async () => {
+		const grep = byName(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() }), "grep");
+		try {
+			await grep.execute({ pattern: "([bad" }, SIGNAL);
+			expect.unreachable();
+		} catch (e) {
+			expect((e as Error).message).toContain("grep-pattern-invalid");
+		}
+		for (const args of [undefined, {}, { pattern: "" }]) {
+			try {
+				await grep.execute(args, SIGNAL);
+				expect.unreachable();
+			} catch (e) {
+				expect((e as Error).message).toBe("pattern required");
+			}
+		}
+		expect(grep.argSummary?.({ pattern: "TODO", path: "src", include: "*.ts" })).toBe(
+			"pattern=TODO path=src include=*.ts",
+		);
+		expect(grep.argSummary?.({ pattern: "TODO" })).toBe("pattern=TODO path=.");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // 信号透传（全工具面）
 // ---------------------------------------------------------------------------
 
@@ -677,6 +912,8 @@ describe("BI-25.1/28 · 信号透传", () => {
 			read_file: { path: "note.txt" },
 			web_fetch: { url: "https://a.example.com/slow" },
 			web_search: { query: "慢查询" },
+			glob: { pattern: "**/*.txt" },
+			grep: { pattern: "x" },
 			bash: { command: "echo hi" },
 			edit: { path: "note.txt", old_string: "a", new_string: "b" },
 			write: { path: "note.txt", content: "x" },
