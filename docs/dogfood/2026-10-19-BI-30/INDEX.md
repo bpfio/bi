@@ -11,3 +11,11 @@ bi 修 bi 生产标冲刺的实例结论文档(主控验收记录见 DEVLOG.md �
 
 运行环境:合成 HOME(密钥仅经 BI_MIMO_API_KEY 环境注入,配置零明文),mimo-v2.6-flash messages 协议;
 主控脚手架:--max-rounds 旗标(dogfood 发现 #1,回合上限 8 不可调)。
+
+## 全量语料(2026-10-19 二次收纳)
+
+- `briefs/` — 六份工单简报(t1 初版/t1 续作/t2 合并版/t2a/t2b/t3);
+- `runlogs/*.log.gz` — 七次 bi 无头运行的控制台流日志(含 stream 事件全文);
+- `transcripts/*.jsonl` — bi 会话转录(bi 自有会话格式,dogfood 原始凭证;泄漏扫描:仅 api_key_env 变量名,零密钥值)。
+
+测试代码与测试样例本体随工单代码提交入库(agent-tui.test.ts +154、headless.test.ts +145、args.test.ts、sandbox/buildBin e2e 门控),随波推送 bpfio/bi。

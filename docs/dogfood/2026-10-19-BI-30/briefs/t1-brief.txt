@@ -1,0 +1,12 @@
+工单 BI-30.1:把自定义斜杠命令的执行面接进 REPL(当前占位文本"执行面尚未接线")。
+
+现状锚点(先读这三个文件再动手):
+- packages/core/src/commands/custom-commands.ts:已交付发现(discoverSlashCommands)与模板展开 expandCommand(cmd: SlashCommand, argv: string[]): SlashParse($ARGUMENTS/$1..$n/{{args}};缺必选参数返回 {ok:false,error:{code:'missing-required',...}});
+- bin/bi.ts:slashCommand 处理器对已知自定义命令返回占位文本;且 discoverSlashCommands 的完整注册表被丢弃,只保留了 surface 条目 {name,description};
+- packages/tui/src/mount/agent-tui.ts:submit() 把 / 开头行拦截给 options.slashCommand,返回值一律当本地输出(system 行转录,不入模型回合)。
+
+交付目标:
+1) agent-tui:TuiSessionOptions.slashCommand 返回类型扩展为 Promise<string | { prompt: string }>;{ prompt } 形态=展开后的用户提示词,走正常模型回合(JSONL 转录记 user 与 assistant,不出 system 本地行),回合结束后按普通收尾(endedAs="finish");
+2) bin/bi.ts:保留 discovered.commands 完整注册表;已知自定义命令→expandCommand(命令对象, 参数数组)→ok 返回 { prompt: 展开文本 },!ok 返回 error.message(本地文本,不进模型回合);/permissions 与未知命令语义不变;
+3) 测试:agent-tui 单测覆盖 { prompt } 形态(注入伪 ModelPort,断言 user 消息进入模型回合且转录含 assistant 回复)+ 既有 string 本地形态回归不破;展开失败(!ok)路径断言本地错误文本。
+约束:TS strict;tui 不引 node:fs;测试零网络;完成后运行 bun test packages/tui packages/core 确认全绿,并把改动摘要写进最终回复。

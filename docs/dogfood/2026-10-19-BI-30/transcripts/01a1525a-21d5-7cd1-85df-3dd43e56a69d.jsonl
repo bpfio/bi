@@ -1,0 +1,3 @@
+{"kind":"meta","v":1,"sessionId":"01a1525a-21d5-7cd1-85df-3dd43e56a69d","title":"只回答两个字:就绪","createdAt":1792383001047,"cwd":"/home/yupeng/bi"}
+{"kind":"entry","v":1,"entry":{"id":"01a1525a-21e8-79e7-8388-badce2618111","parentId":null,"type":"user","payload":{"text":"只回答两个字:就绪"},"createdAt":1792383001064,"seq":1}}
+{"kind":"entry","v":1,"entry":{"id":"01a1525a-26cb-7065-9770-7db9c2418435","parentId":"01a1525a-21e8-79e7-8388-badce2618111","type":"assistant","payload":{"content":[{"type":"text","text":"就绪"}]},"createdAt":1792383002315,"seq":2}}

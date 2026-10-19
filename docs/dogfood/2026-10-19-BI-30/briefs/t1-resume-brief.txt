@@ -1,0 +1,14 @@
+工单 BI-30.1(断点续作):自定义斜杠命令执行面接入 REPL。
+
+断点状态:前一实例已把大部分改动留在工作树——先 `git diff bin/bi.ts packages/tui/src/mount/agent-tui.ts packages/tui/src/mount/agent-tui.test.ts` 审查既有改动,在其基础上补缺/修错/验证,不要推倒重来。
+
+工单目标(验收标准):
+1) packages/tui/src/mount/agent-tui.ts:TuiSessionOptions.slashCommand 返回 Promise<string | { prompt: string }>;string=本地输出(system 行转录,不入模型回合,现状语义);{ prompt }=展开后的用户提示词,走正常模型回合(JSONL 转录记 user 与 assistant,无 system 本地行,endedAs="finish");
+2) bin/bi.ts:保留 discovered.commands 完整注册表;已知自定义命令→expandCommand(命令对象, 参数数组)→ok 返回 { prompt: 展开文本 },!ok 返回 error.message;/permissions 与未知命令语义不变;
+3) 测试:agent-tui.test.ts 应已有前任新增的 {prompt} 形态用例(+154 行)——确认其断言真实跑通;展开失败(!ok)路径有断言;既有 string 本地形态回归不破。
+
+边界与约束:
+- packages/core/src/cli/commands/args.ts、args.test.ts、main.ts 有主控线的 --max-rounds 未提交改动,勿动勿回滚;
+- packages/core/src/commands/custom-commands.ts 的 expandCommand/discoverSlashCommands 是已交付器官,只消费不修改(除非发现真实缺陷,若改需在最终回复说明);
+- TS strict;tui 不引 node:fs;测试零网络。
+完成判据:bun test packages/tui packages/core 全绿 + 双 tsc --noEmit 0。最终回复给出:改动文件清单、测试结果数、遗留问题(如有)。

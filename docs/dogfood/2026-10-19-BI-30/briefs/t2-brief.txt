@@ -1,0 +1,16 @@
+工单 BI-30.2:测试可移植性门控——让 `bun test` 在无 bwrap/无构建链的干净机器(如 GitHub ubuntu-latest)上全绿。
+
+背景:CI 曾在 ubuntu-latest 上 24 fail/19 errors,失败簇:
+a) "probe — 本机真实探测(Linux)" 与 "真实 bwrap 执行" 套件(依赖本机 bubblewrap 0.11);
+b) "buildBin e2e > 真实构建 linux-x64"(依赖本机构建链);
+c) "BI-26.2 伪端点 bin e2e > openai 模式:resolveModelPort 选择链→适配器直连伪端点"(根因未查明,你负责诊断)。
+
+交付目标:
+1) 定位三簇测试文件;对 a/b 实施能力探测门控:能力在(bwrap 可用/构建链可用)照常跑,能力缺失→结构化跳过(bun test 的 test.skip 或 describe 级门控,带一行原因说明);仓库已有先例可循:BI_PTY_E2E 环境门控(伪端点 bin e2e/pty 回归);
+2) 对 c:诊断真实根因后修复——若是环境依赖,同样门控;若是测试自身缺陷(如时序/路径假设),修测试;若是产品代码缺陷,最小修复并在最终回复单列说明;
+3) 验证:本机(能力齐全)`bun test` 全绿不减覆盖;模拟能力缺失(如 PATH 去掉 bwrap 或注入探测覆盖点)→ 相关套件跳过而非失败。
+
+边界与约束(工作树有并行未提交改动,一律勿动勿回滚):
+- bin/bi.ts、packages/tui/**(BI-30.1 已完成);packages/core/src/cli/commands/args.{ts,test.ts}、main.ts、headless.ts、packages/core/src/evals/e2e-drill-l-execution.test.ts(BI-30.3+主控线 --max-rounds 脚手架);
+- 你的改动限定:三簇测试文件及其被测文件的最小修复;测试零网络(本机子进程真实 spawn 允许)。
+完成判据:全仓 bun test 全绿;最终回复:每簇的根因一句话+处置方式+改动文件清单+测试总数。

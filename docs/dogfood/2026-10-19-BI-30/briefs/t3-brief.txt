@@ -1,0 +1,17 @@
+工单 BI-30.3:--output-format 从"能解析"变"真消费"。
+
+现状锚点(先读再动手):
+- packages/core/src/cli/commands/args.ts:OutputFormat 白名单只有 "stream-json",parseGlobalArgs 存入 parsed.outputFormat;
+- packages/core/src/cli/main.ts:handleMainCommand 无头装配处 outputFormat 被丢弃(未传给 runHeadless);
+- packages/core/src/cli/headless.ts:out 汇把 BI-04.2 流事件(content_delta/usage/done/session_done 等)直接落out——即当前缺省输出事实上就是 stream-json 形态。
+
+交付目标:
+1) OutputFormat 白名单扩为 ["stream-json","text"];headless 新增选项 outputFormat(缺省 "stream-json"=现状行为,契约不变);main.ts 把 parsed.outputFormat 接进 runHeadless;
+2) "text" 形态:out 只落最终 finalText 一段(保留现有事件内部流转,仅输出面收敛);错误/诊断仍走 err;session_done 等 meta 不落 out;
+3) 测试:headless 单测(注入伪 ModelPort+out 收集器)断言 text 形态 out 恰为 finalText、stream-json 缺省行为回归不破;args.test.ts 白名单用例同步;既有 bin e2e 断言(依赖 stream 形态)不破。
+
+边界与约束:
+- 工作树另有未提交改动:bin/bi.ts、packages/tui/**(BI-30.1 另一实例在做)、packages/core/src/cli/commands/args.{ts,test.ts} 与 main.ts 的 --max-rounds 脚手架(主控线)——均勿动勿回滚;你的改动限定在:args.ts 白名单、headless.ts、main.ts 接线行、对应测试;
+- 并行实例在同一工作树跑测试,跑测试请用窄范围(bun test packages/core/src/cli headless 相关文件),勿跑全仓;
+- TS strict;测试零网络。
+完成判据:bun test packages/core/src/cli/commands/args.test.ts + headless 相关测试文件全绿;packages/core tsc --noEmit 0。最终回复:改动文件清单、测试数、遗留问题。
