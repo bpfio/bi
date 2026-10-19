@@ -1,0 +1,17 @@
+工单 D3 / BI-30.2b 处置:给 CI 补装依赖步骤(单文件手术)。
+
+背景(主控已实锤,勿再诊断):CI gates 无 bun install 步骤,裸跑 bun test 进 auto-install 模式,workspace 嵌套依赖(smol-toml/picomatch)对父进程内 import 解析失败,致伪端点 e2e openai 模式与 buildBin e2e 在 ubuntu-latest 挂、本机过。详见 docs/dispatch/2026-10-19-wave/d1-t2b-diag-report.md"真根因"节。
+
+任务(唯一允许的改动):编辑 /home/yupeng/bi/.github/workflows/ci.yml,在 setup-python 步骤之后、"全仓测试"步骤之前,插入一个步骤:
+
+  - name: 安装依赖(冻结锁文件;BI-30.2b:auto-install 无法解析 workspace 嵌套依赖)
+    run: bun install --frozen-lockfile
+
+除该 3 行外,ci.yml 其余内容、其它任何文件、bun.lock、package.json 一律不得改动。不要 commit、不要 push,改完工作树留给主控验收。
+
+验证(必须执行,最终回复附输出摘要):
+1) git -C /home/yupeng/bi diff --stat 确认仅 ci.yml 一文件、+3 行左右;
+2) git -C /home/yupeng/bi worktree add --detach /tmp/d3-verify HEAD 后:cd /tmp/d3-verify && bun install --frozen-lockfile && BI_PTY_E2E=1 bun test scripts/fake-endpoint-e2e.test.ts && bun test scripts/build-bin.test.ts,期望两套件全绿(此前无 install 时 openai 用例必挂);
+3) 验证完 git -C /home/yupeng/bi worktree remove --force /tmp/d3-verify 清理。
+
+交付(最终回复格式):diff 全文 + 验证输出摘要(两套件 pass/fail 计数)+ 一句话结论。

@@ -1,0 +1,21 @@
+工单 D1 / BI-30.2b:诊断(只诊断,零修改)"BI-26.2 伪端点 bin e2e > openai 模式:resolveModelPort 选择链→适配器直连伪端点"在 GitHub ubuntu-latest 失败、本机通过的根因。
+
+背景与前情:
+- 测试:scripts/fake-endpoint-e2e.test.ts(105 行,BI_PTY_E2E=1 门控),失败用例 L74 "openai 模式:resolveModelPort 选择链→适配器直连伪端点";伪端点 scripts/fake-endpoint.ts(本地 Bun.serve,零外网);anthropic 模式用例(L48)在 CI 通过,唯 openai 模式挂。
+- 失败环境:GitHub ubuntu-latest + bun 1.3.14 + BI_PTY_E2E=1;本机 bun 同版通过。
+- 前实例 C2 三轮诊断被超时截停,零编辑,遗留线索:失败路径疑似涉及 DeepSeekAdapter(openai kind 适配器选择链)。
+- 历史简报:docs/dogfood/2026-10-19-BI-30/briefs/t2b-brief.txt 可参考。
+
+任务:
+1) 通读上述测试与伪端点,列其对环境的全部假设(端口/127.0.0.1、HOME、进程环境变量、bun 特性、spawn 方式、时序、并发、fetch 超时);
+2) 顺 resolveModelPort(packages/core/src/cli/model-port.ts)的 openai kind 选择链追到适配器实例化,定位与 DeepSeekAdapter 相关的分支,判定最可能根因——按"本机过/CI 挂"差集推理,以代码证据为准,禁止联网;
+3) 可本机复跑验证:BI_PTY_E2E=1 bun test scripts/fake-endpoint-e2e.test.ts(只跑测试,确认本机绿);
+4) 给出处置方案:若测试环境假设过强→最小修复或门控(同 BI_PTY_E2E 风格);若测试真缺陷→修测试;若怀疑产品缺陷→仅报告不动产品码。方案以 diff 草案文本呈现,不要落盘。
+
+边界(硬约束):零修改——禁止编辑/创建/删除本仓库任何文件(无 Edit/Write 工具,也不得用 Bash 重定向写仓库内文件);/tmp 外不写盘。工作树若有脏文件一律勿动。
+
+交付(最终回复格式,不复述过程):
+① 环境假设清单(编号列表)
+② 根因判定:结论一句话 + 代码证据(file:line)+ 排除项
+③ 处置方案:diff 草案 + 影响面
+④ 置信度(高/中/低)与残余风险

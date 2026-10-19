@@ -1,0 +1,27 @@
+工单 D2 / TUI-ALIGN-1:bi TUI 与 Kimi Code CLI 对齐差距分析(只读分析,零修改)。
+
+背景:bi(/home/yupeng/bi,bun monorepo,清华系硬分叉自研 agent CLI)的终端交互层按 devplan 支柱二要求"100% 复刻 Kimi Code CLI",但当前 TUI 交互面简陋。上游参照树(只读,铁律禁止修改):/home/yupeng/references/kimi-code(HEAD=18c6d64,与 T0 锚点一致)。
+
+对照面地图:
+【上游 kimi-code 侧】
+- 工业终端库:/home/yupeng/references/kimi-code/packages/pi-tui/src/(重点:editor-component.ts、autocomplete.ts、keybindings.ts、kill-ring.ts、alt-screen-search.ts、layout.ts、fuzzy.ts、stdin-buffer.ts、components/ 目录)
+- CLI 子命令面:/home/yupeng/references/kimi-code/apps/kimi-code/src/cli/(export/fork/session/vis/acp/config 等)
+- 转录投影:/home/yupeng/references/kimi-code/packages/transcript/
+【bi 现状侧】
+- 交互挂载:packages/tui/src/mount/agent-tui.ts(800 行)、mount/repl.ts、mount/candidate-menu.ts
+- 组件:packages/tui/src/components/{cjk-width,mode-indicator,paste-banner,read-group,swarm-progress,thought-card,tui-app}.ts
+- 引擎:packages/tui/src/engine/{virtual-terminal,output-buffer,paced-progress,diff-renderer,paste-burst}.ts
+- 子命令注册:bin/bi.ts
+- 对齐规格:devplan.md 的 BI-19 / BI-19.1 / BI-19.2 卡与支柱二清单(可读 /home/yupeng/bi/devplan.md)
+
+任务:
+1) 差距矩阵:按交互维度(输入编辑器/自动补全/快捷键与 kill-ring/历史搜索/渲染引擎/转录视图/子命令面)逐项对比 kimi 实现 vs bi 现状,标【对齐/部分/缺失】+ 双侧 file:line 证据;
+2) 主因判定:bi TUI"简陋"感的最痛 3 个差距,按用户可感知度排序;
+3) Top-3 快赢提案:每项含 ①目标文件清单(限 bi 侧)②改动要点(吸收上游哪个文件哪个机制)③测试方案(bun test,可测什么)④工作量档位 S/M/L ⑤对应 devplan 卡号。提案必须可在不修改参考树的前提下实现。
+
+边界(硬约束):零修改——/home/yupeng/bi 与 /home/yupeng/references/ 全树只读,禁止任何写操作;禁止联网;分析只基于本地代码。
+
+交付(最终回复格式,不复述过程):
+① 差距矩阵(markdown 表格)
+② 主因判定 top3(一句话/条)
+③ Top-3 快赢提案(按上面 5 要素)

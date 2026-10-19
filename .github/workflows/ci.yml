@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - name: 安装依赖(冻结锁文件;BI-30.2b:auto-install 无法解析 workspace 嵌套依赖)
+        run: bun install --frozen-lockfile
       - name: 全仓测试(含伪端点 e2e 与 pty 回归)
         run: bun test
       - name: core 类型
