@@ -187,6 +187,52 @@ describe("BI-20.2 export：out 落盘", () => {
   });
 });
 
+describe("BI-20.3 export：html 分支", () => {
+  test("format html：合法导出含 DOCTYPE/标题/details/输入-输出结构", async () => {
+    const { mgr, sessionId } = await setup(WITH_TOOLS);
+    const { content } = await exportSession(mgr, sessionId, { format: "html" });
+    expect(content.startsWith("<!DOCTYPE html>")).toBe(true);
+    expect(content).toContain("<title>导出演练</title>");
+    expect(content).toContain("<details>");
+    expect(content).toContain('<div class="io-label">输入</div>');
+    expect(content).toContain('<div class="io-label">输出</div>');
+    expect(content).toContain("<pre><code>");
+  });
+
+  test("html 导出含 <script> 内容必须已转义", async () => {
+    const { mgr, sessionId } = await setup([
+      { type: "user", payload: { text: '<script>alert(1)</script>' } },
+    ]);
+    const { content } = await exportSession(mgr, sessionId, { format: "html" });
+    expect(content).toContain("&lt;script&gt;");
+    expect(content).not.toContain("<script>alert");
+  });
+
+  test("html 与 markdown/json 同为合法格式（白名单终态）", async () => {
+    const { mgr, sessionId } = await setup(USER_ASSISTANT);
+    expect((await exportSession(mgr, sessionId, { format: "html" })).content).toContain("<!DOCTYPE html>");
+    expect((await exportSession(mgr, sessionId)).content).toContain("# 导出演练");
+    expect((await exportSession(mgr, sessionId, { format: "json" })).content).toContain('"entries"');
+  });
+
+  test("非法 format 仍抛 invalid-format（xml 等非白名单值）", async () => {
+    const { mgr, sessionId } = await setup(USER_ASSISTANT);
+    const error = await errorCode(exportSession(mgr, sessionId, { format: "xml" as "markdown" }));
+    expect(error.code).toBe("invalid-format");
+  });
+
+  test("html 同样支持 out 落盘（路径语义对齐 markdown 分支）", async () => {
+    const { mgr, sessionId } = await setup(USER_ASSISTANT);
+    const root = mgr.rootDir;
+    const out = join(root, "..", "html-out", "export.html");
+    const { content, writtenTo } = await exportSession(mgr, sessionId, { format: "html", out });
+    expect(writtenTo).toBe(out);
+    const written = await readFile(out, "utf8");
+    expect(written).toBe(content);
+    expect(written.startsWith("<!DOCTYPE html>")).toBe(true);
+  });
+});
+
 describe("BI-20.2 export：错误结构化", () => {
   test("会话不存在 → session-missing", async () => {
     const mgr = await tmpManager();
