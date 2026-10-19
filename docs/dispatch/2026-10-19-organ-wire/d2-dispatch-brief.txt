@@ -1,0 +1,13 @@
+工单 ORGAN-WIRE W1-D2(BI-05.2 + BI-CLI-CONFIG):一个在库器官接入子命令面 + 一个低频子命令清账。
+
+器官与现状(主控已审计,cwd=/home/yupeng/bi):
+A. packages/core/src/rules/init-service.ts——BI-05.2 项目技术栈自主探测与 BI.md 规则自省生成器(detectStack/classifyTestScript/草稿生成 export 面,自行 grep);dispatch.ts:13-14 注释明确"BI-05.2 的 BI.md 草稿面"是 init 的设计意图,但现实现只做 .bi/local.toml 脚手架;
+B. bi config 子命令不存在(SUBCOMMANDS 见 dispatch.ts:64),查 kimi 对照面可只读参考 /home/yupeng/references/kimi-code/apps/kimi-code/src/cli/sub/(config 相关自行定位)。
+装配目标:
+1) bi init 增强:现有 .bi/local.toml 脚手架语义不变,追加 BI.md 草稿生成——调 init-service 的 detectStack+草稿函数,在 cwd 写 BI.md(已存在不覆盖,报告路径);检测失败/不支持栈=结构化提示不假冒,init 退出码语义不变;
+2) 新子命令 bi config:[get key]/[set key value]/[list] 操作 ~/.bi/config.toml 键值面(读改写保留注释与顺序不做硬性要求,诚实备案所用策略);未知键=结构化错误并列出合法键(读 packages/core/src/config/schema.ts 的键面);config-service 注入面(deps.homeDir)沿用既有模式;SUBCOMMANDS+usage+dispatch 查表同步;
+3) 测试:init 的 BI.md 生成(新/已存在不覆盖/检测失败)、config get/set/list/未知键/非法值,全部替身 FS 或临时目录。
+
+边界(并行工单面,一律勿动):packages/core/src/cli/{main,headless}.ts 与 agent.ts(并行 D3)、toolset.ts 与 tools/、interaction/(并行 D1);rules/ 只读消费(init-service 已有测试,不改器官本体;发现器官缺陷只报告);不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/cli/ ./packages/core/src/rules/ 全绿 + cd packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/init 增强语义/config 键值面与写回策略/测试数+tsc/未尽边界。

@@ -1,0 +1,178 @@
+diff --git a/packages/core/src/cli/toolset.ts b/packages/core/src/cli/toolset.ts
+index 7bfece9..05811b5 100644
+--- a/packages/core/src/cli/toolset.ts
++++ b/packages/core/src/cli/toolset.ts
+@@ -69,6 +69,9 @@ import { DeepSeekSearchProvider } from "../tools/search-providers/deepseek-searc
+ import { scanShell } from "../sandbox/shell-scan";
+ import { PathJail } from "../sandbox/path-jail";
+ import { atomicWriteFile } from "../utils/atomic-write";
++import { matchOldText } from "../tool/edit-matchers";
++import { UserQuestionService } from "../interaction/user-questions";
++import { AskUserTool, ASK_USER_QUESTION_TOOL_SPEC } from "../interaction/ask-user-tool";
+ 
+ // ---------------------------------------------------------------------------
+ // 公共面
+@@ -139,6 +142,18 @@ export interface BuildDefaultToolsetOptions {
+ 	readonly env?: Record<string, string | undefined>;
+ 	/** 注入 spawn 执行器（bash 工具离屏测试用，零实弹）；缺省真实 Bun.spawn。 */
+ 	readonly spawnImpl?: SpawnImpl;
++	/**
++	 * 注入 UserQuestionService：提供后 ask_user_question 工具才注册进工具数组
++	 * （缺省不挂，保持既有 8 件工具注册表面零变动）。host 运行环负责实例与
++	 * 回答注入；本卡仅做绑定装配。
++	 */
++	readonly userQuestionService?: UserQuestionService;
++	/**
++	 * ask_user_question 可交互（TTY）开关：缺省按 process.stdout.isTTY 判定。
++	 * headless（无 TTY）场景置 false：工具结构化返回 {answered:false,reason:"no-interactive"}，
++	 * 不悬挂不抛。仅当 userQuestionService 提供时生效。
++	 */
++	readonly askUserInteractive?: boolean;
+ }
+ 
+ /**
+@@ -158,7 +173,7 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
+ 	// 会话级缓存/限速：随工具集实例隔离（默认全局单例会跨测试与跨会话串味）。
+ 	const searchCache = new TtlResultCache();
+ 	const searchLimiter = new TokenBucketRateLimiter(DEFAULT_SEARCH_RPS);
+-	return [
++	const tools: ToolBinding[] = [
+ 		readFileBinding(root),
+ 		webFetchBinding(fetchImpl),
+ 		webSearchBinding({ fetchImpl, env, apiKeyEnv, cache: searchCache, limiter: searchLimiter }),
+@@ -168,6 +183,12 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
+ 		editBinding(root, pathJail),
+ 		writeBinding(root, pathJail),
+ 	];
++	// ask_user_question：仅当 host 注入 UserQuestionService 才注册（保持缺省 8 件不变）。
++	if (options.userQuestionService !== undefined) {
++		const interactive = options.askUserInteractive ?? (process.stdout.isTTY === true);
++		tools.push(askUserBinding({ service: options.userQuestionService, interactive }));
++	}
++	return tools;
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -611,15 +632,31 @@ function editBinding(root: string, jail: PathJail): ToolBinding {
+ 				const abs = guardWritePath(root, jail, path);
+ 				if (!(await Bun.file(abs).exists())) throw new Error("file-not-found");
+ 				const content = await Bun.file(abs).text();
+-				const matches = content.split(oldString).length - 1;
+-				if (matches === 0) throw new Error("edit-no-match: matches=0");
+-				if (matches > 1 && !replaceAll) {
+-					throw new Error(`edit-ambiguous: matches=${matches} (set replace_all=true)`);
++
++				// 第 1 级（精确）优先：走既有逐字节不变路径（split/join + 精确计数 + replace_all 语义）。
++				const exactCount = content.split(oldString).length - 1;
++				if (exactCount > 0) {
++					if (exactCount > 1 && !replaceAll) {
++						throw new Error(`edit-ambiguous: matches=${exactCount} (set replace_all=true)`);
++					}
++					// split/join 字面替换：绕开 String.replace 的 $ 模式展开语义。
++					const next = content.split(oldString).join(newString);
++					await atomicWriteFile(abs, next);
++					return JSON.stringify({ ok: true, path, matches: exactCount });
++				}
++
++				// 精确 0 命中 → 8 级阶梯弹性降级（各级命中附 matchLevel 备注，不改成功/失败语义）。
++				const match = matchOldText(content, oldString, { onAmbiguous: replaceAll ? "first" : "report" });
++				if (match.level === "unmatched") throw new Error("edit-no-match: matches=0");
++				if (match.ambiguous) {
++					// 仅 replaceAll=false 会到此处（replaceAll=true 走 first 已取第一处）；防御性保持歧义报错。
++					throw new Error(`edit-ambiguous: matches=${match.occurrences} (set replace_all=true)`);
+ 				}
+-				// split/join 字面替换：绕开 String.replace 的 $ 模式展开语义。
+-				const next = content.split(oldString).join(newString);
++				// 单点降级命中：替换唯一匹配切片，四周字节原样保留（matched 直映原文切片）。
++				const next =
++					content.slice(0, match.index) + newString + content.slice(match.index + match.matched.length);
+ 				await atomicWriteFile(abs, next);
+-				return JSON.stringify({ ok: true, path, matches });
++				return JSON.stringify({ ok: true, path, matches: 1, matchLevel: match.level });
+ 			});
+ 		},
+ 	};
+@@ -661,6 +698,37 @@ function writeBinding(root: string, jail: PathJail): ToolBinding {
+ 	};
+ }
+ 
++// ---------------------------------------------------------------------------
++// ask_user_question —— 交互提问工具面（BI-07.10 薄壳；headless 降级安全）
++// ---------------------------------------------------------------------------
++
++interface AskUserDeps {
++	readonly service: UserQuestionService;
++	readonly interactive: boolean;
++}
++
++/**
++ * ask_user_question 绑定：喂模型定义 + 安全降级执行。
++ * 非可交互（headless / 无 TTY）时 AskUserTool 直接结构化返回
++ * {answered:false,reason:"no-interactive"}——绝不调用 service.ask（block 会悬挂），
++ * 不悬挂不抛。默认不改变其他任何工具行为。
++ */
++function askUserBinding(deps: AskUserDeps): ToolBinding {
++	const tool = new AskUserTool(deps.service, { interactive: deps.interactive });
++	return {
++		definition: {
++			...ASK_USER_QUESTION_TOOL_SPEC,
++			inputSchema: ASK_USER_QUESTION_TOOL_SPEC.inputSchema as Record<string, unknown>,
++		},
++		readOnly: true,
++		argSummary: (args) => summarizeArg(args, "questions"),
++		execute: async (args) => {
++			const result = await tool.run(args);
++			return JSON.stringify(result);
++		},
++	};
++}
++
+ // ---------------------------------------------------------------------------
+ // edit/write argSummary —— 路径 + 替换计数/字节数 + 片段（审批浮层审计面）
+ // ---------------------------------------------------------------------------
+diff --git a/packages/core/src/interaction/ask-user-tool.ts b/packages/core/src/interaction/ask-user-tool.ts
+index ac9a6f2..f8d7302 100644
+--- a/packages/core/src/interaction/ask-user-tool.ts
++++ b/packages/core/src/interaction/ask-user-tool.ts
+@@ -62,7 +62,19 @@ export const ASK_USER_QUESTION_TOOL_SPEC: AskUserToolSpec = {
+ 
+ export type AskUserToolResult =
+   | ({ ok: true } & AskResult)
+-  | { ok: false; code: string; message: string };
++  | { ok: false; code: string; message: string }
++  /** 交互降级：非可交互（headless / 无 TTY）场景的结构化回执，绝不悬挂、绝不抛。 */
++  | { answered: false; reason: "no-interactive" };
++
++/** AskUserTool 选项：是否处于可交互（TTY）环境。 */
++export interface AskUserToolOptions {
++  /**
++   * 可交互（TTY）环境？缺省 true（不降级，走既有 IO 挂起语义）。
++   * headless 装配置 false：run 直接结构化返回 {answered:false,reason:"no-interactive"}，
++   * 绝不调用 service.ask（block 模式会无限挂起），不悬挂不抛。
++   */
++  readonly interactive?: boolean;
++}
+ 
+ function plainArgs(args: unknown): Record<string, unknown> | undefined {
+   if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+@@ -72,13 +84,19 @@ function plainArgs(args: unknown): Record<string, unknown> | undefined {
+ export class AskUserTool {
+   readonly spec = ASK_USER_QUESTION_TOOL_SPEC;
+   readonly #service: UserQuestionService;
++  readonly #interactive: boolean;
+ 
+-  constructor(service: UserQuestionService) {
++  constructor(service: UserQuestionService, options: AskUserToolOptions = {}) {
+     this.#service = service;
++    this.#interactive = options.interactive ?? true;
+   }
+ 
+   /** 工具入口。结构化结果，绝不 throw（block 模式 Promise 挂起至应答/取消）。 */
+   async run(args: unknown): Promise<AskUserToolResult> {
++    // 交互降级安全：非可交互场景直接结构化返回，绝不触碰 service.ask（防 block 悬挂）。
++    if (!this.#interactive) {
++      return { answered: false, reason: "no-interactive" };
++    }
+     const input = plainArgs(args);
+     if (input === undefined) {
+       return { ok: false, code: "invalid-request", message: "参数须为对象" };

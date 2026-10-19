@@ -437,3 +437,29 @@ D2c 差距分析(7 维矩阵双侧 file:line):**转录投影层已同构对齐**
 ### 十六·附 终验补遗 (2026-10-19,用户口令"实质性验收后落盘")
 
 C1/C2/C3 已按验收四步闭卡;本轮补最后一层实质验收:**真浏览器渲染测试不可执行**——宿主机无 Chrome/Chromium(browser-use 运行时报 "No installed Chrome or Chromium executable"),bi vis 的 DOM 渲染面验收止步于 HTTP+结构断言级,如实备案为环境边界。可做的补位检验已做:内联 JS 经 bun build 解析与 node --check 双解析器验证通过;实服页面 `src=`/`href=` 计数为 0(零外链声明在实服产物上复核)。REPL 输入面真机冒烟同样受环境限制(无 dogfood 密钥不可真启 REPL),以 pty 套件(BI_PTY_E2E=1 全绿)为证据链。**待环境具备时的两件补测**:装 Chromium 后浏览器实测 vis 渲染交互;配置凭据后真 REPL 手感(键位改绑/鼠标点击/搜索)。
+
+## 十七、ORGAN-WIRE 清账战役:器官装配 W1 (2026-10-19,当日第六波)
+
+用户口令"随便点一个问题就是未装配状态,对照台账全面梳理,全部完成,让 bi 成为可用的 cli agent"。**全面审计定案:12 个器官在库、有测试、零装配**(context 16 文件/subagent 7 文件为首),全部是 BI-05/07/08/11/16/21 族早期批量波的"最后一公里"欠账。处置:9 项装配(4 波,headless 循环面跨波串行防互踩)+ 5 项诚实备案(media 无摄入面/BI-20.1 已被 BI-28.3 覆盖核心语义/login·web 无生态/渲染树 ADR/jobs 无长驻场景),14 卡入台账。
+
+### 十七·一 双节点开通(xhub)
+
+用户指定 xhub=192.168.1.22。实测开通:SSH 免密(ssh_config 别名)、codebuddy 2.169.0 同版、免费模型真跑、bun 1.3.14 对齐(顺带 sudo 装 unzip)、仓库 rsync 镜像+node_modules、远端测试实测通过。**关键发现:免费模型 429 限流按节点计**——本机 hy3 打满(23:13 重置)时 xhub hy3 正常,派工纪律升格"限流即切换节点重派,不是等待";进程探针改 ppid 链+trace mtime(进程标题重写会骗过 grep,当日踩坑两次)。**额度政策(用户裁定):hy3 双节点优先,step-5-preview 对额度消耗大,降为双节点皆 429 时的兜底**。
+
+### 十七·二 W1 三单(工具面/子命令面/循环面)
+
+| 单 | 卡 | 落点 | 要点 | 验收 |
+|---|---|---|---|---|
+| D2 | BI-05.2+CLI-CONFIG | dispatch.ts+commands/config.ts(新) | bi init 接 rules/init-service(栈检测+BI.md 草稿,已存在不覆盖,检测失败诚实标注);bi config get/set/list——键面=schema 标量叶推导(42 键零漂移),写回复用 writeback 注释保留引擎 | 真机:get 新键/set 环写/未知键结构化列出全键/init 草稿生成 |
+| D3 | BI-08.1+11.1+21.1 | headless/main/schema/verifier | 工具输出 64KB 有界截断+端点脱敏+完工自验闸,**config 门控缺省全关,缺省路径逐字节等价**(17 根键回归钉死) | 43 新测试;缺省等价证明(off 原样穿越/凭据原样);真机 config 读新键 |
+| D1 | BI-07.1+07.10 | toolset.ts+interaction/**@xhub** | edit 8 级阶梯弹性匹配(1 级精确路径逐字节不变,命中附 matchLevel)+ask_user_question 条件注册(缺省 8 件面零变动)+headless 结构化降级(不悬挂不抛) | 全仓 4515/0×2;exec-drill 全链路真循环绿 |
+
+**D1 两段史**:首派本机 hy3,35 分钟死于 429(残骸 stash×2);换 xhub hy3 重派,同简报同模型一次成型,且方案优于残骸版(条件注册绕开改 exec-drill 期望)。残骸清理教训:**stash 面=污染面**——首撤漏掉 exec-drill.test.ts,导致全量门禁一次假红(与后续真 flaky 叠加混淆)。
+
+### 十七·三 意外渔获:session 并发竞态(数据丢失级,主控手术)
+
+W1 收尾全量门禁间歇红(7/8 绿),捕获定性:**BI-26.3 双 manager 同会话并发 append,一条条目被当"崩溃残留"截掉**——`#appendLine` 的残留截断用本写者过期 cleanLength,误杀并发写者刚落盘的完整条目。修复:截断前重解析全文件,解析成功则以新净边界为准(保留并发数据,只截真撕裂尾巴),解析失败才回退旧口径;+20 轮并发风暴回归。修后全量双连绿。竞态为存量(当日三单均未碰 session 层),属真实数据丢失隐患而非测试问题。
+
+**门禁终态:4515 pass/0 fail(241 文件,BI_PTY_E2E=1)+双 tsc 0,双连跑确认;CI 绿 30814b0。提交链:e401039(D2)→276e847(D3)→f337b70(D1@xhub)→30814b0(session fix)。派工档案:docs/dispatch/2026-10-19-organ-wire/(简报×4+报告×4+diff 存档)。**
+
+**诚实边界**:三开关缺省全关(0.3.0 再议默认值策略);spill 落盘未接线(无 logDir 面);回注模型的 tool_result 错误文本不脱敏;verify 失败复用退出码 1;ask overlay/TUI 面归 W2-D4;cli/sub/init.ts 平行未接线实现待清理;本机 hy3 额度 23:13 重置前单节点运转。

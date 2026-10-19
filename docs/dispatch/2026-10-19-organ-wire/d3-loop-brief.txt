@@ -1,0 +1,17 @@
+工单 ORGAN-WIRE W1-D3(BI-08.1 + BI-11.1 + BI-21.1,step-5-preview):三个在库器官接入会话循环面——本单是全仓最敏感面,硬约束在先。
+
+硬约束(优先级最高):**现有测试零改动、现有行为零变化**。所有新行为必须 config 显式开启才生效,缺省路径逐字节等价于现状。任何让既有用例变红/需改期望的方案=方案错误,退回重设计。
+
+器官现状(主控已审计,cwd=/home/yupeng/bi):
+A. packages/core/src/context/bounded-tool-text.ts——BI-08 单次工具输出 64KB 有界截断(boundToolText 纯函数,两级预算"行优先、字符兜底");
+B. packages/core/src/observability/endpoint-sanitizer.ts——BI-11.1 端点与错误负载脱敏器(零数据外泄铁律);
+C. packages/core/src/verifier/target-verifier.ts——BI-21.1 任务完工前置自验看门狗(Deliverable/CheckContext/CommandRunner 面)。
+装配目标(config 面新建,读 packages/core/src/config/schema.ts 后最小扩展,三级 TOML 拓扑沿用):
+1) [tools] outputLimitBytes(缺省 0=off):>0 时 headless 工具结果经 boundToolText 截断,截断附结构化标记;工具链路定位自行读 headless.ts 工具执行段;
+2) [telemetry] sanitizeErrors(缺省 false):true 时会话错误文本(main.ts err 面与 headless 错误路径)先经 sanitizer 再输出;
+3) [verify] onCompletion(缺省 off):true 时 headless 会话收尾前跑 verifier(Deliverable 由 config cwd 面声明,CommandRunner 用既有 spawn 面注入),不通过=退出码与结构化报告(不假冒成功);off 时零开销零行为差;
+4) 测试:三开关各自 on/off 对照(缺省 off=与现状逐字节等价的关键回归)、截断边界、脱敏样例、verifier 通过/失败两路;config schema 校验用例。
+
+边界(并行工单面,一律勿动):toolset.ts 与 tools/、interaction/(并行 D1);dispatch.ts、cli/commands/**(并行 D2);subagent/;bin/bi.ts 不动;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/ 全绿(既有用例零改动)+ cd packages/core && bunx tsc --noEmit 0 错 + 全仓抽测 bun test ./packages/tui/ 不红。
+最终回复(结论清单):改动文件清单/三个开关的语义与缺省值/config schema 键面/测试数+tsc/缺省等价性证明方式/未尽边界。

@@ -1,0 +1,13 @@
+工单 ORGAN-WIRE W1-D1(BI-07.1 + BI-07.10):两个在库器官接入模型工具面。
+
+器官现状(主控已审计:有测试、零装配,cwd=/home/yupeng/bi):
+A. packages/core/src/tool/edit-matchers.ts——BI-07.1 八级阶梯弹性文件匹配引擎(Edit 类工具 old_text 几乎总能命中);grep 其 export 面后接入;
+B. packages/core/src/interaction/ask-user-tool.ts——BI-07.10 ask_user_question({questions,mode?,timeoutMs?}) 模型工具薄壳(ASK_USER_QUESTION_TOOL_SPEC + AskUserTool 类,结构校验已自洽);
+装配目标:
+1) edit 工具(toolset.ts:588 editBinding,实现在 packages/core/src/tools/ 下 edit 绑定文件)的 old_text 匹配改走 8 级阶梯:精确命中行为逐字节不变,未命中时按阶梯降级(空白规一/缩进弹性等,读引擎文档),命中后照常走既有替换校验;每级命中在结果里附 matchLevel 备注字段(结构化,不改变成功/失败语义);
+2) ask_user_question 注册进 buildDefaultToolset 工具数组;处理器行为:交互降级安全——AskUserTool 若需 IO 回调,headless 场景(无 TTY)必须结构化返回(如 {answered:false, reason:"no-interactive"})不悬挂不抛;默认不改变现有任何工具行为;
+3) 测试:阶梯命中用例(精确/各级降级/全不命中)、edit 成功路径行为不变回归(既有测试零改动为硬约束)、ask_user 校验与降级用例。
+
+边界(并行工单面,一律勿动):packages/core/src/cli/commands/dispatch.ts 与 cli/commands/**(并行 D2)、packages/core/src/cli/{main,headless}.ts 与 agent.ts(并行 D3)、subagent/cron/verifier/observability/context 各器官;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/ 全绿(既有用例零改动)+ cd packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/阶梯各级语义一行表/ask_user 降级语义/测试数+tsc/未尽边界。

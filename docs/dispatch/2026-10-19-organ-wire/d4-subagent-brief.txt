@@ -1,0 +1,15 @@
+工单 ORGAN-WIRE W2-D4(BI-07.4 + BI-07.6):subagent Task 工具 + /btw 旁路问答装配——本批最大单。
+
+器官现状(主控已审计:有测试、零装配;cwd=/home/yupeng/bi):
+- packages/core/src/subagent/:runner.ts(SubagentRunner 子会话运行器)、coordinator.ts(双向信令:RespondToCoordinator 子→父阶段汇报 / SendMessage 父→子 steer,零退出语义)、profiles.ts(子代理档案)、btw-service.ts(BI-07.6 /btw 零干扰旁路问答)——export 面自行 grep;
+- 装配先例(必读,风格对齐):toolset.ts 的 ask_user 条件注册(W1-D1:仅注入依赖才挂,缺省注册面零变动)、headless.ts 的 config 门控(W1-D3:缺省 off 行为零变化)。
+
+交付目标(v1 最小诚实,缺省路径零变化是硬约束):
+1) 模型工具 spawn_subagent:输入 {goal, profile?};条件注册(仅当 headless 注入 runner 依赖;先例照抄 ask_user);实现=SubagentRunner 拉起子会话——继承父 model port、只读工具子集(read_file/grep/glob/web_fetch/web_search)、超时与最大轮次有界(profiles 默认);子会话 finalText 作为工具结果回父;子会话持久化与父隔离;
+2) headless/config 装配:[subagent] enabled(缺省 false=不注册不装配,现有测试零改动);开启时经 BuildDefaultToolsetOptions 注入(风格同 userQuestionService);
+3) REPL /btw:packages/tui/src/mount/repl.ts+agent-tui.ts 挂 /btw <问题> 命令 → btw-service 旁路问答,主循环不打断,回答结构化上屏;无 runner 依赖时=结构化提示不假冒;ask_user 的 TUI overlay 本单不做(备案);
+4) 测试:注册门(缺省不挂/开启挂)/子会话跑通(替身 model)/finalText 回填/超时边界/缺省零变化对照;/btw 命令两态。
+
+边界(一律勿动):packages/core/src/cli/commands/**、export/、session/(session append 竞态刚由主控修复,勿碰)、bin/bi.ts;subagent/ 器官本体只读消费,发现器官缺陷只报告不改;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/ ./packages/tui/ 全绿(既有用例零改动)+ cd packages/core && bunx tsc --noEmit 0 错 + cd packages/tui && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/spawn_subagent 语义(注册条件/继承面/超时轮次)/btw 两态语义/测试数+双 tsc/未尽边界。
