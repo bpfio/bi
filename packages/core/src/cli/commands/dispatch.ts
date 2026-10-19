@@ -320,26 +320,26 @@ async function handleFork(rest: readonly string[], io: SubcommandIo, deps: Subco
 }
 
 // ---------------------------------------------------------------------------
-// export —— 会话导出 markdown/json（BI-20.2 库面）
+// export —— 会话导出 markdown/json/html（BI-20.2 / BI-20.3 库面）
 // ---------------------------------------------------------------------------
 
-/** `bi export <sessionId> [--format markdown|json] [--out <path>]`；无 --out 时内容直出。 */
+/** `bi export <sessionId> [--format markdown|json|html] [--out <path>]`；无 --out 时内容直出。 */
 async function handleExport(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
   const args = parseSubArgs(rest, new Set<string>(["--format", "--out"]));
   if (args.positionals.length !== 1) {
-    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json] [--out <path>]");
+    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json|html] [--out <path>]");
   }
   const sessionId = args.positionals[0];
   if (sessionId === undefined) {
-    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json] [--out <path>]");
+    throw new SubUsageError("用法: bi export <sessionId> [--format markdown|json|html] [--out <path>]");
   }
   const format = args.flags.get("--format");
-  if (format !== undefined && format !== "markdown" && format !== "json") {
-    throw new SubUsageError(`--format 非法: ${String(format)}（允许: markdown | json）`);
+  if (format !== undefined && format !== "markdown" && format !== "json" && format !== "html") {
+    throw new SubUsageError(`--format 非法: ${String(format)}（允许: markdown | json | html）`);
   }
   const outPath = args.flags.get("--out");
   const options: ExportOptions = {};
-  if (format === "markdown" || format === "json") options.format = format;
+  if (format === "markdown" || format === "json" || format === "html") options.format = format;
   if (typeof outPath === "string") options.out = outPath;
 
   const manager = makeSessionManager(deps);

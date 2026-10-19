@@ -1,5 +1,5 @@
 /**
- * BI-20.2 —— `export` 子命令（会话导出：markdown / json）。
+ * BI-20.2 / BI-20.3 —— `export` 子命令（会话导出：markdown / json / html）。
  *
  * kimi 对应物: apps/kimi-code/src/cli/sub/export.ts
  * 差异边界:
@@ -8,6 +8,9 @@
  *   - markdown 渲染：user/assistant/tool 分节标题 + 正文；工具调用折叠为
  *     单行 `> tool: name(args 摘要)`（args 摘要超长截断，见 ARGS_SUMMARY_MAX）；
  *   - json 为 `{ meta, entries }` 结构化直出（2 空格缩进 + 末尾换行）；
+ *   - html 为单文件自含会话报告（见 ../../export/html-exporter.ts：
+ *     内联 CSS、Dark 默认、工具调用 <details> 折叠、代码/diff <pre><code> 纯文本、
+ *     零依赖零外链）；分支持渲染复用本文件既有 entries 链路；
  *   - out 指定则写盘（目录不存在自动创建），content 仍随结果返回；
  *     缺省只返回字符串不落盘；
  *   - 错误结构化：session-missing / session-corrupt / invalid-format / io-error
@@ -23,10 +26,11 @@ import {
   type SessionManager,
 } from "../../session/manager";
 import type { JsonValue, LoadedSession, SessionEntry, SessionMeta } from "../../session/types";
+import { renderHtml } from "../../export/html-exporter";
 
-export type ExportFormat = "markdown" | "json";
+export type ExportFormat = "markdown" | "json" | "html";
 
-const EXPORT_FORMATS: readonly ExportFormat[] = ["markdown", "json"];
+const EXPORT_FORMATS: readonly ExportFormat[] = ["markdown", "json", "html"];
 
 /** tool_call 参数摘要的截断上限（JSON 字符数，超长以 … 结尾）。 */
 const ARGS_SUMMARY_MAX = 120;
@@ -91,7 +95,9 @@ export async function exportSession(
   const content =
     format === "json"
       ? renderJson(loaded.meta, loaded.entries)
-      : renderMarkdown(loaded.meta, loaded.entries);
+      : format === "html"
+        ? renderHtml(loaded.meta, loaded.entries)
+        : renderMarkdown(loaded.meta, loaded.entries);
 
   if (opts.out === undefined) {
     return { content };
