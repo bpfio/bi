@@ -1,5 +1,5 @@
 /**
- * BI-24.1 —— 八子命令分发接线（init/session/fork/export/transfer/acp/upgrade/doctor）。
+ * BI-24.1 —— 子命令分发接线（init/session/fork/export/transfer/acp/upgrade/doctor/vis/config）。
  *
  * 职责：把 main 切出的子命令名与原始剩余 argv 派发到真实处理器，统一退出码语义：
  *   0 = 成功；
@@ -10,9 +10,11 @@
  * 未知子命令仍 exit 2。
  *
  * 命令落位（器官在库即用，缺器官做结构化 v1，绝不假冒成功）：
- *   init     = 新建 v1：脚手架 .bi/local.toml 模板（resolveConfigPaths 三级拓扑，
- *              已存在不覆盖、报告路径）。BI-05.2 的 BI.md 草稿面（cli/sub/init.ts）
- *              不在本卡范围，留待后续装配卡合并。
+ *   init     = 脚手架 .bi/local.toml 模板（resolveConfigPaths 三级拓扑，已存在不覆盖、
+ *              报告路径）；追加 BI-05.2 BI.md 草稿面：detectStack + draftBiMd 在 cwd
+ *              写 BI.md（已存在不覆盖，检测失败/不支持栈结构化提示，绝不假冒）。
+ *   config   = 低频清账：全局 ~/.bi/config.toml 键值面（get/set/list），键面由 schema
+ *              默认树推导，写回复用 writeback 注释保留引擎；未知键/非法值结构化报错。
  *   session  = commands/session.ts listSessions（BI-03 SessionManager.listSessions
  *              列举 + 元数据，JSON 行输出）。
  *   fork     = commands/fork.ts forkSession（BI-03 manager.fork 的 CLI 面）。
@@ -41,8 +43,9 @@
  * upgrade 替身 / doctor 检查项替身。测试零外呼：全部用例走注入，零网络。
  */
 import { access, mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { resolveConfigPaths } from "../../config/paths";
+import { detectStack, draftBiMd } from "../../rules/init-service";
 import { SessionManager } from "../../session/manager";
 import { TransferError } from "../../session/transfer";
 import {
@@ -63,6 +66,7 @@ import {
   runUpgradeSubcommand,
   type UpgradeSubcommandOptions,
 } from "../update/upgrade-subcommand";
+import { handleConfig } from "./config";
 
 /** 已接线的子命令全集（main 用法文本与子命令定位共用）。 */
 export const SUBCOMMANDS: readonly string[] = [
@@ -75,6 +79,7 @@ export const SUBCOMMANDS: readonly string[] = [
   "upgrade",
   "doctor",
   "vis",
+  "config",
 ];
 
 /** 子命令输出汇（与 main 的 out/err 同形）。 */
@@ -245,20 +250,54 @@ async function handleInit(rest: readonly string[], io: SubcommandIo, deps: Subco
     ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
     workDir,
   });
-  const target = paths.localConfig;
-  let exists = true;
+
+  // ---- .bi/local.toml 脚手架（语义不变：已存在不覆盖）----
+  let localExists = true;
   try {
-    await access(target);
+    await access(paths.localConfig);
   } catch {
-    exists = false;
+    localExists = false;
   }
-  if (exists) {
-    io.out(`bi init: ${target} 已存在，不覆盖（如需重建请先手动移除）。`);
+  if (localExists) {
+    io.out(`bi init: ${paths.localConfig} 已存在，不覆盖（如需重建请先手动移除）。`);
+  } else {
+    await mkdir(paths.localDir, { recursive: true });
+    await writeFile(paths.localConfig, LOCAL_TOML_TEMPLATE, "utf8");
+    io.out(`bi init: 已写入工作区模板 ${paths.localConfig}`);
+  }
+
+  // ---- BI-05.2 BI.md 草稿生成（追加）：detectStack → draftBiMd → 写盘（已存在不覆盖）----
+  const biMdPath = join(workDir, "BI.md");
+  let biMdExists = true;
+  try {
+    await access(biMdPath);
+  } catch {
+    biMdExists = false;
+  }
+  if (biMdExists) {
+    io.out(`bi init: ${biMdPath} 已存在，不覆盖（如需重建请先手动移除）。`);
     return 0;
   }
-  await mkdir(paths.localDir, { recursive: true });
-  await writeFile(target, LOCAL_TOML_TEMPLATE, "utf8");
-  io.out(`bi init: 已写入工作区模板 ${target}`);
+  let profile;
+  try {
+    profile = detectStack(workDir);
+  } catch (cause) {
+    // 检测失败：结构化提示，不假冒成功；脚手架已完成，退出码语义不变
+    io.err(
+      `bi init: 技术栈探测异常（${cause instanceof Error ? cause.message : String(cause)}）；跳过 BI.md 生成，仅完成脚手架。`,
+    );
+    return 0;
+  }
+  const { draft } = draftBiMd(profile, { projectName: basename(workDir) });
+  await writeFile(biMdPath, draft, "utf8");
+  io.out(`bi init: 已生成 BI.md 草稿 ${biMdPath}（待人工审查，确认后生效）`);
+  // 不支持栈（未检测到任何已知清单）：结构化提示，不假冒检测结果
+  if (profile.manifests.length === 0) {
+    io.err(
+      "bi init: 未检测到支持的栈清单（package.json / Cargo.toml / pyproject.toml / go.mod / Makefile / pnpm-workspace.yaml）；" +
+        "已生成标注「未检测到」的 BI.md 草稿，请人工补全技术栈信息。",
+    );
+  }
   return 0;
 }
 
@@ -506,6 +545,7 @@ const DISPATCH: Readonly<Record<string, SubcommandHandler>> = {
   upgrade: handleUpgrade,
   doctor: handleDoctor,
   vis: handleVisCommand,
+  config: handleConfig,
 };
 
 /**
