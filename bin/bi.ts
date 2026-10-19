@@ -15,6 +15,7 @@ import { buildDefaultToolset } from "../packages/core/src/cli/toolset";
 import { runBi } from "../packages/core/src/cli/main";
 import { AgentTuiSession, MOUSE_DISABLE, MOUSE_ENABLE } from "../packages/tui/src/mount/agent-tui";
 import { KeyStream, runRepl } from "../packages/tui/src/mount/repl";
+import { loadKeybindings } from "../packages/tui/src/mount/keybindings";
 import { InputLoop } from "../packages/tui/src/engine/diff-renderer";
 import { PermissionGate } from "../packages/core/src/guard/permission-gate";
 import { permissionModeFromConfig, PermissionSessionController } from "../packages/core/src/cli/permission-mode";
@@ -31,6 +32,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
 import { builtinSlashCandidates } from "../packages/tui/src/mount/candidate-menu";
 
@@ -115,6 +117,17 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 				: `未知斜杠命令: ${head}(可用: /permissions)`;
 		};
 
+		// TUI-ALIGN-4a：键位注册表装配（~/.bi 优先,项目 .bi/ 兜底;文件缺失=纯默认;
+		// 冲突/忽略告警 stderr 提示,不阻断启动）。
+		const homeKeybindings = join(homedir(), ".bi", "keybindings.json");
+		const projectKeybindings = join(process.cwd(), ".bi", "keybindings.json");
+		const kb = await loadKeybindings(
+			existsSync(homeKeybindings) ? homeKeybindings : projectKeybindings,
+		);
+		if (kb.conflicts.length > 0 || kb.ignored.length > 0) {
+			process.stderr.write(`bi: 键位加载告警: 忽略 ${kb.ignored.length} 项, 冲突 ${kb.conflicts.length} 项\n`);
+		}
+
 		const session = new AgentTuiSession({
 			model: selection.port,
 			tools: buildDefaultToolset(process.cwd()),
@@ -127,6 +140,7 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 			rows: process.stdout.rows ?? 24,
 			cols: process.stdout.columns ?? 80,
 			writer: { write: (data) => process.stdout.write(data) },
+			keybindings: kb.bindings,
 		});
 		const keys = new KeyStream();
 		// 终端尺寸变更跟随（SIGWINCH；非 TTY 无事件，保守注册）。
@@ -155,7 +169,7 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 		}
 		loop.start();
 		try {
-			const result = await runRepl({ session, keys, title: "bi repl" });
+			const result = await runRepl({ session, keys, title: "bi repl", keybindings: kb.bindings });
 			return result.endedAs === "session-exited" ? 4 : 0;
 		} finally {
 			loop.stop();

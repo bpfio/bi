@@ -81,6 +81,7 @@ import { StyledTranscript } from "../transcript-styled";
 import type { MarkdownRow } from "../render/markdown";
 import { builtinSlashCandidates, CandidateMenu, type CandidatesProvider } from "./candidate-menu";
 import { TranscriptSearch } from "./transcript-search";
+import { DEFAULT_KEYBINDINGS, actionForKey, type Keybindings } from "./keybindings";
 
 /** SGR 鼠标上报开关序列（BI-27.5 滚轮历史）：1000=按键上报，1006=SGR 编码。 */
 export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
@@ -188,6 +189,8 @@ export interface TuiSessionOptions {
 	readonly hooks?: TuiSessionHooks;
 	/** 帧字节输出面（缺省 no-op；真实终端注入 WriteStream，BI-24.2 REPL 挂载用）。 */
 	readonly writer?: Writer;
+	/** 键位注册表（TUI-ALIGN-4a；缺省 DEFAULT_KEYBINDINGS）。 */
+	readonly keybindings?: Keybindings;
 }
 
 export interface TuiSessionResult {
@@ -208,6 +211,7 @@ class ApprovalOverlay implements Component {
 		private readonly toolName: string,
 		private readonly argSummary: string,
 		private readonly onChange: () => void,
+		private readonly bindings: Keybindings,
 	) {}
 
 	get active(): boolean {
@@ -236,10 +240,11 @@ class ApprovalOverlay implements Component {
 	}
 
 	handleKey(key: ParsedKey): void {
+		const action = actionForKey(this.bindings, key);
 		let answer: "allow" | "deny" | undefined;
-		if (key.kind === "char" && key.char === "y") answer = "allow";
-		else if (key.kind === "char" && key.char === "n") answer = "deny";
-		else if (key.kind === "esc") answer = "deny";
+		if (action === "approval.allow") answer = "allow";
+		else if (action === "approval.deny") answer = "deny";
+		else if (key.kind === "esc") answer = "deny"; // 结构性取消键，保留硬编码兜底
 		if (answer !== undefined) {
 			const resolve = this.#resolve;
 			this.#resolve = undefined;
@@ -389,6 +394,8 @@ export class AgentTuiSession {
 	readonly #clock: Clock | undefined;
 	/** 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面；缺省 undefined = 不拦截）。 */
 	readonly #slashCommand: ((line: string) => Promise<string | { prompt: string }>) | undefined;
+	/** 键位注册表（TUI-ALIGN-4a；缺省 DEFAULT_KEYBINDINGS）。 */
+	readonly #bindings: Keybindings;
 
 	constructor(options: TuiSessionOptions) {
 		this.#rows = options.rows ?? 24;
@@ -409,6 +416,7 @@ export class AgentTuiSession {
 		this.candidateMenu = new CandidateMenu(options.candidates ?? (() => builtinSlashCandidates));
 		this.#gate = options.gate ?? new PermissionGate({ mode: options.permissionMode ?? "manual" });
 		this.#slashCommand = options.slashCommand;
+		this.#bindings = options.keybindings ?? DEFAULT_KEYBINDINGS;
 		for (const binding of options.tools) this.#registry.set(binding.definition.name, binding);
 		const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
 		this.#manager = new SessionManager(options.sessionsRoot !== undefined ? { rootDir: options.sessionsRoot } : {});
@@ -622,13 +630,14 @@ export class AgentTuiSession {
 		// 对齐 kimi tui.altScreen.search/searchNext/searchPrevious/searchClose 语义：
 		// 激活态下 Enter=下一命中、Ctrl+G=上一命中、Esc=关闭清零并复原转录。
 		if (this.#search.active) {
-			if (key.kind === "esc") {
+			const action = actionForKey(this.#bindings, key);
+			if (action === "search.close") {
 				this.#search.close();
 				this.#scrollOffset = this.#searchSavedScroll; // 复原转录滚回偏移
-			} else if (key.kind === "enter") {
+			} else if (action === "search.next") {
 				this.#search.next();
 				this.#scrollToSearchMatch();
-			} else if (key.kind === "ctrl" && key.char === "g") {
+			} else if (action === "search.previous") {
 				this.#search.prev();
 				this.#scrollToSearchMatch();
 			} else if (key.kind === "backspace") {
@@ -640,8 +649,8 @@ export class AgentTuiSession {
 			this.#frame();
 			return;
 		}
-		// 激活搜索条：Ctrl+F（对齐 kimi tui.altScreen.search 语义；键位经 repl 路由转发）
-		if (key.kind === "ctrl" && key.char === "f") {
+		// 激活搜索条：Ctrl+F（对齐 kimi tui.altScreen.search 语义；键位=search.open，经 repl 路由转发）
+		if (actionForKey(this.#bindings, key) === "search.open") {
 			this.#searchSavedScroll = this.#scrollOffset;
 			this.#search.open();
 			this.#frame();
@@ -867,7 +876,7 @@ export class AgentTuiSession {
 			throw new Error(`permission-denied${decision.feedback !== undefined ? `: ${decision.feedback}` : ""}`);
 		}
 		if (decision.decision === "ask") {
-			const overlay = new ApprovalOverlay(call.name, argSummary, () => this.#frame());
+			const overlay = new ApprovalOverlay(call.name, argSummary, () => this.#frame(), this.#bindings);
 			this.app.push(overlay);
 			this.#activeOverlay = overlay;
 			this.#state = "awaiting-approval";

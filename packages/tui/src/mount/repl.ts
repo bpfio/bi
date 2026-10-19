@@ -88,6 +88,7 @@ import { editExternally as defaultEditExternally, type EditResult } from "../edi
 import { cwd } from "node:process";
 
 import { AgentTuiSession, type TuiSessionResult, type TuiSessionState } from "./agent-tui";
+import { DEFAULT_KEYBINDINGS, actionForKey, type Keybindings } from "./keybindings";
 import { layoutPromptLine, segmentGraphemes } from "../components/cjk-width";
 import { applyFileCompletion, completeFileAtCursor, extractToken, isPathLikePrefix } from "./file-completion";
 import { KillRing, UndoStack, findWordBackward, findWordForward } from "./editor-history";
@@ -120,6 +121,12 @@ export class LineEditor {
   readonly #killRing = new KillRing();
   readonly #undoStack = new UndoStack<{ draft: string; cursor: number }>();
   #lastWasKill = false;
+  /** 键位注册表（缺省 = 默认表；经 runRepl 选项注入，保持纯函数可测）。 */
+  readonly #bindings: Keybindings;
+
+  constructor(bindings: Keybindings = DEFAULT_KEYBINDINGS) {
+    this.#bindings = bindings;
+  }
 
   /** 当前草稿。 */
   get draft(): string {
@@ -351,22 +358,23 @@ export class LineEditor {
         }
         return { kind: "none" };
       case "ctrl": {
-        switch (key.char) {
-          case "c":
+        // 经键位注册表反查动作（默认表逐条对照现码，行为零变化）。
+        switch (actionForKey(this.#bindings, key)) {
+          case "editor.clear-or-exit":
             // 非空=清空草稿（撤销重敲）；空=退出 REPL。
             if (this.#draft.length > 0) {
               this.clear();
               return { kind: "edit" };
             }
             return { kind: "exit", key: "ctrl-c" };
-          case "d":
+          case "editor.exit":
             // EOF 语义：退出并弃稿。
             this.clear();
             return { kind: "exit", key: "ctrl-d" };
-          case "e":
+          case "editor.external-edit":
             // 长文本外编桥：草稿保留，由主回路执行 editPromptCommand 回填（BI-25.3，保留）。
             return { kind: "external-edit" };
-          case "a":
+          case "editor.beginning-of-line":
             // readline：beginning-of-line。
             if (this.#cursor !== 0) {
               this.#cursor = 0;
@@ -374,28 +382,26 @@ export class LineEditor {
               return { kind: "edit" };
             }
             return { kind: "none" };
-          case "b":
+          case "editor.backward-char":
             // readline：backward-char（字素粒度）。
             return this.#moveLeftGrapheme();
-          case "f":
-            // D5：Ctrl+F 在 runRepl 层转发给 agent-tui 开转录搜索，编辑器不消费。
-            return { kind: "none" };
-          case "k":
+          case "editor.kill-line":
             // readline：kill-line（删至行尾，入 kill-ring）。
             return this.#killToEnd();
-          case "u":
+          case "editor.kill-line-to-start":
             // readline：unix-line-discard（删至行首，入 kill-ring）。
             return this.#killToStart();
-          case "w":
+          case "editor.kill-word-backward":
             // readline：unix-word-rubout（删词至行首方向，入 kill-ring）。
             return this.#killWordBackward();
-          case "y":
+          case "editor.yank":
             // readline：yank（粘贴最近 kill）。
             return this.#yank();
-          case "z":
+          case "editor.undo":
             // Emacs：undo（bi 输入层 ctrl+- 不可达，以 ctrl+z 承载）。
             return this.#undo();
           default:
+            // 未绑定的 ctrl 键（含 search.open=ctrl+f，由 runRepl 层转发）不消费。
             return { kind: "none" };
         }
       }
@@ -619,6 +625,8 @@ export interface ReplOptions {
   readonly completions?: CompletionsFn;
   /** 文件/路径/@ 补全基目录（BI-19.8；缺省 process.cwd()）。 */
   readonly cwd?: string;
+  /** 键位注册表（TUI-ALIGN-4a；缺省 DEFAULT_KEYBINDINGS）。 */
+  readonly keybindings?: Keybindings;
 }
 
 export interface ReplResult {
@@ -650,7 +658,8 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   const history = new PromptHistory();
   const completions = options.completions ?? historyCompletions(history);
   const basePath = options.cwd ?? cwd();
-  const editor = new LineEditor();
+  const bindings = options.keybindings ?? DEFAULT_KEYBINDINGS;
+  const editor = new LineEditor(bindings);
   const prompt = new PromptView();
 
   if (session.sessionId === undefined) await session.start(options.title ?? "bi repl");
@@ -728,8 +737,8 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         // 由 → 承载（kimi 同将 ctrl+f 与 right 并列绑为 cursorRight，bi 取舍）。
         if (session.searchActive) {
           await session.handleKey(key);
-        } else if (key.kind === "ctrl" && key.char === "f") {
-          await session.handleKey(key); // 开转录搜索（BI-19.1-search）
+        } else if (actionForKey(bindings, key) === "search.open") {
+          await session.handleKey(key); // 开转录搜索（BI-19.1-search；键位=search.open）
         } else {
         // 候选菜单（BI-27.4）先于历史翻页/补全裁决——菜单
         // 可见时 up/down=菜单选择移动、Tab/Enter=接受选中、Esc=关闭菜单
