@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { charWidth, textWidth } from "./cjk-width";
+import { charWidth, textWidth, segmentGraphemes, layoutPromptLine } from "./cjk-width";
 
 describe("cjk-width —— 窄字符（宽度 1）", () => {
   test("ASCII 可打印字符", () => {
@@ -101,5 +101,48 @@ describe("cjk-width —— textWidth 汇总", () => {
   test("emoji 与空串", () => {
     expect(textWidth("😀!")).toBe(3);
     expect(textWidth("")).toBe(0);
+  });
+});
+
+describe("cjk-width —— segmentGraphemes 字素切分", () => {
+  test("ASCII 逐码元即字素，index 连续", () => {
+    const g = segmentGraphemes("abc");
+    expect(g.map((x) => x.segment)).toEqual(["a", "b", "c"]);
+    expect(g.map((x) => x.index)).toEqual([0, 1, 2]);
+  });
+
+  test("emoji 代理对计为单字素（index 跳过代理对）", () => {
+    const g = segmentGraphemes("a🎉b");
+    expect(g.map((x) => x.segment)).toEqual(["a", "🎉", "b"]);
+    // 🎉 占两码元：b 的起始下标为 1 + 2 = 3
+    expect(g.map((x) => x.index)).toEqual([0, 1, 3]);
+  });
+
+  test("CJK 每字一字素；组合字符（e+◌́）计为单字素", () => {
+    expect(segmentGraphemes("你好").map((x) => x.segment)).toEqual(["你", "好"]);
+    expect(segmentGraphemes("e\u0301").map((x) => x.segment)).toEqual(["e\u0301"]);
+  });
+});
+
+describe("cjk-width —— layoutPromptLine 长行横向滚动", () => {
+  test("短草稿不滚动：与 v1 渲染一致（含 ⏎ 摊平）", () => {
+    expect(layoutPromptLine("abc", 3, 60)).toBe("❯ abc▏");
+    expect(layoutPromptLine("ab", 1, 60)).toBe("❯ a▏b");
+    expect(layoutPromptLine("你好", 1, 60)).toBe("❯ 你▏好");
+    expect(layoutPromptLine("甲\n乙", 3, 60)).toBe("❯ 甲⏎乙▏");
+  });
+
+  test("超宽草稿：光标恒在可视窗口内、可见列宽 ≤ 可用列", () => {
+    const wide = "0123456789abcdefghij"; // 20 个 ASCII，各宽 1
+    const cols = 20; // 提示 2 + 条 1 = 3，可用 17 列
+    // 光标在行尾（20）：窗口切片以光标为中心且夹到尾部
+    const end = layoutPromptLine(wide, wide.length, cols);
+    expect(end.endsWith("▏")).toBe(true);
+    expect(textWidth(end.slice(2).replace("▏", ""))).toBeLessThanOrEqual(cols - 3);
+    // 光标在中段（10 → 'a'）：条后首字为 'a'
+    const mid = layoutPromptLine(wide, 10, cols);
+    const bar = mid.indexOf("▏");
+    expect(mid.slice(bar + 1, bar + 2)).toBe("a");
+    expect(textWidth(mid.slice(2).replace("▏", ""))).toBeLessThanOrEqual(cols - 3);
   });
 });

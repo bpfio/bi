@@ -1,0 +1,16 @@
+工单 D7 / TUI-ALIGN-2③:bi TUI 编辑器体感强化(字素光标+长行横滚+Emacs 键位)——快赢提案 C 实现单,兼收 D5 遗留接线。
+
+背景:差距分析 docs/dispatch/2026-10-19-wave/d2c-tui-gap-report.md 提案C。主因#3:repl.ts LineEditor 光标按 UTF-16 码元(非字素感知,CJK/emoji 错位)、长行无横向滚动、无 kill/yank/word/undo。参照树只读:/home/yupeng/references/kimi-code。注:工作树已含已验收的 D5(agent-tui.ts/transcript-search.*)与 D6(candidate-menu.ts/repl.ts/file-completion.*)改动,在其上继续,勿回退。
+
+实现规格(吸收机制;kimi file:line 仅阅读锚点,bi 侧重实现,不引新依赖):
+- 字素光标:参考 kimi packages/pi-tui/src/input.ts segmenter 光标(:164-184);bi 在 packages/tui/src/components/cjk-width.ts 增 segmentGraphemes(基于 Intl.Segmenter,纯函数),repl.ts LineEditor 光标左右移/删除改字素粒度;
+- Emacs 键位:参考 input.ts 的 deleteToLineStart/End+KillRing(:283-341)、yank/yankPop(:343-370)、UndoStack(:372-382);bi 侧实现 KillRing/UndoStack(可放新文件 packages/tui/src/mount/editor-history.ts 或并入现有文件,自选最小面):ctrl-a/e/k/u/b/f/w 级别语义对齐 readline 惯例,ctrl-c/d 既有行为不得破坏;
+- 长行横向滚动:参考 input.ts 渲染窗口(:412-500);repl.ts PromptView(:397-440 一带)光标始终保持在可视窗口内;
+- D5 遗留接线:检查 repl.ts→agent-tui.ts 按键通路,把 Ctrl+F(非编辑态)转发到 agent-tui 的 handleKey 开转录搜索;若通路不存在或不适用,报告说明即可,不强改 agent-tui.ts 其余逻辑;
+- 落点(硬约束):只准改 packages/tui/src/mount/repl.ts、packages/tui/src/components/cjk-width.ts、packages/tui/src/mount/agent-tui.ts(仅限上述转发一线)+ 新增 editor-history 文件与测试;不得动 candidate-menu.ts/file-completion.ts/transcript-search.ts/engine/**/参考树;不得动 package.json/bun.lock;禁 git commit/push;禁联网。
+
+测试(必须全绿):
+1) 新增测试覆盖:emoji/CJK 跨字素光标左右移与删除、kill-to-line-end+yank 往返、word 前后移、undo 回退、超宽草稿横向滚动窗口切片、ctrl-c/d 既有行为不回归;
+2) 零回归:bun test packages/tui && cd packages/tui && bunx tsc --noEmit。
+
+交付(最终回复):diff 摘要 + 测试计数 + 一句话结论;约束冲突停下申报,不得静默越界。

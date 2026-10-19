@@ -88,7 +88,9 @@ import { editExternally as defaultEditExternally, type EditResult } from "../edi
 import { cwd } from "node:process";
 
 import { AgentTuiSession, type TuiSessionResult, type TuiSessionState } from "./agent-tui";
+import { layoutPromptLine, segmentGraphemes } from "../components/cjk-width";
 import { applyFileCompletion, completeFileAtCursor, extractToken, isPathLikePrefix } from "./file-completion";
+import { KillRing, UndoStack, findWordBackward, findWordForward } from "./editor-history";
 
 /** pageup/pagedown 单键跳页条数（BI-27.1；连发累计，最旧/草稿槽双端钳制）。 */
 const PAGE_JUMP_LINES = 10;
@@ -105,10 +107,19 @@ export type LineEditAction =
   | { readonly kind: "exit"; readonly key: "ctrl-c" | "ctrl-d" }
   | { readonly kind: "external-edit" };
 
-/** 单行编辑器：草稿 + 光标（UTF-16 码元下标）。纯内态，不触终端。 */
+/**
+ * 单行编辑器：草稿 + 光标（UTF-16 码元下标）。纯内态，不触终端。
+ * D7 强化：光标移动 / 删除按字素粒度（segmentGraphemes）；Emacs 式
+ * kill/kill-ring/yank/word/undo（editor-history）。光标下标仍用码元以便与
+ * insert/insertRaw/replaceWithCursor 等码元接口共存；字素↔码元换算经
+ * segmentGraphemes 的 index 字段完成。
+ */
 export class LineEditor {
   #draft = "";
   #cursor = 0;
+  readonly #killRing = new KillRing();
+  readonly #undoStack = new UndoStack<{ draft: string; cursor: number }>();
+  #lastWasKill = false;
 
   /** 当前草稿。 */
   get draft(): string {
@@ -120,10 +131,21 @@ export class LineEditor {
     return this.#cursor;
   }
 
+  /** kill-ring 视图（测试观察面）。 */
+  get killRing(): KillRing {
+    return this.#killRing;
+  }
+
+  /** 撤销栈深度（测试观察面）。 */
+  get undoLength(): number {
+    return this.#undoStack.length;
+  }
+
   /** 清空草稿（光标归零）。 */
   clear(): void {
     this.#draft = "";
     this.#cursor = 0;
+    this.#lastWasKill = false;
   }
 
   /** 整稿替换（外编回填路径；内部复用 insert 摊平语义）。 */
@@ -136,6 +158,7 @@ export class LineEditor {
   replaceWithCursor(text: string, cursor: number): void {
     this.#draft = text;
     this.#cursor = Math.max(0, Math.min(cursor, text.length));
+    this.#lastWasKill = false;
   }
 
   /**
@@ -145,6 +168,7 @@ export class LineEditor {
   replaceAllRaw(text: string): void {
     this.#draft = text;
     this.#cursor = text.length;
+    this.#lastWasKill = false;
   }
 
   /**
@@ -156,6 +180,7 @@ export class LineEditor {
     if (text.length === 0) return;
     this.#draft = this.#draft.slice(0, this.#cursor) + text + this.#draft.slice(this.#cursor);
     this.#cursor += text.length;
+    this.#lastWasKill = false;
   }
 
   /** 光标处插入文本；\r/\n 摊平为空格（char 路径单行边界；BI-27.1 起 paste 不再走此路径）。 */
@@ -164,11 +189,121 @@ export class LineEditor {
     const flat = text.replace(/\r\n?|\n/g, " ");
     this.#draft = this.#draft.slice(0, this.#cursor) + flat + this.#draft.slice(this.#cursor);
     this.#cursor += flat.length;
+    this.#lastWasKill = false;
+  }
+
+  // ---- 撤销快照（每次结构性编辑前压栈） ----
+  #pushUndo(): void {
+    this.#undoStack.push({ draft: this.#draft, cursor: this.#cursor });
+  }
+
+  // ---- 字素级移动 / 删除（替代旧码元级） ----
+  #moveLeftGrapheme(): LineEditAction {
+    if (this.#cursor === 0) return { kind: "none" };
+    const segs = segmentGraphemes(this.#draft.slice(0, this.#cursor));
+    const last = segs[segs.length - 1];
+    if (last !== undefined) this.#cursor = last.index;
+    this.#lastWasKill = false;
+    return { kind: "edit" };
+  }
+
+  #moveRightGrapheme(): LineEditAction {
+    if (this.#cursor >= this.#draft.length) return { kind: "none" };
+    const segs = segmentGraphemes(this.#draft.slice(this.#cursor));
+    const first = segs[0];
+    if (first !== undefined) this.#cursor += first.index + first.segment.length;
+    this.#lastWasKill = false;
+    return { kind: "edit" };
+  }
+
+  #deleteBackwardGrapheme(): LineEditAction {
+    if (this.#cursor === 0) return { kind: "none" };
+    const segs = segmentGraphemes(this.#draft.slice(0, this.#cursor));
+    const last = segs[segs.length - 1];
+    const start = last !== undefined ? last.index : 0;
+    this.#pushUndo();
+    this.#draft = this.#draft.slice(0, start) + this.#draft.slice(this.#cursor);
+    this.#cursor = start;
+    this.#lastWasKill = false;
+    return { kind: "edit" };
+  }
+
+  #moveWordBackward(): LineEditAction {
+    if (this.#cursor === 0) return { kind: "none" };
+    this.#cursor = findWordBackward(this.#draft, this.#cursor);
+    this.#lastWasKill = false;
+    return { kind: "edit" };
+  }
+
+  #moveWordForward(): LineEditAction {
+    if (this.#cursor >= this.#draft.length) return { kind: "none" };
+    this.#cursor = findWordForward(this.#draft, this.#cursor);
+    this.#lastWasKill = false;
+    return { kind: "edit" };
+  }
+
+  // ---- Emacs 式 kill（删 + 入 kill-ring） ----
+  #killToEnd(): LineEditAction {
+    if (this.#cursor >= this.#draft.length) return { kind: "none" };
+    const accumulate = this.#lastWasKill;
+    this.#pushUndo();
+    const deleted = this.#draft.slice(this.#cursor);
+    this.#killRing.push(deleted, { prepend: false, accumulate });
+    this.#draft = this.#draft.slice(0, this.#cursor);
+    this.#lastWasKill = true;
+    return { kind: "edit" };
+  }
+
+  #killToStart(): LineEditAction {
+    if (this.#cursor === 0) return { kind: "none" };
+    const accumulate = this.#lastWasKill;
+    this.#pushUndo();
+    const deleted = this.#draft.slice(0, this.#cursor);
+    this.#killRing.push(deleted, { prepend: true, accumulate });
+    this.#draft = this.#draft.slice(this.#cursor);
+    this.#cursor = 0;
+    this.#lastWasKill = true;
+    return { kind: "edit" };
+  }
+
+  #killWordBackward(): LineEditAction {
+    if (this.#cursor === 0) return { kind: "none" };
+    const from = findWordBackward(this.#draft, this.#cursor);
+    const deleted = this.#draft.slice(from, this.#cursor);
+    const accumulate = this.#lastWasKill;
+    this.#pushUndo();
+    this.#killRing.push(deleted, { prepend: true, accumulate });
+    this.#draft = this.#draft.slice(0, from) + this.#draft.slice(this.#cursor);
+    this.#cursor = from;
+    this.#lastWasKill = true;
+    return { kind: "edit" };
+  }
+
+  #yank(): LineEditAction {
+    const text = this.#killRing.peek();
+    if (text === undefined) return { kind: "none" };
+    this.#pushUndo();
+    this.#draft = this.#draft.slice(0, this.#cursor) + text + this.#draft.slice(this.#cursor);
+    this.#cursor += text.length;
+    this.#lastWasKill = false;
+    return { kind: "edit" };
+  }
+
+  #undo(): LineEditAction {
+    const snap = this.#undoStack.pop();
+    if (snap === undefined) return { kind: "none" };
+    this.#draft = snap.draft;
+    this.#cursor = snap.cursor;
+    this.#lastWasKill = false;
+    return { kind: "edit" };
   }
 
   /**
    * 按键喂入。Esc 不在此消费（会话取消语义由 REPL 主回路路由）；submit 时
    * 草稿自清并把原文随动作带回。可见字符以控制字节过滤（<0x20 / 0x7f 不入稿）。
+   * Emacs 键位：ctrl-a=行首、ctrl-b=字素左、ctrl-d=退出（既有）、ctrl-e=外编桥
+   * （既有）、ctrl-f=不消费（D5 转发搜索）、ctrl-k=删至行尾、ctrl-u=删至行首、
+   * ctrl-w=删词、ctrl-y=yank、ctrl-z=undo；ctrl-c/d 既有行为不变。
    */
   feed(key: ParsedKey): LineEditAction {
     switch (key.kind) {
@@ -187,12 +322,8 @@ export class LineEditor {
         this.insertRaw(text);
         return { kind: "edit" };
       }
-      case "backspace": {
-        if (this.#cursor === 0) return { kind: "none" };
-        this.#draft = this.#draft.slice(0, this.#cursor - 1) + this.#draft.slice(this.#cursor);
-        this.#cursor -= 1;
-        return { kind: "edit" };
-      }
+      case "backspace":
+        return this.#deleteBackwardGrapheme();
       case "enter":
         // 空行（含纯空白）忽略；非空提交原文并自清草稿。
         if (this.#draft.trim().length === 0) return { kind: "none" };
@@ -202,26 +333,20 @@ export class LineEditor {
           return { kind: "submit", line };
         }
       case "left":
-        if (this.#cursor > 0) {
-          this.#cursor -= 1;
-          return { kind: "edit" };
-        }
-        return { kind: "none" };
+        return this.#moveLeftGrapheme();
       case "right":
-        if (this.#cursor < this.#draft.length) {
-          this.#cursor += 1;
-          return { kind: "edit" };
-        }
-        return { kind: "none" };
+        return this.#moveRightGrapheme();
       case "home":
         if (this.#cursor !== 0) {
           this.#cursor = 0;
+          this.#lastWasKill = false;
           return { kind: "edit" };
         }
         return { kind: "none" };
       case "end":
         if (this.#cursor !== this.#draft.length) {
           this.#cursor = this.#draft.length;
+          this.#lastWasKill = false;
           return { kind: "edit" };
         }
         return { kind: "none" };
@@ -239,8 +364,37 @@ export class LineEditor {
             this.clear();
             return { kind: "exit", key: "ctrl-d" };
           case "e":
-            // 长文本外编桥：草稿保留，由主回路执行 editPromptCommand 回填。
+            // 长文本外编桥：草稿保留，由主回路执行 editPromptCommand 回填（BI-25.3，保留）。
             return { kind: "external-edit" };
+          case "a":
+            // readline：beginning-of-line。
+            if (this.#cursor !== 0) {
+              this.#cursor = 0;
+              this.#lastWasKill = false;
+              return { kind: "edit" };
+            }
+            return { kind: "none" };
+          case "b":
+            // readline：backward-char（字素粒度）。
+            return this.#moveLeftGrapheme();
+          case "f":
+            // D5：Ctrl+F 在 runRepl 层转发给 agent-tui 开转录搜索，编辑器不消费。
+            return { kind: "none" };
+          case "k":
+            // readline：kill-line（删至行尾，入 kill-ring）。
+            return this.#killToEnd();
+          case "u":
+            // readline：unix-line-discard（删至行首，入 kill-ring）。
+            return this.#killToStart();
+          case "w":
+            // readline：unix-word-rubout（删词至行首方向，入 kill-ring）。
+            return this.#killWordBackward();
+          case "y":
+            // readline：yank（粘贴最近 kill）。
+            return this.#yank();
+          case "z":
+            // Emacs：undo（bi 输入层 ctrl+- 不可达，以 ctrl+z 承载）。
+            return this.#undo();
           default:
             return { kind: "none" };
         }
@@ -429,22 +583,14 @@ class PromptView implements Component {
 
   render(term: VirtualTerminal): void {
     if (!this.#active) return;
-    // 编辑行显示端（BI-25.3/BI-27.1）：草稿内态保留换行原样、显示端摊平为
-    // ⏎；光标条 ▏ 按码元切分插入（1 格条把右侧文本推右，v1 语义与代理对/
-    // \r\n 劈分边界见头注）。
-    const before = displayDraft(this.#draft.slice(0, this.#cursor));
-    const after = displayDraft(this.#draft.slice(this.#cursor));
-    term.write(0, term.rows - 1, `❯ ${before}▏${after}`);
+    // D7：提示行经 layoutPromptLine 渲染——草稿超宽时横向滚动、光标条 ▏ 恒在
+    // 可视窗口内（不劈宽字符 / 代理对）；未超宽退化为整行（含 ⏎ 摊平，v1 语义）。
+    term.write(0, term.rows - 1, layoutPromptLine(this.#draft, this.#cursor, term.cols));
   }
 
   wantsKey(_key: ParsedKey): boolean {
     return false; // 按键由 runRepl 主回路路由，不参与 TuiApp 派发消费
   }
-}
-
-/** 编辑行显示：换行（含 CRLF/孤立 CR）摊平为 ⏎（草稿内态不动）。 */
-function displayDraft(draft: string): string {
-  return draft.replace(/\r\n?|\n/g, "⏎");
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +721,17 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           session.app.dispatchKey(key);
         }
       } else {
-        // 编辑态（idle）：候选菜单（BI-27.4）先于历史翻页/补全裁决——菜单
+        // 编辑态（idle）
+        // D5 遗留接线：转录搜索模态激活时全部按键经 session.handleKey 路由
+        // （开/查/关）；Ctrl+F（非编辑态触发）转发开转录搜索（agent-tui.handleKey
+        // 已实现）。与 readline 的 C-f=forward-char 冲突，本卡让位给搜索，前进仍
+        // 由 → 承载（kimi 同将 ctrl+f 与 right 并列绑为 cursorRight，bi 取舍）。
+        if (session.searchActive) {
+          await session.handleKey(key);
+        } else if (key.kind === "ctrl" && key.char === "f") {
+          await session.handleKey(key); // 开转录搜索（BI-19.1-search）
+        } else {
+        // 候选菜单（BI-27.4）先于历史翻页/补全裁决——菜单
         // 可见时 up/down=菜单选择移动、Tab/Enter=接受选中、Esc=关闭菜单
         // （均不落编辑器/历史；字符键照常进编辑器，redraw 内 sync 刷新过滤）。
         const menu = session.candidateMenu;
@@ -683,6 +839,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
             redraw();
           }
           // none：空 Enter/无关键落空。
+        }
         }
       }
 

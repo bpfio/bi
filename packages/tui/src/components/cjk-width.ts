@@ -183,3 +183,104 @@ export function textWidth(text: string): number {
   for (const ch of text) total += charWidth(ch);
   return total;
 }
+
+// ---------------------------------------------------------------------------
+// 字素切分与提示行布局（D7 · 编辑器体感强化）
+// ---------------------------------------------------------------------------
+
+/** Intl.Segmenter（grapheme 粒度）单例：字素切分依赖运行时内置 ICU，零新增依赖。 */
+let graphemeSegmenter: Intl.Segmenter | undefined;
+
+function graphemeSegmenterInstance(): Intl.Segmenter {
+  if (graphemeSegmenter === undefined) {
+    graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  }
+  return graphemeSegmenter;
+}
+
+/** 单个字素：与 Intl.SegmentData 对齐——segment=文本、index=在原文中的 UTF-16 起始下标。 */
+export interface Grapheme {
+  readonly segment: string;
+  readonly index: number;
+}
+
+/**
+ * 把字符串按字素（grapheme cluster）切分：CJK / emoji / 组合字符 / ZWJ 序列都计为
+ * 单个字素，避免 UTF-16 码元错位。纯函数，基于 Intl.Segmenter（Node 内置 ICU）。
+ * index 为该字素在原文中的 UTF-16 码元起始下标，便于在码元级编辑器里做字素↔码元换算。
+ */
+export function segmentGraphemes(text: string): readonly Grapheme[] {
+  const out: Grapheme[] = [];
+  for (const g of graphemeSegmenterInstance().segment(text)) {
+    out.push({ segment: g.segment, index: g.index });
+  }
+  return out;
+}
+
+/** 提示行固定前缀 `❯ ` 的显示列宽（❯ 宽 1 + 空格宽 1 = 2）。 */
+const PROMPT_PREFIX = "❯ ";
+
+/** 显示端换行摊平（与 PromptView 同语义：\r\n/ 单独 \n 摊平为 ⏎，草稿内态不动）。 */
+function displayDraftLine(draft: string): string {
+  return draft.replace(/\r\n?|\n/g, "⏎");
+}
+
+/**
+ * 提示行布局（长行横向滚动）：给定草稿 / 光标 / 终端列数，返回渲染行
+ * `❯ {before}▏{after}`——光标条 ▏ 恒在可视窗口内。可用列 = cols - promptW(2) -
+ * 光标条(1)；草稿超宽时以光标显示列为中心切片并吸附字素边界（不劈宽字符 / 代理对）。
+ * 纯函数；草稿未超宽时退化为整行（与旧 v1 渲染一致）。
+ *
+ * 说明：光标下标为 UTF-16 码元；经 displayDraftLine 摊平后映射为显示码元下标，
+ * 再按字素列宽定位，保证 CJK/emoji 整字素切片。
+ */
+export function layoutPromptLine(draft: string, cursor: number, cols: number): string {
+  const promptW = textWidth(PROMPT_PREFIX);
+  const barW = 1;
+  const avail = Math.max(1, cols - promptW - barW);
+  const flat = displayDraftLine(draft);
+  const graphemes = segmentGraphemes(flat);
+  const widths = graphemes.map((g) => textWidth(g.segment));
+
+  const safeCursor = Math.max(0, Math.min(cursor, draft.length));
+  const cursorFlat = displayDraftLine(draft.slice(0, safeCursor)).length;
+
+  // 光标显示列：累加光标前的字素宽度。
+  let cursorCol = 0;
+  for (const g of graphemes) {
+    if (g.index >= cursorFlat) break;
+    cursorCol += textWidth(g.segment);
+  }
+
+  // 窗口起始列：以光标为中心（居中），不足则夹到 0。
+  let startCol = cursorCol - Math.floor(avail / 2);
+  if (startCol < 0) startCol = 0;
+
+  // 起始字素边界（向前吸附到首个 >= startCol 的字素）。
+  let winStart = 0;
+  let acc = 0;
+  for (const g of graphemes) {
+    if (acc >= startCol) {
+      winStart = g.index;
+      break;
+    }
+    acc += textWidth(g.segment);
+  }
+
+  // 结束字素边界（从 winStart 起累计宽度超过 avail 即停）。
+  let winEnd = flat.length;
+  acc = 0;
+  for (const g of graphemes) {
+    if (g.index < winStart) continue;
+    acc += textWidth(g.segment);
+    if (acc > avail) {
+      winEnd = g.index;
+      break;
+    }
+    winEnd = g.index + g.segment.length;
+  }
+
+  const before = flat.slice(winStart, cursorFlat);
+  const after = flat.slice(cursorFlat, winEnd);
+  return `${PROMPT_PREFIX}${before}▏${after}`;
+}

@@ -33,6 +33,7 @@ import { join } from "node:path";
 
 import { AgentTuiSession } from "./agent-tui";
 import { KeyStream, LineEditor, PromptHistory, commonPrefix, completeDraft, runRepl } from "./repl";
+import { segmentGraphemes } from "../components/cjk-width";
 import { MemoryWriter } from "../testing";
 import type { ModelPort, ToolBinding } from "../../../core/src/cli/headless";
 import type { StreamEvent } from "../../../core/src/adapters/deepseek-adapter";
@@ -1295,6 +1296,171 @@ describe("BI-27.4 · runRepl 候选菜单接线", () => {
       await until(() => !session.candidateMenu.visible);
       await new Promise((r) => setTimeout(r, 20));
       expect(writer.output).not.toContain("复制上一轮回答到系统剪贴板");
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D7 · 编辑器体感强化（字素光标 / Emacs 键位 / 长行横滚 / D5 搜索接线）
+// ---------------------------------------------------------------------------
+
+describe("D7 · LineEditor 字素光标与 Emacs 键位（单元）", () => {
+  test("emoji 跨字素左右移：光标按完整字素跳（不劈代理对）", () => {
+    const ed = new LineEditor();
+    for (const k of text("a🎉b")) ed.feed(k);
+    expect(ed.cursor).toBe(4); // a(1) + 🎉(2) + b(1)
+    expect(ed.feed({ kind: "left" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(3); // 落在 🎉 之后 / b 之前（= 🎉 末码元之后）
+    // 光标前的最后一个完整字素应是 "🎉"（未劈开代理对）
+    expect(segmentGraphemes(ed.draft.slice(0, ed.cursor)).at(-1)?.segment).toBe("🎉");
+    expect(ed.feed({ kind: "left" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(1); // 跳过一个完整 🎉，落在 a 之后 / 🎉 之前
+    expect(ed.feed({ kind: "left" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(0);
+    expect(ed.feed({ kind: "right" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(1); // a 之后
+    expect(ed.feed({ kind: "right" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(3); // 🎉 之后（整字素 2 码元）
+  });
+
+  test("CJK/emoji 字素回删：一次删一个字素", () => {
+    const ed = new LineEditor();
+    for (const k of text("你🎉")) ed.feed(k); // 码元：你(0-1) 🎉(1-3) → 长度 3
+    expect(ed.cursor).toBe(3);
+    expect(ed.feed({ kind: "backspace" })).toEqual({ kind: "edit" });
+    expect(ed.draft).toBe("你");
+    expect(ed.cursor).toBe(1);
+  });
+
+  test("ctrl-a 行首 / ctrl-b 字素左移 / ctrl-f 编辑器不消费（让位 D5 搜索）", () => {
+    const ed = new LineEditor();
+    for (const k of text("abc")) ed.feed(k);
+    expect(ed.feed({ kind: "ctrl", char: "a" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(0);
+    expect(ed.feed({ kind: "end" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(3);
+    expect(ed.feed({ kind: "ctrl", char: "b" })).toEqual({ kind: "edit" });
+    expect(ed.cursor).toBe(2);
+    expect(ed.feed({ kind: "ctrl", char: "f" })).toEqual({ kind: "none" }); // 转发搜索，不消费
+  });
+
+  test("ctrl-u 删至行首 + ctrl-y yank 往返还原", () => {
+    const ed = new LineEditor();
+    for (const k of text("hello world")) ed.feed(k);
+    expect(ed.feed({ kind: "ctrl", char: "u" })).toEqual({ kind: "edit" });
+    expect(ed.draft).toBe("");
+    expect(ed.cursor).toBe(0);
+    expect(ed.feed({ kind: "ctrl", char: "y" })).toEqual({ kind: "edit" });
+    expect(ed.draft).toBe("hello world");
+    expect(ed.cursor).toBe("hello world".length);
+  });
+
+  test("ctrl-k 删至行尾 + ctrl-y yank 往返（删后半段可粘贴回）", () => {
+    const ed = new LineEditor();
+    for (const k of text("foo bar baz")) ed.feed(k);
+    ed.feed({ kind: "ctrl", char: "a" }); // 行首
+    for (let i = 0; i < 4; i++) ed.feed({ kind: "right" }); // 移到 "foo " 之后（索引 4）
+    expect(ed.cursor).toBe(4);
+    expect(ed.feed({ kind: "ctrl", char: "k" })).toEqual({ kind: "edit" }); // 删 "bar baz"
+    expect(ed.draft).toBe("foo ");
+    expect(ed.feed({ kind: "ctrl", char: "y" })).toEqual({ kind: "edit" }); // 粘贴回
+    expect(ed.draft).toBe("foo bar baz");
+    expect(ed.killRing.length).toBe(1);
+  });
+
+  test("ctrl-w 删词（行首方向）+ ctrl-y 还原", () => {
+    const ed = new LineEditor();
+    for (const k of text("foo bar")) ed.feed(k);
+    expect(ed.feed({ kind: "ctrl", char: "w" })).toEqual({ kind: "edit" }); // 删 "bar"
+    expect(ed.draft).toBe("foo ");
+    expect(ed.feed({ kind: "ctrl", char: "y" })).toEqual({ kind: "edit" });
+    expect(ed.draft).toBe("foo bar");
+  });
+
+  test("ctrl-z undo 回退上一次编辑（删除/输入）", () => {
+    const ed = new LineEditor();
+    for (const k of text("abc")) ed.feed(k);
+    ed.feed({ kind: "backspace" }); // → "ab"
+    expect(ed.draft).toBe("ab");
+    expect(ed.feed({ kind: "ctrl", char: "z" })).toEqual({ kind: "edit" });
+    expect(ed.draft).toBe("abc");
+    expect(ed.cursor).toBe(3);
+  });
+
+  test("ctrl-c / ctrl-d / ctrl-e 既有行为不回归", () => {
+    const ed = new LineEditor();
+    ed.insert("草稿");
+    expect(ed.feed(ctrlC)).toEqual({ kind: "edit" }); // 非空清空
+    expect(ed.draft).toBe("");
+    expect(ed.feed(ctrlC)).toEqual({ kind: "exit", key: "ctrl-c" }); // 空退出
+    ed.insert("x");
+    expect(ed.feed(ctrlD)).toEqual({ kind: "exit", key: "ctrl-d" }); // 弃稿退出
+    ed.insert("y");
+    expect(ed.feed(ctrlE)).toEqual({ kind: "external-edit" }); // 外编桥保留
+    expect(ed.draft).toBe("y");
+  });
+});
+
+describe("D7 · 长行横向滚动（runRepl 集成）", () => {
+  test("超宽草稿：小 cols 触发横滚，提示行不渲染整行（光标恒在窗口内）", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const writer = new MemoryWriter();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 20,
+        writer,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+      const wide = "0123456789abcdefghij"; // 20 个 ASCII
+      for (const k of text(wide)) stream.push(k);
+      await until(() => writer.output.includes("▏"));
+      // 横滚已生效：整行（23 列 > 20 列）不应被整行渲染。
+      expect(writer.output).not.toContain("❯ 0123456789abcdefghij▏");
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe("D7 · D5 转录搜索接线（Ctrl+F 转发）", () => {
+  test("编辑态 Ctrl+F 转发开转录搜索；Esc 关闭复原", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 6,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+      expect(session.searchActive).toBe(false);
+      stream.push({ kind: "ctrl", char: "f" }); // 转发开搜索
+      await until(() => session.searchActive);
+      // 查询字符经转发进入搜索态（不落入编辑器草稿）
+      stream.push({ kind: "char", char: "x" });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(session.searchActive).toBe(true);
+      stream.push(esc); // Esc 关闭搜索
+      await until(() => !session.searchActive);
       stream.push(ctrlD);
       await done;
     } finally {

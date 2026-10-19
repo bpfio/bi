@@ -437,6 +437,11 @@ export class AgentTuiSession {
 		return this.#state;
 	}
 
+	/** 转录搜索模态是否激活（D7/BI-19.1-search：供 repl.ts 转发路由按键）。 */
+	get searchActive(): boolean {
+		return this.#search.active;
+	}
+
 	/** 当前渲染行数（resize 可变；TranscriptView 布局单一来源）。 */
 	get rows(): number {
 		return this.#rows;
