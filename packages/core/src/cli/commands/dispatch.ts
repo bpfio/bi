@@ -32,6 +32,9 @@
  *              母体替身（python3 upstream_sync.py 锚点循环门）退役。
  *   doctor   = src/doctor.ts runDoctor 器官（检查项/端口注入，退出码按发现项：
  *              allOk → 0，存在异常 → 1）。
+ *   vis      = commands/vis.ts handleVis（BI-20.5b 本地 Web 会话可视化：
+ *              Bun.serve 拉起，缺省 127.0.0.1 + 随机端口；非回环强制
+ *              BI_VIS_AUTH_TOKEN；只读 API 暴露会话列表 / 消息流 / 分支树 / 工具配对）。
  *
  * 注入面（SubcommandDeps）：会话根目录 / cwd / homeDir / ACP IO 通道 /
  * acp 模型端口工厂（buildModelPort，生产路径由 main/bin 传入）/
@@ -55,6 +58,7 @@ import { ExportError, exportSession, type ExportOptions } from "./export";
 import { ForkError, forkSession } from "./fork";
 import { listSessions } from "./session";
 import { transferCommand } from "./transfer";
+import { handleVis } from "./vis";
 import {
   runUpgradeSubcommand,
   type UpgradeSubcommandOptions,
@@ -70,6 +74,7 @@ export const SUBCOMMANDS: readonly string[] = [
   "acp",
   "upgrade",
   "doctor",
+  "vis",
 ];
 
 /** 子命令输出汇（与 main 的 out/err 同形）。 */
@@ -473,6 +478,15 @@ async function handleDoctor(rest: readonly string[], io: SubcommandIo, deps: Sub
 }
 
 // ---------------------------------------------------------------------------
+// vis —— 本地 Web 会话可视化（BI-20.5b；cli/commands/vis.ts 处理器）
+// ---------------------------------------------------------------------------
+
+/** `bi vis [sessionId] [--port N] [--host H]`：本地 Web 会话可视化（缺省 127.0.0.1 + 随机端口；非回环强制 BI_VIS_AUTH_TOKEN）。 */
+async function handleVisCommand(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
+  return handleVis(rest, io, deps, { attachSignals: false });
+}
+
+// ---------------------------------------------------------------------------
 // 查表派发入口
 // ---------------------------------------------------------------------------
 
@@ -491,6 +505,7 @@ const DISPATCH: Readonly<Record<string, SubcommandHandler>> = {
   acp: handleAcp,
   upgrade: handleUpgrade,
   doctor: handleDoctor,
+  vis: handleVisCommand,
 };
 
 /**
