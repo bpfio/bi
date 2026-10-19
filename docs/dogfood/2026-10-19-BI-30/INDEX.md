@@ -19,3 +19,10 @@ bi 修 bi 生产标冲刺的实例结论文档(主控验收记录见 DEVLOG.md �
 - `transcripts/*.jsonl` — bi 会话转录(bi 自有会话格式,dogfood 原始凭证;泄漏扫描:仅 api_key_env 变量名,零密钥值)。
 
 测试代码与测试样例本体随工单代码提交入库(agent-tui.test.ts +154、headless.test.ts +145、args.test.ts、sandbox/buildBin e2e 门控),随波推送 bpfio/bi。
+
+## 终态增补(2026-10-19 关账)
+
+- instance-C1-BI-30.2a-report.md — bwrap/buildBin 门控完成(四场景验证矩阵,50/0);
+- codebuddy-hy3-review.md — codebuddy hy3 只读评审全记录(通过,零 high/medium);
+- BI-30.2b(伪端点 openai e2e 根因)未竟:实例 C2 三轮被超时/终止截停,零编辑;诊断线索——失败路径疑似涉及 DeepSeekAdapter(openai kind 适配器选择链),断点简报 t2b-brief.txt,runlogs/t2b-run2.gz+t2b 终态日志待下会话续查;
+- 全门禁终态:4320 pass/0 fail(228 文件)+双 tsc 0;代码提交 94cc84b。
