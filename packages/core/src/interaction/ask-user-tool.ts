@@ -62,7 +62,19 @@ export const ASK_USER_QUESTION_TOOL_SPEC: AskUserToolSpec = {
 
 export type AskUserToolResult =
   | ({ ok: true } & AskResult)
-  | { ok: false; code: string; message: string };
+  | { ok: false; code: string; message: string }
+  /** 交互降级：非可交互（headless / 无 TTY）场景的结构化回执，绝不悬挂、绝不抛。 */
+  | { answered: false; reason: "no-interactive" };
+
+/** AskUserTool 选项：是否处于可交互（TTY）环境。 */
+export interface AskUserToolOptions {
+  /**
+   * 可交互（TTY）环境？缺省 true（不降级，走既有 IO 挂起语义）。
+   * headless 装配置 false：run 直接结构化返回 {answered:false,reason:"no-interactive"}，
+   * 绝不调用 service.ask（block 模式会无限挂起），不悬挂不抛。
+   */
+  readonly interactive?: boolean;
+}
 
 function plainArgs(args: unknown): Record<string, unknown> | undefined {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
@@ -72,13 +84,19 @@ function plainArgs(args: unknown): Record<string, unknown> | undefined {
 export class AskUserTool {
   readonly spec = ASK_USER_QUESTION_TOOL_SPEC;
   readonly #service: UserQuestionService;
+  readonly #interactive: boolean;
 
-  constructor(service: UserQuestionService) {
+  constructor(service: UserQuestionService, options: AskUserToolOptions = {}) {
     this.#service = service;
+    this.#interactive = options.interactive ?? true;
   }
 
   /** 工具入口。结构化结果，绝不 throw（block 模式 Promise 挂起至应答/取消）。 */
   async run(args: unknown): Promise<AskUserToolResult> {
+    // 交互降级安全：非可交互场景直接结构化返回，绝不触碰 service.ask（防 block 悬挂）。
+    if (!this.#interactive) {
+      return { answered: false, reason: "no-interactive" };
+    }
     const input = plainArgs(args);
     if (input === undefined) {
       return { ok: false, code: "invalid-request", message: "参数须为对象" };
