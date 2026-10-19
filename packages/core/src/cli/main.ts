@@ -226,6 +226,10 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	// BI-05.3（W3-D7）：config [context] 挂载式分区；任一子键显式声明才物化，
 	// 缺省 config.context === undefined → 不传 → headless 全部开关恒关（逐字节等价）。
 	const contextSection = loadedConfig?.context;
+	// BI-05.1（W4-D9）：config [memory] 挂载式分区；缺省 config.memory === undefined
+	// → 不传 → headless 沉淀/注入全关（逐字节等价）。仅显式声明才物化，子键按
+	// dream_enabled / inject_enabled 各自下发，未开启的子面不进 option（零行为差）。
+	const memorySection = loadedConfig?.memory;
 	const subagentRunner =
 		subagentSection?.enabled === true
 			? createSubagentRunner({
@@ -288,6 +292,16 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 							toolResultPrune: contextSection.tool_result_prune === true,
 							maxHistoryEntries: contextSection.max_history_entries > 0 ? contextSection.max_history_entries : 0,
 							timezone: contextSection.timezone,
+						},
+					}
+				: {}),
+			// BI-05.1（W4-D9）：记忆沉淀装配（config [memory] 声明才下发；子键各自按
+			// 开关映射，未开启的子面不进 option。dir 缺省取 cwd（沉淀/注入读取同根）。
+			...(memorySection !== undefined
+				? {
+						memory: {
+							...(memorySection.dream_enabled === true ? { dream: { dir: h.cwd ?? process.cwd() } } : {}),
+							...(memorySection.inject_enabled === true ? { inject: { dir: h.cwd ?? process.cwd() } } : {}),
 						},
 					}
 				: {}),

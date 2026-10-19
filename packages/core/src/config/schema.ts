@@ -739,6 +739,29 @@ export const contextSchema = sObj({
 });
 export type ContextSection = InferSchema<typeof contextSchema>;
 
+/**
+ * [memory] 挂载式分区（仿 [verify]/[subagent]/[ptc]/[cron]/[context]，不进 17 根键）。
+ *
+ * 语义钉死：
+ * - 全部开关缺省关闭（false），未显式声明时 `config.memory === undefined`，
+ *   合并结果同样不含 memory 键——缺省路径逐字节等价于现状；
+ * - 显式声明才物化，并经 backfill 补全叶子默认；
+ * - 子键未知/类型不符照常记 issue（不冒充合法）。
+ *
+ * 接入面（最小诚实装配，W4-D9）：
+ * - dream_enabled：无头会话收尾（finalText 落定/正常退出）时调 dream 器官做
+ *   沉淀（空闲阈值用器官既有常量、锁文件防并发）；缺省 false = 不沉淀。
+ * - inject_enabled：无头会话启动读 <cwd>/BI.dream.md，存在则内容经 systemInstruction
+ *   前缀注入（与 --agent-file 共存时 agent-file 优先，dream 追加其后）；缺省 false = 不注入。
+ */
+export const memorySchema = sObj({
+  /** true = 无头会话收尾调 dream 器官沉淀到 <cwd>/BI.dream.md；缺省 false = 不沉淀（缺省路径零变化）。 */
+  dream_enabled: sBool(false),
+  /** true = 无头会话启动注入 <cwd>/BI.dream.md 内容到 system 面；缺省 false = 不注入。 */
+  inject_enabled: sBool(false),
+});
+export type MemorySection = InferSchema<typeof memorySchema>;
+
 export const subagentSchema = sObj({
   /** true = 注入 SubagentRunner 并经装配面注册 spawn_subagent 模型工具；缺省 false = 不注册（既有工具面零变动）。 */
   enabled: sBool(false),
@@ -800,8 +823,9 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     const ptcRaw = isPlainObject(raw) ? raw["ptc"] : undefined;
     const cronRaw = isPlainObject(raw) ? raw["cron"] : undefined;
     const contextRaw = isPlainObject(raw) ? raw["context"] : undefined;
+    const memoryRaw = isPlainObject(raw) ? raw["memory"] : undefined;
     const withoutMounted = isPlainObject(raw)
-      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron" && key !== "context"))
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron" && key !== "context" && key !== "memory"))
       : raw;
     const sections = rootSectionsSchema.validateLayer(withoutMounted, path, issues);
     const verifyLayer = verifySchema.validateLayer(verifyRaw, joinPath(path, "verify"), issues);
@@ -809,13 +833,15 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     const ptcLayer = ptcSchema.validateLayer(ptcRaw, joinPath(path, "ptc"), issues);
     const cronLayer = cronSchema.validateLayer(cronRaw, joinPath(path, "cron"), issues);
     const contextLayer = contextSchema.validateLayer(contextRaw, joinPath(path, "context"), issues);
+    const memoryLayer = memorySchema.validateLayer(memoryRaw, joinPath(path, "memory"), issues);
     if (
       sections === undefined &&
       verifyLayer === undefined &&
       subagentLayer === undefined &&
       ptcLayer === undefined &&
       cronLayer === undefined &&
-      contextLayer === undefined
+      contextLayer === undefined &&
+      memoryLayer === undefined
     )
       return undefined;
     return {
@@ -825,6 +851,7 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
       ...(ptcLayer !== undefined ? { ptc: ptcLayer } : {}),
       ...(cronLayer !== undefined ? { cron: cronLayer } : {}),
       ...(contextLayer !== undefined ? { context: contextLayer } : {}),
+      ...(memoryLayer !== undefined ? { memory: memoryLayer } : {}),
     };
   },
   () => rootSectionsSchema.defaultValue(),
@@ -845,6 +872,9 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     if (isPlainObject(value) && isPlainObject(value["context"])) {
       contextSchema.backfill?.(value["context"]);
     }
+    if (isPlainObject(value) && isPlainObject(value["memory"])) {
+      memorySchema.backfill?.(value["memory"]);
+    }
   },
 );
 
@@ -859,7 +889,7 @@ type RootBiConfig = {
  * BI_CONFIG_SCHEMA 注释）；未声明时恒 undefined，消费方 Optional chaining。
  * 可变性与其余 17 分区一致（装载/测试面按分区赋值）。
  */
-export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection; context?: ContextSection };
+export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection; context?: ContextSection; memory?: MemorySection };
 
 /** BiConfig 的顶层分区名联合（供 TUI /config 面板导航使用）。 */
 export type BiConfigSectionName = keyof BiConfig;

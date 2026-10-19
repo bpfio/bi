@@ -43,6 +43,14 @@ import { DateChangeSensor } from "../context/date-change-sensor";
 import { pruneToolResult } from "../context/tool-result-pruner";
 import { WindowManager } from "../context/window-manager";
 import { sanitizeErrorPayload } from "../observability/endpoint-sanitizer";
+import { join } from "node:path";
+import * as nodeFs from "node:fs";
+import {
+	consolidate,
+	DREAM_FILE_FILENAME,
+	DEFAULT_DREAM_IDLE_MS,
+} from "../memory/dream";
+import type { FsLike } from "../rules";
 import {
 	DEFAULT_SHELL_RUNNER,
 	TargetVerifier,
@@ -160,6 +168,51 @@ export interface HeadlessOptions {
 	 * 装配层按 config [context] 显式声明才生效——不静默开启任何行为。
 	 */
 	readonly context?: HeadlessContextOptions;
+	/**
+	 * BI-05.1（W4-D9）记忆沉淀装配面（对应 config [memory] 挂载式分区）。
+	 * 缺省不提供 = 全部开关恒关（现状路径逐字节等价）。dream = 会话收尾沉淀，
+	 * inject = 会话启动注入；每个子开关独立缺省关，装配层按 config [memory]
+	 * 显式声明才生效——不静默开启任何行为。
+	 */
+	readonly memory?: HeadlessMemoryOptions;
+}
+
+/** BI-05.1（W4-D9）记忆沉淀装配选项（config [memory] 挂载式分区映射；缺省不提供 = 全关=现状逐字节等价）。 */
+export interface HeadlessMemoryOptions {
+	/**
+	 * 会话收尾沉淀（对应 config [memory] dream_enabled）。仅在 finalText 落定/
+	 * 正常退出时触发：经 dream 器官 consolidate 写入 <dir>/BI.dream.md，空闲阈值
+	 * 用器官既有常量、锁文件防并发。缺省不提供 = 不沉淀（零开销零行为差）。
+	 */
+	readonly dream?: HeadlessMemoryDreamOptions;
+	/**
+	 * 会话启动注入（对应 config [memory] inject_enabled）。启动读 <dir>/BI.dream.md，
+	 * 存在则内容经 systemInstruction 前缀注入（与 --agent-file 共存时 agent-file
+	 * 优先，dream 追加其后）。缺省不提供 = 不注入。
+	 */
+	readonly inject?: HeadlessMemoryInjectOptions;
+}
+
+/** BI-05.1 会话收尾沉淀选项（dream 器官消费面；全部可注入以支持确定性测试）。 */
+export interface HeadlessMemoryDreamOptions {
+	/** 沉淀目标根目录（缺省 options.cwd）。 */
+	readonly dir?: string;
+	/** 精华提取器（缺省 = 以 finalText 本身为精华串）。 */
+	readonly extractor?: (session: string) => string | null | undefined;
+	/** 注入文件系统（测试用内存；缺省 node:fs）。 */
+	readonly fs?: FsLike;
+	/** 注入时钟（毫秒；缺省 Date.now）。 */
+	readonly now?: () => number;
+	/** 空闲毫秒（缺省 = 器官 DEFAULT_DREAM_IDLE_MS，恰好到达阈值即做梦）。 */
+	readonly idleMs?: number;
+}
+
+/** BI-05.1 会话启动注入选项（inject 消费面）。 */
+export interface HeadlessMemoryInjectOptions {
+	/** 注入读取根目录（缺省 options.cwd）。 */
+	readonly dir?: string;
+	/** 注入文件系统（测试用内存；缺省 node:fs）。 */
+	readonly fs?: FsLike;
 }
 
 /** BI-05.3 上下文引擎装配选项（config [context] 子键映射；全部缺省关）。 */
@@ -408,6 +461,21 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	// 不追加，逐字节等价）；date-change-sensor 基线在首轮 discloseDateChange 建立。
 	const systemParts: string[] = [];
 	if (options.systemInstruction !== undefined) systemParts.push(options.systemInstruction);
+	// BI-05.1（W4-D9）：[memory] inject_enabled → 启动读 <cwd>/BI.dream.md，存在则
+	// 内容经 system 面前缀注入。与 --agent-file 共存时 agent-file 优先（已先 push），
+	// dream 追加其后；文件不存在/空 = 不注入（缺省态，零行为差）。
+	if (options.memory?.inject !== undefined) {
+		const inj = options.memory.inject;
+		const injFs = inj.fs ?? nodeFs;
+		const injDir = inj.dir ?? options.cwd;
+		const dreamPath = join(injDir, DREAM_FILE_FILENAME);
+		try {
+			const content = injFs.readFileSync(dreamPath, "utf8").trim();
+			if (content.length > 0) systemParts.push(content);
+		} catch {
+			// 文件不存在/不可读：视为缺省态，skip（绝不假冒成功）。
+		}
+	}
 	if (ctxTime) {
 		systemParts.push(buildTimeContext({ isoNow: new Date(ctxNow()).toISOString(), timezone: ctxTz }));
 	}
@@ -510,6 +578,26 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			messages.push({ role: "assistant", content: blocks });
 			await appendChained({ type: "assistant", payload: { content: blocks } as unknown as JsonValue });
 			agentLoop.finishTurn();
+
+			// ---- 装配序 ⑤·a：会话收尾记忆沉淀（BI-05.1；仅 memory.dream 显式装配时生效）----
+			// 空闲阈值判定用器官既有常量 DEFAULT_DREAM_IDLE_MS（缺省恰好到阈值 → 收尾即沉淀）；
+			// 锁文件防并发由 consolidate 内部 acquireDreamLock 保证（他人持锁未过期 → 静默跳过）。
+			if (options.memory?.dream !== undefined) {
+				const dream = options.memory.dream;
+				const dreamFs = dream.fs ?? nodeFs;
+				const dreamDir = dream.dir ?? options.cwd;
+				const dreamNow = dream.now !== undefined ? dream.now() : Date.now();
+				const idleMs = dream.idleMs ?? DEFAULT_DREAM_IDLE_MS;
+				if (idleMs >= DEFAULT_DREAM_IDLE_MS) {
+					const extractor = dream.extractor;
+					consolidate([finalText], {
+						dir: dreamDir,
+						fs: dreamFs,
+						now: dreamNow,
+						...(extractor !== undefined ? { extractor } : {}),
+					});
+				}
+			}
 
 			// ---- 装配序 ⑤：完工自验（BI-21.1；仅装配层显式提供 verify 时生效）----
 			if (options.verify !== undefined) {
