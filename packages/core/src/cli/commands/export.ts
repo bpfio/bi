@@ -26,7 +26,7 @@ import {
   type SessionManager,
 } from "../../session/manager";
 import type { JsonValue, LoadedSession, SessionEntry, SessionMeta } from "../../session/types";
-import { renderHtml } from "../../export/html-exporter";
+import { HTML_THEMES, renderHtml, type Theme } from "../../export/html-exporter";
 
 export type ExportFormat = "markdown" | "json" | "html";
 
@@ -40,6 +40,8 @@ export interface ExportOptions {
   format?: ExportFormat;
   /** 输出文件路径（目录不存在自动创建）；缺省只返回字符串。 */
   out?: string;
+  /** HTML 主题（仅 format=html 生效）；缺省 dark。非法值抛 invalid-theme。 */
+  theme?: Theme;
 }
 
 export interface ExportResult {
@@ -53,6 +55,7 @@ export type ExportErrorCode =
   | "session-missing"
   | "session-corrupt"
   | "invalid-format"
+  | "invalid-theme"
   | "io-error";
 
 export class ExportError extends Error {
@@ -79,6 +82,14 @@ export async function exportSession(
     );
   }
 
+  const theme = opts.theme;
+  if (theme !== undefined && !HTML_THEMES.includes(theme)) {
+    throw new ExportError(
+      "invalid-theme",
+      `非法导出主题: ${String(theme)}（允许: ${HTML_THEMES.join(", ")}）`,
+    );
+  }
+
   let loaded: LoadedSession;
   try {
     loaded = await manager.loadSession(sessionId);
@@ -96,7 +107,7 @@ export async function exportSession(
     format === "json"
       ? renderJson(loaded.meta, loaded.entries)
       : format === "html"
-        ? renderHtml(loaded.meta, loaded.entries)
+        ? renderHtml(loaded.meta, loaded.entries, { theme })
         : renderMarkdown(loaded.meta, loaded.entries);
 
   if (opts.out === undefined) {

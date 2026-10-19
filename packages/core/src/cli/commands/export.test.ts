@@ -266,3 +266,25 @@ describe("BI-20.2 export：残缺尾部容忍", () => {
     expect(parsed.entries).toHaveLength(1);
   });
 });
+
+describe("BI-20.3 export：theme 选项", () => {
+  test("非法 theme → invalid-theme（结构化错误）", async () => {
+    const { mgr, sessionId } = await setup(WITH_TOOLS);
+    const error = await errorCode(exportSession(mgr, sessionId, { format: "html", theme: "neon" as "dark" }));
+    expect(error.code).toBe("invalid-theme");
+  });
+
+  test("theme=light 透传至 renderHtml（含 light 结构）", async () => {
+    const { mgr, sessionId } = await setup([]);
+    const { content } = await exportSession(mgr, sessionId, { format: "html", theme: "light" });
+    expect(content).toContain("color-scheme: light");
+    expect(content).toContain("background: #eff1f5");
+  });
+
+  test("theme 缺省仍走 dark（不影响既有 html 产物）", async () => {
+    const { mgr, sessionId } = await setup(WITH_TOOLS);
+    const { content } = await exportSession(mgr, sessionId, { format: "html" });
+    expect(content).toContain("background: #1e1e2e");
+    expect(content).toContain("color-scheme: dark");
+  });
+});

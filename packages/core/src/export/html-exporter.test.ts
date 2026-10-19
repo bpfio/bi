@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "../session/manager";
 import type { AppendEntryInput } from "../session/types";
-import { escapeHtml, renderHtml } from "./html-exporter";
+import { escapeHtml, renderHtml, type ToolHtmlRenderers } from "./html-exporter";
 
 let dirs: string[] = [];
 
@@ -176,5 +176,103 @@ describe("BI-20.3 renderHtml —— ANSI 与配对", () => {
 describe("BI-20.3 escapeHtml 单元", () => {
   test("& < > \" 全覆盖", () => {
     expect(escapeHtml('a&b<c>d"e')).toBe("a&amp;b&lt;c&gt;d&quot;e");
+  });
+});
+
+describe("BI-20.3 renderHtml —— 双主题", () => {
+  test("缺省(dark) 与显式 {theme:'dark'} 逐字节一致（回归保护）", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    expect(renderHtml(meta, entries)).toBe(renderHtml(meta, entries, { theme: "dark" }));
+  });
+
+  test("未传 options 与传 {} 仍逐字节一致（向后兼容）", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    expect(renderHtml(meta, entries)).toBe(renderHtml(meta, entries, {}));
+  });
+
+  test("light 关键结构: color-scheme:light + 亮色背景, 且不含暗色背景", async () => {
+    const { meta, entries } = await setup([]);
+    const html = renderHtml(meta, entries, { theme: "light" });
+    expect(html).toContain("<style>");
+    expect(html).toContain("color-scheme: light");
+    expect(html).toContain("background: #eff1f5");
+    expect(html).not.toContain("background: #1e1e2e");
+    expect(html).not.toContain("color-scheme: dark");
+  });
+
+  test("light 同样渲染工具卡（details/输入/输出结构存在）", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    const html = renderHtml(meta, entries, { theme: "light" });
+    expect(html).toContain("<details>");
+    expect(html).toContain('<div class="io-label">输入</div>');
+    expect(html).toContain('<div class="io-label">输出</div>');
+    expect(html).toContain("文件内容");
+  });
+});
+
+describe("BI-20.3 renderHtml —— 工具渲染器插件面", () => {
+  test("callHtml 命中: 覆盖「输入」区, 直接插入不转义", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    const renderers: ToolHtmlRenderers = {
+      read_file: { callHtml: (e) => `<div class="custom-call">CALL ${escapeHtml(String(e.toolName))}</div>` },
+    };
+    const html = renderHtml(meta, entries, { renderers });
+    expect(html).toContain('<div class="custom-call">CALL read_file</div>');
+    // 默认输入区（转义后的 args JSON）不再出现
+    expect(html).not.toContain('<pre><code>{"path":"a.md"}</code></pre>');
+  });
+
+  test("resultHtml 命中: 覆盖「输出」区, 直接插入不转义", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    const renderers: ToolHtmlRenderers = {
+      read_file: { resultHtml: () => '<div class="custom-res">RES</div>' },
+    };
+    const html = renderHtml(meta, entries, { renderers });
+    expect(html).toContain('<div class="custom-res">RES</div>');
+    expect(html).not.toContain("<pre><code>文件内容</code></pre>");
+  });
+
+  test("不二次转义契约: 插件返回原始 <tag> 直接落地, 不被转义", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    const renderers: ToolHtmlRenderers = {
+      read_file: { resultHtml: () => "<b>bold-raw</b>" },
+    };
+    const html = renderHtml(meta, entries, { renderers });
+    expect(html).toContain("<b>bold-raw</b>");
+    expect(html).not.toContain("&lt;b&gt;bold-raw&lt;/b&gt;");
+  });
+
+  test("未命中: 无对应 toolName 时回退默认路径（逐字节等价于无 renderers）", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    const renderers: ToolHtmlRenderers = {
+      write_file: { callHtml: () => "<div>never</div>" }, // 不匹配 read_file
+    };
+    const withPlugin = renderHtml(meta, entries, { renderers });
+    const without = renderHtml(meta, entries);
+    expect(withPlugin).toBe(without);
+    expect(withPlugin).not.toContain("never");
+  });
+
+  test("部分命中: 仅 callHtml 命中时, 输出区仍走默认转义路径", async () => {
+    const { meta, entries } = await setup(WITH_TOOLS);
+    const renderers: ToolHtmlRenderers = {
+      read_file: { callHtml: () => '<div class="custom-call">C</div>' },
+    };
+    const html = renderHtml(meta, entries, { renderers });
+    expect(html).toContain('<div class="custom-call">C</div>');
+    // 输出区回退默认 → 含转义后的文件内容 pre-code
+    expect(html).toContain("<pre><code>文件内容</code></pre>");
+  });
+
+  test("孤立 tool_result 经 resultHtml 覆盖输出区", async () => {
+    const { meta, entries } = await setup([
+      { type: "tool_result", payload: { text: "孤立结果" }, toolName: "grep", toolCallId: "orphan" },
+    ]);
+    const renderers: ToolHtmlRenderers = {
+      grep: { resultHtml: () => '<div class="custom-orphan">ORPHAN</div>' },
+    };
+    const html = renderHtml(meta, entries, { renderers });
+    expect(html).toContain('<div class="custom-orphan">ORPHAN</div>');
+    expect(html).not.toContain("<pre><code>孤立结果</code></pre>");
   });
 });
