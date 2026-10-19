@@ -1,0 +1,16 @@
+工单 TUI-ALIGN-4b:鼠标点击定位光标(kimi input.ts 对齐;键位注册表已在 TUI-ALIGN-4a 落地,本单基于其上)。
+
+现状锚点(cwd=/home/yupeng/bi):
+- kimi 参考(只读):/home/yupeng/references/kimi-code/apps/kimi-code/src/tui/components/input.ts(自行定位其鼠标点击→光标定位的换算与事件面);
+- bi 现状:bin/bi.ts 已发 MOUSE_ENABLE/SGR 鼠标上报(BI-27.5 滚轮历史在用);packages/tui/src/engine/diff-renderer.ts 的 InputLoop/KeyStream 与 ParsedKey 是按键解析面;packages/tui/src/mount/repl.ts LineEditor 持有 draft/cursor;packages/tui/src/mount/agent-tui.ts handleKey 是搜索态/审批态路由;
+- 键位注册表:packages/tui/src/mount/keybindings.ts(actionForKey 等)——鼠标定位是坐标事件不是键位,不进注册表,但消费面风格对齐(注入、纯函数可测)。
+
+交付目标:
+1) SGR 鼠标点击解析:输入字节流里 1000/1006 增强坐标上报(SGR: ESC [ < b ; x ; y M/m)解析为 click 事件(b=0 按下);区分按下/释放,拖动不处理;滚轮上报路径(BI-27.5)保持原样不回归;
+2) 点击→光标换算(纯函数,零 TTY 可测):给出行/列、提示行布局(layoutPromptLine 的窗口:横向滚动偏移/前缀宽)与 draft,算出目标光标(UTF-16 码元位;落在 CJK 宽字符右半→对齐其码元起点;超出草稿末尾→贴末尾);换算函数落 packages/tui/src/mount/(如 mouse-cursor.ts),layoutPromptLine 若需暴露偏移信息做最小扩展;
+3) 接线:点击落点仅在提示行输入区生效;转录区点击忽略(v1);搜索态/审批态下点击忽略(v1);LineEditor.setCursor(n) 最小接口若无则加;
+4) 测试:换算纯函数用例集(行首/行中/横滚窗口两侧边界/CJK 宽字符对齐/超末尾/空草稿);SGR 序列解析用例(按下/释放/滚轮不误判/残包容错);既有 pty 回归不红。
+
+边界:packages/core/src/**(不碰);bin/bi.ts 只许动鼠标模式串这一处(若需);键位注册表文件不碰;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && BI_PTY_E2E=1 bun test ./packages/tui/ 全绿;cd /home/yupeng/bi/packages/tui && bunx tsc --noEmit 0 错。
+最终回复(结论清单,不复述过程):改动/新增文件清单/换算与事件语义(点击落点矩阵)/测试数+tsc/未尽边界。

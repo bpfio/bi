@@ -417,3 +417,19 @@ D2c 差距分析(7 维矩阵双侧 file:line):**转录投影层已同构对齐**
 **门禁终态:4370 pass/0 fail(231 文件,51240 expect,BI_PTY_E2E=1)+双 tsc 0(自十四节 4374 净减 4=tool-renderers 死测试删除)。提交链:db0fd75(B1)→9591d37(B2)→test 补提交→docs;代码门 CI run 39237969413 绿。派工档案:docs/dispatch/2026-10-19-subcmd1/(简报×3+侦察报告)。**
 
 **诚实边界**:--add-dir 未进工具访问面(toolset 单根,校验+透传+备案,待后续工单);html 导出 Dark 单主题(fc30d5f 旧库曾双主题,重写收敛,历史可溯);kimi agentFiles 复数 vs bi 单文件契约差异备案;B3 侦察仅提案,BI-20.5b 未开工待派;codebuddy print 模式无 sessionId 回显,续作句柄不可用(以简报重派替代)。
+
+## 十六、TUI-ALIGN-3 第二、三波:子命令面收官 (2026-10-19,当日第五波)
+
+用户口令"继续派单"→"step-5-preview 模型也免费(授权转正)"。执行形态:主控策划+验收,四单派 codebuddy(C1/C2 hy3 并发,C3 step-5-preview 串行续单),验收**新铁律四步**(diff 逐行/门禁复跑+提交面=门禁面/真机冒烟/抽样核实)首次全流程执行,当场抓出两处问题并修复。
+
+| 单 | 工单 | 落点 | 要点 | 验收 |
+|---|---|---|---|---|
+| C1 | BI-20.5b bi vis v1 | cli/commands/vis.ts(新 656 行)+dispatch.ts 注册 | Bun.serve 会话可视化:列表/消息流/分支树/工具折叠卡;安全矩阵=缺省回环免令牌、0.0.0.0 归非回环强制 BI_VIS_AUTH_TOKEN、401 先于 404 防枚举、decode 后白名单防穿越、前端全 textContent 零 XSS 面 | 真机九路径冒烟(200/404/400/405/拒启 exit1/令牌 401→200) |
+| C2 | TUI-ALIGN-4a 键位注册表 | mount/keybindings.ts(新 240 行)+repl/agent-tui 消费+bin 装配 | 16 动作默认表=现硬编码逐条对照(**行为零变化**);~/.bi/keybindings.json 覆盖,规范化(ctrl-/+ 统一)/三类结构化忽略/冲突后到覆盖 | 真文件冒烟:改绑生效+conflicts 报出;pty 回归全绿证零漂移 |
+| C3 | TUI-ALIGN-4b 鼠标定位 | mount/mouse-cursor.ts(新 89 行)+diff-renderer SGR 解析+cjk-width 最小扩展 | 左键按下→mouse-click(0 基);字素步进定位(宽字符右半对齐起点);光标条 ▏ 占列扣回;多行摊平映射换行序列起点;滚轮(BI-27.5)原样保留 | 真实 SGR 字节链路冒烟七例全对;**step-5-preview 首单** |
+
+**验收四步实战战果**:①C2 装配路径偏差(cwd 相对→简报要求 ~/.bi 用户级)主控亲修(home 优先+项目兜底);②CI run 39244075154 红屏→定位为**存量 flaky**:uuid7 时钟对齐测试上界未留 RFC 9562 §6.2 单调伪推进容差(10000-id 批量用例同毫秒超 4096 条,内部时钟被推到墙钟前 1ms),加 10ms 容差+机理注释,5 连跑全绿;③**孤儿教训延伸**:C1 发现第二个孤儿 vis-handler.ts(736369d,接了测试未接 CLI)——藏在 src/web/ 而非目标路径 cli/commands/,简报预检只查目标路径不够,**须按功能关键词全仓 grep**。
+
+**门禁终态:4437 pass/0 fail(234 文件,BI_PTY_E2E=1)+双 tsc 0。提交链:32c2ff6(C1)→898cbe1(C2)→1b292a1(deflake)→6e63f94(C3);CI 全绿 run 39244807093(1b292a1)。派工档案:docs/dispatch/2026-10-19-subcmd2/(简报×3+报告×3)。**
+
+**诚实边界**:vis 生产接线 attachSignals:false(默认 SIGINT 终止而非优雅停服,本地只读服务无状态,外观级备案);转录区点击 v1 仅忽略(无选区/跳转);Esc 拒绝审批保留硬编码兜底未入注册表;多行草稿按摊平行换算,不做视觉行↔逻辑行映射;kimi vis 的 8 tab 全家桶明确不做(v1 封顶)。

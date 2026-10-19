@@ -1,0 +1,17 @@
+工单 TUI-ALIGN-4a:keybindings 可配置注册表(kimi keybindings 对齐,鼠标定位是后续串行单勿做)。
+
+现状锚点(cwd=/home/yupeng/bi):
+- kimi 参考(只读):/home/yupeng/references/kimi-code/apps/kimi-code/src/tui/ 下 keybindings 相关文件(自行定位,看它的注册表/默认表/覆盖语义,移植思想不搬依赖);
+- bi 现状:键位全部硬编码——packages/tui/src/mount/repl.ts(D7 的 emacs 键 ctrl-a/b/k/u/w/y/z、tab 补全路由、ctrl-f 转发搜索)、packages/tui/src/mount/agent-tui.ts(Ctrl+F 搜索/Ctrl+G/Esc/Enter 路由);
+- 主控已核实 HEAD 无 packages/tui/src/mount/keybindings.ts,全新文件;
+- 装配面:bin/bi.ts(runReplMain 内装配 AgentTuiSession/runRepl)。
+
+交付目标:
+1) 新文件 packages/tui/src/mount/keybindings.ts:动作名→键位注册表;默认表=当前全部硬编码键位(**行为零变化**,逐条对照现码整理);normalizeKey(大小写/ctrl- 前缀规范化);loadKeybindings(path) 读 JSON({动作: "ctrl+a"} 覆盖默认),文件缺失=纯默认,未知动作/非法键串结构化忽略并计数入返回值;
+2) repl.ts 与 agent-tui.ts 消费注册表:硬编码 key 判断改查表——经 RunRepl/AgentTuiSession 选项注入(保持纯函数可测),bin/bi.ts 装配处加载一次传入(此文件只许动装配这一处);
+3) 冲突策略(简单,不过度设计):两动作绑同一键=后到覆盖,冲突对记入告警列表随加载结果返回;
+4) 测试:新 keybindings.test.ts——默认表完整性(逐条对照现行为)/规范化/覆盖生效/非法输入忽略/冲突告警;repl 路由抽查(注入默认表行为不变;改绑后跟随新键)。
+
+边界(并行工单面,一律勿动):packages/core/src/cli/**(并行单在做 vis 子命令);packages/core/src/export/**;鼠标定位/鼠标事件相关一律不碰(后续串行单);不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/tui/ 全绿;cd /home/yupeng/bi/packages/tui && bunx tsc --noEmit 0 错;bun test ./packages/core/src/cli/ 不红(防装配面连带破坏)。
+最终回复(结论清单,不复述过程):改动/新增文件清单/默认动作表全文(动作→键)/覆盖与冲突语义/测试数+tsc/未尽边界。

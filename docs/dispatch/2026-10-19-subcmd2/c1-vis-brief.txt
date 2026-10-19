@@ -1,0 +1,18 @@
+工单 BI-20.5b:bi vis v1——本地 Web 会话可视化(kimi vis 对齐最小面)。
+
+必读材料(cwd=/home/yupeng/bi):
+- 侦察报告:docs/dispatch/2026-10-19-subcmd1/b3-vis-recon-report.md——kimi vis 架构、bi 数据可得性三栏表、v1 提案与"不做"清单以它为准,本单按提案执行;
+- 会话数据面:packages/core/src/session/manager.ts(listSessions 约在 309 行/entries/history/fork/rewindTo)、session/types.ts、session/index.ts;
+- 子命令挂载面:packages/core/src/cli/commands/dispatch.ts:64 SUBCOMMANDS 查表(现无 "vis")+ handleSubcommand 派发;主控已核实 HEAD 无 vis.ts,全新文件。
+
+交付目标(v1 封顶,防蔓延):
+1) 新文件 packages/core/src/cli/commands/vis.ts:`bi vis [sessionId] [--port N] [--host H]`——缺省 127.0.0.1、端口缺省自动选空闲;Bun.serve 拉起,控制台打印访问 URL,SIGINT 优雅退出;dispatch.ts 注册 "vis"(usage 同步);
+2) 只读 API:GET /api/sessions(列表+元数据)、GET /api/sessions/:id(消息流+分支树:parentId 森林+tool_call/tool_result 按 toolCallId 配对);GET / 返回单文件 vanilla HTML+内联 CSS+原生 JS——**零构建、零 npm 依赖、零 CDN**(主控裁定:不采用侦察报告的 Vite+React 新包建议,与 bi 零依赖哲学一致);
+3) 安全:缺省只绑回环;--host 传非 loopback 时强制环境变量 BI_VIS_AUTH_TOKEN(缺失拒绝启动,带 token 校验请求);sessionId 用既有白名单模式校验(防路径穿越),未知 id 结构化 404;
+4) 前端最小面:会话列表 → 点开 → 消息流(按类型着色)+ 分支树(缩进树即可)+ 工具调用 <details> 折叠卡(输入/输出);桌面 Chrome 可读即可;
+5) v1 不做(照抄侦察报告第 5 节):token 统计/上下文曲线/agents 树/cron/logs/zip 导入/实时推送/富文本渲染/令牌轮转/多网卡地址;
+6) 测试:vis.ts 处理器单测(替身 SessionManager 注入:列表/详情/404/token 门/路径穿越拒绝/非法 host 无 token 拒启);UI 单文件断言关键结构子串;手动自验:启动服务 curl /api/sessions 得 200 与 JSON、curl / 得 HTML。
+
+边界(并行工单面,一律勿动):packages/tui/**(并行单在做 keybindings);packages/core/src/export/**;bin/bi.ts;不 commit 不 push,留工作树主控验收。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/cli/ 全绿+新测试文件全绿;cd /home/yupeng/bi/packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单,不复述过程):新增/改动文件清单/路由与安全语义(端口/host/token/404)/测试数+tsc/手动自验 curl 摘要/未尽边界。
