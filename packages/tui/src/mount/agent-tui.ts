@@ -172,11 +172,17 @@ export interface TuiSessionOptions {
 	 */
 	readonly gate?: PermissionGate;
 	/**
-	 * 斜杠命令拦截（BI-28.3 接线）：注入后,`/` 开头的提交改走本地命令面
-	 * （如 /permissions）——不入模型回合、不落会话 JSONL,输出以 system 行
-	 * 转录上屏。缺省不拦截（/ 开头照常进模型）。
+	 * 斜杠命令拦截（BI-28.3 接线；BI-30.1 执行面）：注入后,`/` 开头的提交改走
+	 * 命令面，返回两形态：
+	 * - `string` = 本地回执（/permissions 回执、未知命令应答、自定义命令展开
+	 *   失败的错误文本）——不入模型回合、不落会话 JSONL,输出以 system 行转录
+	 *   上屏,endedAs=finish；
+	 * - `{ prompt: string }` = 展开后的用户提示词（自定义斜杠命令执行面）——
+	 *   按普通提交进模型回合：JSONL 记 user/assistant 条目、转录 [user] /
+	 *   [assistant] 行（不出 system 本地行）,回合自然收尾 endedAs=finish。
+	 * 缺省不拦截（/ 开头照常进模型）。
 	 */
-	readonly slashCommand?: (line: string) => Promise<string>;
+	readonly slashCommand?: (line: string) => Promise<string | { prompt: string }>;
 	readonly clock?: Clock;
 	readonly hooks?: TuiSessionHooks;
 	/** 帧字节输出面（缺省 no-op；真实终端注入 WriteStream，BI-24.2 REPL 挂载用）。 */
@@ -349,8 +355,8 @@ export class AgentTuiSession {
 	#turnStartedAt: number | undefined;
 	/** BI-27.2：注入时钟（节流与秒数共用；缺省 Date.now）。 */
 	readonly #clock: Clock | undefined;
-	/** 斜杠命令拦截（BI-28.3 接线；缺省 undefined = 不拦截）。 */
-	readonly #slashCommand: ((line: string) => Promise<string>) | undefined;
+	/** 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面；缺省 undefined = 不拦截）。 */
+	readonly #slashCommand: ((line: string) => Promise<string | { prompt: string }>) | undefined;
 
 	constructor(options: TuiSessionOptions) {
 		this.#rows = options.rows ?? 24;
@@ -587,21 +593,28 @@ export class AgentTuiSession {
 		if (this.#state === "exited" || this.#agentLoop.state === "exit") {
 			throw new TuiSessionError("session-exited", "会话已退出（Esc 二段），不可继续提交");
 		}
-		// 斜杠命令拦截（BI-28.3 接线）：/ 开头且装配层注入了 handler 时走本地
-		// 命令面——不入模型回合、不落会话 JSONL（本地操作），输出以 system 行
-		// 转录上屏；finalText 带回输出，endedAs=finish（非模型回合语义）。
+		// 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面）：/ 开头且装配层注入了
+		// handler 时走命令面,返回两形态——
+		// - string = 本地回执:不入模型回合、不落会话 JSONL,输出以 system 行
+		//   转录上屏,endedAs=finish（非模型回合语义）;
+		// - { prompt } = 展开后的用户提示词:改写本回合的用户输入,落到下方普通
+		//   模型回合（user/assistant 双入 JSONL 与转录,自然收尾 endedAs=finish）。
+		let turnPrompt = prompt;
 		if (prompt.startsWith("/") && this.#slashCommand !== undefined) {
-			const output = await this.#slashCommand(prompt);
-			this.#transcribe("system", output);
-			this.#frame();
-			return {
-				sessionId: this.#sessionId,
-				finalText: output,
-				rounds: this.#rounds,
-				toolResults: [...this.#toolResults],
-				permissionDecisions: [...this.#permissionDecisions],
-				endedAs: "finish",
-			};
+			const outcome = await this.#slashCommand(prompt);
+			if (typeof outcome === "string") {
+				this.#transcribe("system", outcome);
+				this.#frame();
+				return {
+					sessionId: this.#sessionId,
+					finalText: outcome,
+					rounds: this.#rounds,
+					toolResults: [...this.#toolResults],
+					permissionDecisions: [...this.#permissionDecisions],
+					endedAs: "finish",
+				};
+			}
+			turnPrompt = outcome.prompt;
 		}
 		this.#turnCancelled = false;
 		this.#exitRequested = false;
@@ -612,18 +625,19 @@ export class AgentTuiSession {
 		this.#lastStreamFrameAt = Number.NEGATIVE_INFINITY;
 		this.#streamText = "";
 
-		// 会话持久化：根条目（仅首个 submit 建立）与链式追加。
+		// 会话持久化：根条目（仅首个 submit 建立）与链式追加（{ prompt } 形态
+		// 落展开后的用户提示词,BI-30.1）。
 		if (this.#messages.length === 0) {
 			const rootEntry = await this.#manager.append(this.#sessionId, null, {
 				type: "user",
-				payload: { text: prompt } as unknown as JsonValue,
+				payload: { text: turnPrompt } as unknown as JsonValue,
 			});
 			this.#parentId = rootEntry.id;
 		} else {
-			await this.#appendChained({ type: "user", payload: { text: prompt } as unknown as JsonValue });
+			await this.#appendChained({ type: "user", payload: { text: turnPrompt } as unknown as JsonValue });
 		}
-		this.#messages = [...this.#messages, { role: "user", content: prompt }];
-		this.#transcribe("user", prompt);
+		this.#messages = [...this.#messages, { role: "user", content: turnPrompt }];
+		this.#transcribe("user", turnPrompt);
 		this.#frame();
 
 		try {

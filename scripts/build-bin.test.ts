@@ -38,6 +38,36 @@ function scratch(name: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// BI-30.2a 构建链能力门控 — buildBin e2e 真实依赖诊断
+// ① 宿主三元组=linux-x64：e2e 硬编码构建 linux-x64 产物并在本机执行冒烟
+//   （非 linux-x64 宿主交叉产物不可本机执行）；
+// ② 构建期 npm 依赖可解析：smol-toml/picomatch 是 bun build --compile 打包图的
+//   一阶依赖（bun test 运行期的依赖自动安装不覆盖 bundler 解析；未 bun install
+//   的环境编译报 "Could not resolve ... Maybe you need to bun install?"）。
+// 能力在 → describe 照常全绿；能力缺 → 结构化跳过（原因见 describe 上方注释）。
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = join(import.meta.dir, "..");
+const HOST_LINUX_X64 = process.platform === "linux" && process.arch === "x64";
+
+/** buildBin 打包图的一阶 npm 依赖（源：packages/core 声明 + bundler 一跳导入方）。 */
+const BUILD_CHAIN_DEPS: ReadonlyArray<readonly [specifier: string, importer: string]> = [
+  ["smol-toml", "packages/core/src/config/config-service.ts"],
+  ["picomatch", "packages/core/src/guard/permission-matcher.ts"],
+];
+
+const MISSING_BUILD_DEPS = BUILD_CHAIN_DEPS.filter(([specifier, importer]) => {
+  try {
+    Bun.resolveSync(specifier, join(REPO_ROOT, importer));
+    return false;
+  } catch {
+    return true;
+  }
+}).map(([specifier]) => specifier);
+
+const HAS_BUILD_CHAIN = HOST_LINUX_X64 && MISSING_BUILD_DEPS.length === 0;
+
+// ---------------------------------------------------------------------------
 // 参数解析矩阵
 // ---------------------------------------------------------------------------
 
@@ -269,7 +299,9 @@ describe("compileBinary", () => {
 // BuildReport 形状与真实构建 e2e（本机 linux-x64，含嵌入资产）
 // ---------------------------------------------------------------------------
 
-describe("buildBin e2e", () => {
+// 跳过原因（结构化）：宿主非 linux-x64 → 交叉产物不可本机执行冒烟；构建期依赖
+// 未安装（未 bun install，缺失：见 MISSING_BUILD_DEPS）→ bun build --compile 解析失败
+describe.skipIf(!HAS_BUILD_CHAIN)("buildBin e2e", () => {
   test("真实构建 linux-x64：BuildReport 字段、sidecar、产物可执行输出", async () => {
     const embedDir = scratch("e2e-embed");
     mkdirSync(embedDir, { recursive: true });

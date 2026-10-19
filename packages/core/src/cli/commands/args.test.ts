@@ -95,13 +95,14 @@ describe("BI-20.2 parseGlobalArgs：结构化报错", () => {
   });
 
   test("--output-format 非法值 → invalid-value", () => {
-    const { code, flag } = catchCode(() => parseGlobalArgs(["--output-format", "text"]));
+    const { code, flag } = catchCode(() => parseGlobalArgs(["--output-format", "json"]));
     expect(code).toBe("invalid-value");
     expect(flag).toBe("--output-format");
   });
 
-  test("--output-format 合法值 stream-json 通过", () => {
+  test("--output-format 合法值 stream-json / text 通过（BI-30.3 白名单）", () => {
     expect(parseGlobalArgs(["--output-format=stream-json"]).outputFormat).toBe("stream-json");
+    expect(parseGlobalArgs(["--output-format", "text"]).outputFormat).toBe("text");
   });
 
   test("单值 flag 重复出现 → duplicate-flag", () => {
@@ -115,15 +116,32 @@ describe("BI-20.2 parseGlobalArgs：结构化报错", () => {
   test("可重复 flag（--add-dir）重复不报 duplicate-flag", () => {
     expect(parseGlobalArgs(["--add-dir", "/a", "--add-dir", "/b"]).addDirs).toEqual(["/a", "/b"]);
   });
+
+  test("--max-rounds 正整数通过并转 number", () => {
+    expect(parseGlobalArgs(["--max-rounds", "24"]).maxRounds).toBe(24);
+    expect(parseGlobalArgs(["--max-rounds=1"]).maxRounds).toBe(1);
+  });
+
+  test("--max-rounds 非正整数 → invalid-value", () => {
+    // 负数以 "-" 开头,按既有契约走 missing-value（与 --prompt 遇 "-" 同规）。
+    const { code } = catchCode(() => parseGlobalArgs(["--max-rounds", "-3"]));
+    expect(code).toBe("missing-value");
+    for (const bad of ["0", "2.5", "abc"]) {
+      const { code, flag } = catchCode(() => parseGlobalArgs(["--max-rounds", bad]));
+      expect(code).toBe("invalid-value");
+      expect(flag).toBe("--max-rounds");
+    }
+  });
 });
 
 describe("BI-20.2 GLOBAL_ARGS：矩阵定义完整性", () => {
-  test("包含四个合约旗标且定义字段齐备", () => {
+  test("包含五个合约旗标且定义字段齐备", () => {
     expect(GLOBAL_ARGS.map((s) => s.flag)).toEqual([
       "--agent-file",
       "--add-dir",
       "--prompt",
       "--output-format",
+      "--max-rounds",
     ]);
     for (const spec of GLOBAL_ARGS) {
       expect(spec.flag.startsWith("--")).toBe(true);
@@ -138,7 +156,7 @@ describe("BI-20.2 GLOBAL_ARGS：矩阵定义完整性", () => {
     expect(byFlag.get("--add-dir")?.repeatable).toBe(true);
     expect(byFlag.get("--agent-file")?.repeatable).toBe(false);
     expect(byFlag.get("--prompt")?.repeatable).toBe(false);
-    expect(byFlag.get("--output-format")?.allowedValues).toEqual(["stream-json"]);
+    expect(byFlag.get("--output-format")?.allowedValues).toEqual(["stream-json", "text"]);
     expect(byFlag.get("--agent-file")?.valueName).toBe("<path.md>");
   });
 });

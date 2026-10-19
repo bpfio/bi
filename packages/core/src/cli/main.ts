@@ -174,7 +174,12 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...(configGate !== undefined ? { gate: configGate } : {}),
 			...(h.trust !== undefined ? { trust: h.trust } : {}),
 			...(h.hookSpawn !== undefined ? { hookSpawn: h.hookSpawn } : {}),
-			...(h.maxRounds !== undefined ? { maxRounds: h.maxRounds } : {}),
+			// BI-30.3 接线：CLI --output-format 接进无头输出面（缺省 stream-json 由 headless 决定）。
+			...(parsed.outputFormat !== undefined ? { outputFormat: parsed.outputFormat } : {}),
+			// CLI --max-rounds 优先于 deps 透传（BI-30 dogfood 发现：真实工单 8 回合不够）。
+			...((parsed.maxRounds ?? h.maxRounds) !== undefined
+				? { maxRounds: parsed.maxRounds ?? h.maxRounds }
+				: {}),
 			...(options.out !== undefined ? { out: options.out } : {}),
 		});
 		return result.exitCode;

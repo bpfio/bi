@@ -12,6 +12,9 @@
  * 6. 流式渲染（BI-27.2）：慢速 delta 流中出现含部分文本的 ▌ StreamView 行；
  *    收束后预览行消失、投影含完整文本；running 状态行含已用秒数；80ms 窗口
  *    内连续 delta 合并出帧；取消收束同样清空预览并转写部分文本。
+ * 7. 斜杠命令执行面（BI-30.1）：{ prompt } 形态入模型回合（user/assistant
+ *    双入 JSONL 与转录、无 system 本地行）；string 本地形态回归（system 行
+ *    上屏、JSONL 零条目）；展开失败（!ok）走本地错误文本、不入模型回合。
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -23,6 +26,8 @@ import type { ModelPort, ToolBinding } from "../../../core/src/cli/headless";
 import type { AgentMessage, StreamEvent } from "../../../core/src/adapters/deepseek-adapter";
 import type { Clock } from "../../../core/src/guard/deadline";
 import type { ParsedKey } from "../engine/diff-renderer";
+import { expandCommand, type SlashCommand } from "../../../core/src/commands/custom-commands";
+import { SessionManager } from "../../../core/src/session/manager";
 
 // ---------------------------------------------------------------------------
 // fixture
@@ -631,6 +636,155 @@ describe("BI-27.2 · 流式渲染", () => {
 			expect(last.lines.some((l) => l.includes("[assistant] 进行中…"))).toBe(true); // 部分文本转写（既有行为）
 		} finally {
 			gate.open();
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-30.1 · 斜杠命令执行面（{ prompt } 入模型回合 / string 本地转录）
+// ---------------------------------------------------------------------------
+
+describe("BI-30.1 · 斜杠命令执行面", () => {
+	/**
+	 * bin/bi.ts 斜杠执行面的契约镜像：已知自定义命令 → expandCommand(命令对象,
+	 * 参数数组) → ok 回 { prompt: 展开文本 }、!ok 回 error.message（本地文本）。
+	 */
+	function customSlashHandler(
+		commands: readonly SlashCommand[],
+	): (line: string) => Promise<string | { prompt: string }> {
+		return async (line) => {
+			const trimmed = line.trim();
+			const head = trimmed.split(/\s+/)[0] ?? "";
+			const command = commands.find((c) => `/${c.name}` === head);
+			if (command === undefined) return `未知斜杠命令: ${head}`;
+			const rest = trimmed.slice(head.length).trim();
+			const argv = rest === "" ? [] : rest.split(/\s+/);
+			const expanded = expandCommand(command, argv);
+			return expanded.ok ? { prompt: expanded.text } : expanded.error.message;
+		};
+	}
+
+	/** 自定义命令夹具：必选 `<topic>` + 模板体位置注入（ok/!ok 两路径共用）。 */
+	function demoCommand(): SlashCommand {
+		return {
+			name: "demo",
+			description: "示例命令",
+			argsSpec: "<topic>",
+			requiredArgs: ["topic"],
+			optionalArgs: [],
+			sourceFile: "/x/demo.md",
+			body: "总结: $1",
+		};
+	}
+
+	test("{ prompt } 形态：展开提示词入模型回合（user/assistant 入 JSONL），转录含 assistant 回复", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port, received } = scriptedModel([
+				[{ type: "content_delta", delta: "日志已总结。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				slashCommand: customSlashHandler([demoCommand()]),
+			});
+			const sessionId = await session.start("斜杠执行面");
+			const result = await session.submit("/demo 日志");
+			expect(result.endedAs).toBe("finish");
+			expect(result.finalText).toBe("日志已总结。");
+
+			// 模型回合收到的是展开后的用户提示词（非 "/demo 日志" 行原文）
+			expect(received).toHaveLength(1);
+			const messages = received[0]!.messages;
+			expect(messages[0]!.role).toBe("user");
+			expect(messages[0]!.content).toBe("总结: 日志");
+
+			// 转录：[user] 展开文本 + [assistant] 回复；不出 system 本地行
+			const l3 = session.projection.render();
+			expect(l3).toContain("[user] 总结: 日志");
+			expect(l3).toContain("[assistant] 日志已总结。");
+			expect(l3.some((l) => l.startsWith("[system]"))).toBe(false);
+			const last = sink.frames.at(-1)!;
+			expect(last.lines.some((l) => l.includes("[user] 总结: 日志"))).toBe(true);
+			expect(last.lines.some((l) => l.includes("[assistant] 日志已总结。"))).toBe(true);
+			expect(last.state).toBe("idle");
+
+			// JSONL：user + assistant 双条目入链（普通收尾，无本地条目）
+			const manager = new SessionManager({ rootDir: join(root, "sessions") });
+			const entries = await manager.entries(sessionId);
+			expect(entries.map((e) => e.type)).toEqual(["user", "assistant"]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("string 本地形态（既有回归）：system 行上屏、不入模型回合、JSONL 零条目", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			// 脚本为空：模型一旦被调用即抛（第 1 回合无脚本）→ 本测同时断言不入模型回合。
+			const { port } = scriptedModel([]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				slashCommand: async () => "本地回执: 已切换",
+			});
+			const sessionId = await session.start("本地回执");
+			const result = await session.submit("/permissions yolo");
+			expect(result.endedAs).toBe("finish");
+			expect(result.finalText).toBe("本地回执: 已切换");
+			const l3 = session.projection.render();
+			expect(l3).toContain("[system] 本地回执: 已切换");
+			expect(l3.some((l) => l.startsWith("[user]"))).toBe(false);
+			expect(sink.frames.at(-1)!.lines.some((l) => l.includes("[system] 本地回执"))).toBe(true);
+			const manager = new SessionManager({ rootDir: join(root, "sessions") });
+			expect(await manager.entries(sessionId)).toHaveLength(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("展开失败（!ok）：error.message 本地错误文本上屏，不入模型回合", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]); // 调用即抛 → 断言不入模型回合
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				slashCommand: customSlashHandler([demoCommand()]),
+			});
+			const sessionId = await session.start("展开失败");
+			const result = await session.submit("/demo"); // 缺必选参数 <topic>
+			expect(result.endedAs).toBe("finish");
+			expect(result.finalText).toContain("/demo 缺少必选参数: topic");
+			const l3 = session.projection.render();
+			expect(l3.some((l) => l.startsWith("[system]") && l.includes("缺少必选参数"))).toBe(true);
+			expect(l3.some((l) => l.startsWith("[user]"))).toBe(false);
+			expect(sink.frames.at(-1)!.lines.some((l) => l.includes("缺少必选参数"))).toBe(true);
+			const manager = new SessionManager({ rootDir: join(root, "sessions") });
+			expect(await manager.entries(sessionId)).toHaveLength(0);
+		} finally {
 			await cleanup();
 		}
 	});

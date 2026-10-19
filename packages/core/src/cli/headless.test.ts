@@ -335,3 +335,148 @@ describe("BI-23.3 main 配置装配与凭据门", () => {
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// BI-30.3 --output-format 真消费：stream-json（缺省）/ text 两种输出形态
+// ---------------------------------------------------------------------------
+
+describe("BI-30.3 headless outputFormat 输出面", () => {
+	test("text 形态：out 恰为最终 finalText 一段，事件与 session_done meta 不落 out", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				TOOL_ROUND,
+				[
+					{ type: "content_delta", delta: "文件内容是：勾稽差额为零。" },
+					{ type: "usage", usage: { inputTokens: 30, outputTokens: 9 } },
+					{ type: "done", stopReason: "stop" },
+				],
+			]);
+			const lines: string[] = [];
+			const result = await runHeadless({
+				prompt: "读取 note.txt 并总结",
+				cwd: root,
+				model: port,
+				tools: [readFileSyncBinding(root)],
+				sessionsRoot: join(root, "sessions"),
+				outputFormat: "text",
+				out: (line) => lines.push(line),
+			} as Parameters<typeof runHeadless>[0]);
+
+			expect(result.exitCode).toBe(0);
+			// 内部流转不收敛：工具真执行、回合照常推进（只收敛输出面）
+			expect(result.rounds).toBe(2);
+			expect(result.toolResults).toHaveLength(1);
+			expect(result.toolResults[0]!.ok).toBe(true);
+			// 输出面：恰为一段 finalText（无 content_delta/usage/done/session_done）
+			expect(lines).toEqual([result.finalText]);
+			expect(result.finalText).toContain("勾稽差额为零");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("stream-json 缺省与显式同形：逐行透传事件，末行 session_done 汇总", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			for (const explicit of [false, true] as const) {
+				const { port } = scriptedModel([
+					[
+						{ type: "content_delta", delta: "骨架在线。" },
+						{ type: "usage", usage: { inputTokens: 1, outputTokens: 2 } },
+						{ type: "done", stopReason: "stop" },
+					],
+				]);
+				const lines: string[] = [];
+				const result = await runHeadless({
+					prompt: "你好",
+					cwd: root,
+					model: port,
+					tools: [],
+					sessionsRoot: join(root, "sessions"),
+					...(explicit ? { outputFormat: "stream-json" as const } : {}),
+					out: (line) => lines.push(line),
+				} as Parameters<typeof runHeadless>[0]);
+
+				expect(result.exitCode).toBe(0);
+				const parsed = lines.map((line) => JSON.parse(line) as { type: string });
+				// 三事件 + 末行 session_done 汇总
+				expect(parsed).toHaveLength(4);
+				expect(parsed[0]!.type).toBe("content_delta");
+				expect(parsed[1]!.type).toBe("usage");
+				expect(parsed.at(-1)!.type).toBe("session_done");
+			}
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+describe("BI-30.3 main 接线：CLI --output-format → runHeadless", () => {
+	test("--output-format text：out 仅 finalText 一段，诊断仍走 err", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				[{ type: "content_delta", delta: "骨架在线。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const outs: string[] = [];
+			const errs: string[] = [];
+			const code = await runBi(["--prompt", "你好", "--output-format", "text"], {
+				model: port,
+				out: (line) => outs.push(line),
+				err: (line) => errs.push(line),
+				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [] },
+			});
+			expect(code).toBe(0);
+			expect(outs).toEqual(["骨架在线。"]);
+			expect(errs.join("\n")).not.toContain("骨架在线。");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("text 形态下模型错误：out 空，错误经 err 报出（退出码 1）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				[{ type: "error", error: { code: "server", message: "上游 500" } }],
+			]);
+			const outs: string[] = [];
+			const errs: string[] = [];
+			const code = await runBi(["--prompt", "你好", "--output-format", "text"], {
+				model: port,
+				out: (line) => outs.push(line),
+				err: (line) => errs.push(line),
+				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [] },
+			});
+			expect(code).toBe(1);
+			expect(outs).toEqual([]);
+			expect(errs.join("\n")).toContain("会话失败");
+			expect(errs.join("\n")).toContain("server");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("不传 --output-format：缺省 stream-json，runBi 输出面契约不变", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				[{ type: "content_delta", delta: "骨架在线。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const outs: string[] = [];
+			const code = await runBi(["--prompt", "你好"], {
+				model: port,
+				out: (line) => outs.push(line),
+				err: () => {},
+				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [] },
+			});
+			expect(code).toBe(0);
+			const parsed = outs.map((line) => JSON.parse(line) as { type: string });
+			expect(parsed[0]!.type).toBe("content_delta");
+			expect(parsed.at(-1)!.type).toBe("session_done");
+		} finally {
+			await cleanup();
+		}
+	});
+});

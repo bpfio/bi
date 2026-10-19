@@ -22,7 +22,12 @@ import {
   PERMISSIONS_USAGE,
   permissionsCommand,
 } from "../packages/core/src/cli/commands/permissions-command";
-import { discoverSlashCommands, slashCommandSurface } from "../packages/core/src/commands/custom-commands";
+import {
+	discoverSlashCommands,
+	expandCommand,
+	slashCommandSurface,
+	type SlashCommand,
+} from "../packages/core/src/commands/custom-commands";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile, readdir } from "node:fs/promises";
@@ -58,6 +63,9 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 
 		// BI-27.4 接线:自定义斜杠命令入候选菜单(内置 + ~/.bi/commands + <cwd>/.bi/commands);
 		// 发现失败退回内置候选,不影响 REPL 启动。
+		// BI-30.1:完整命令注册表(SlashCommand[])保留——补全面取 name/description
+		// 子集,执行面按名取命令对象喂 expandCommand;发现失败 = 空注册表。
+		let customCommands: readonly SlashCommand[] = [];
 		let menuCandidates: ReadonlyArray<{ name: string; description: string }> = [];
 		try {
 			const commandFs = {
@@ -71,25 +79,39 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 				[join(homedir(), ".bi", "commands"), join(process.cwd(), ".bi", "commands")],
 				commandFs,
 			);
+			customCommands = discovered.commands; // 完整注册表(执行面用,不只 surface 条目)
 			menuCandidates = [...slashCommandSurface(discovered.commands), ...builtinFallback];
 		} catch {
+			customCommands = [];
 			menuCandidates = [...builtinFallback];
 		}
 
-		// /permissions 执行面接线(BI-28.3):其余 / 开头行走本地未知命令应答,
-		// 均不入模型回合(agent-tui submit 拦截)。
-		const slashCommand = async (line: string): Promise<string> => {
-			const head = line.trim().split(/\s+/)[0] ?? "";
+		// 斜杠命令执行面(BI-30.1;/permissions 归 BI-28.3):返回两形态——
+		// - 已知自定义命令 → expandCommand(命令对象, 参数数组):
+		//     ok → { prompt: 展开文本 } = 展开后的用户提示词,入模型回合;
+		//     !ok → error.message = 本地错误文本(不入模型回合);
+		// - /permissions 与未知命令:语义不变(本地文本回执,不入模型回合)。
+		const slashCommand = async (line: string): Promise<string | { prompt: string }> => {
+			const trimmed = line.trim();
+			const head = trimmed.split(/\s+/)[0] ?? "";
 			if (head === "/permissions") {
 				// parse 吃的是去前缀参数体("/permissions" 本身不入参)
-				const body = line.trim().replace(/^\/permissions\b/, "").trim();
+				const body = trimmed.replace(/^\/permissions\b/, "").trim();
 				const parsed = permissionsCommand.parse(body);
 				if (!parsed.ok) return `${parsed.error.message}\n用法: ${PERMISSIONS_USAGE}`;
 				return permissionsCommand.execute(parsed.args, controller.toPorts()).join("\n");
 			}
+			const command = customCommands.find((c) => `/${c.name}` === head);
+			if (command !== undefined) {
+				// 参数体 = 去命令头后的余下文本,按空白切分喂位置参数($1..$n/$ARGUMENTS)。
+				const rest = trimmed.slice(head.length).trim();
+				const argv = rest === "" ? [] : rest.split(/\s+/);
+				const expanded = expandCommand(command, argv);
+				return expanded.ok ? { prompt: expanded.text } : expanded.error.message;
+			}
 			const known = menuCandidates.some((c) => `/${c.name}` === head);
 			return known
-				? `斜杠命令 ${head} 的执行面尚未接线(候选菜单可用,执行归后续卡)。`
+				? `斜杠命令 ${head} 的执行面尚未接线(内置候选,执行归后续卡)。`
 				: `未知斜杠命令: ${head}(可用: /permissions)`;
 		};
 

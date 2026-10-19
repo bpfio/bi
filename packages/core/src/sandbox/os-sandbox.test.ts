@@ -3,6 +3,10 @@
  * 组成：probe 注入矩阵（平台/内核/二进制全结构化）+ 三后端参数消费 +
  * fail-closed 结构化拒绝 + 本机真实 landlock/bwrap 执行（Linux 实测）。
  *
+ * 能力门控（BI-30.2a）：bwrap 真实簇按本机 bubblewrap 在位与否结构化跳过
+ * （GitHub ubuntu-latest 未预装 bubblewrap）；"$HOME 沙箱外必拒"类断言另按
+ * "HOME 在 workspace 外"前提探测；能力/前提在则照常全绿，不减覆盖。
+ *
  * 真实执行测试的路径纪律：workspaceRoot 取 os.tmpdir()（不在仓库内落任何
  * 临时文件），拒绝断言的目标为 $HOME（正常可写、沙箱内必拒），全部清理于 finally。
  */
@@ -38,6 +42,20 @@ function depsWith(over: Partial<OsSandboxDeps>): OsSandbox {
   return new OsSandbox(over);
 }
 
+/**
+ * BI-30.2a 能力门控：bwrap 真实簇仅在本机 bubblewrap 在位时执行。
+ * 探测口径与产品默认 deps 同源（PATH 存在性，同 defaultDeps.bwrapBinary）；
+ * 能力缺 → 结构化跳过（跳过原因一行，见各 gate 注释），不以断言硬碰环境缺件。
+ */
+const HAS_BWRAP = Bun.which("bwrap") !== null;
+
+/**
+ * BI-30.2a 环境前提探测："$HOME 沙箱外本可写、沙箱内必拒"类断言的前提=HOME
+ * 存在且不在 workspace（tmpdir）内。HOME 落在 workspace 内（如 dogfood shell
+ * 的 HOME=/tmp/xxx）时写入被合法放行，前提缺 → 结构化跳过（原因见各 gate 注释）。
+ */
+const HOME_OUTSIDE_WS = existsSync(HOME) && HOME !== WS && !HOME.startsWith(WS.endsWith("/") ? WS : WS + "/");
+
 describe("probe — 本机真实探测（Linux）", () => {
   test("landlock 可用：真实内核探针给出 ABI 与 handledMask", async () => {
     const p = await new OsSandbox().probe();
@@ -47,7 +65,9 @@ describe("probe — 本机真实探测（Linux）", () => {
     expect(ll.handledMask).toMatch(/^0x[0-9a-f]+$/);
   });
 
-  test("bwrap 可用：功能探针通过（本机 bubblewrap 0.11）", async () => {
+  // BI-30.2a 门控：跳过原因=本机 PATH 无 bwrap → 产品探针结构化报 binary-missing，
+  // "available=true/functional-ok" 断言无从成立
+  test.skipIf(!HAS_BWRAP)("bwrap 可用：功能探针通过（本机 bubblewrap 0.11）", async () => {
     const p = await new OsSandbox().probe();
     const bw = p.backends.find((b) => b.backend === "bwrap")!;
     expect(bw.available).toBe(true);
@@ -237,7 +257,9 @@ describe("真实 landlock 执行（本机 Linux 内核实测）", () => {
     }
   });
 
-  test("workspace 外写入被内核拒绝（$HOME，沙箱外本可写）", async () => {
+  // BI-30.2a 门控：跳过原因=HOME 位于 workspace（tmpdir）内 → 沙箱对写入合法放行，
+  // "内核拒绝"断言前提不成立（正常机器/CI 的 HOME 在 workspace 外，照常执行）
+  test.skipIf(!HOME_OUTSIDE_WS)("workspace 外写入被内核拒绝（$HOME，沙箱外本可写）", async () => {
     const denyTarget = join(HOME, "ll-os-sandbox-deny-" + process.pid);
     try {
       rmSync(denyTarget, { force: true });
@@ -298,7 +320,9 @@ describe("真实 landlock 执行（本机 Linux 内核实测）", () => {
   });
 });
 
-describe("真实 bwrap 执行（landlock 不可用时降级）", () => {
+// BI-30.2a 门控：跳过原因=本机无 bwrap → landlock 缺席时降级链无 bwrap 可选，
+// 真实执行（kind=ran/backend=bwrap）不可测
+describe.skipIf(!HAS_BWRAP)("真实 bwrap 执行（landlock 不可用时降级）", () => {
   const sandbox = depsWith({ landlockSyscalls: async () => null });
 
   test("降级首选 bwrap：echo 退出 0", async () => {
@@ -315,7 +339,9 @@ describe("真实 bwrap 执行（landlock 不可用时降级）", () => {
     }
   });
 
-  test("bwrap 只读根视图：workspace 外写入被拒", async () => {
+  // BI-30.2a 门控：跳过原因=HOME 位于 workspace（tmpdir）内 → 写入被合法放行，
+  // "workspace 外写入被拒"断言前提不成立（正常机器/CI 照常执行）
+  test.skipIf(!HOME_OUTSIDE_WS)("bwrap 只读根视图：workspace 外写入被拒", async () => {
     const denyTarget = join(HOME, "ll-bwrap-deny-" + process.pid);
     try {
       rmSync(denyTarget, { force: true });

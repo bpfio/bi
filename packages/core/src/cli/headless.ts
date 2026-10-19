@@ -12,8 +12,11 @@
  * - 信任门：缺省恒 'trusted'（骨架策略；真实信任门接线归后续装配卡）；
  * - 子命令生态：main 分发只挂真实无头路径，其余子命令结构化"未接线"（不假冒）。
  *
- * stream-json 输出合约：逐行透传 StreamEvent（BI-04.2 七类事件原样 JSON），
- * 末行追加会话级 { type:"session_done", ... } 汇总。
+ * 输出形态（BI-30.3 真消费，options.outputFormat）：
+ * - stream-json（缺省，契约不变）：逐行透传 StreamEvent（BI-04.2 七类事件原样
+ *   JSON），末行追加会话级 { type:"session_done", ... } 汇总；
+ * - text：输出面收敛为最终 finalText 一段（事件内部流转照旧，仅不落 out；
+ *   session_done 等 meta 不落 out；错误/诊断仍由装配方经 err 报出）。
  */
 import {
 	AgentLoop,
@@ -41,6 +44,7 @@ import type { HooksSection } from "../config/schema";
 import { scanShell } from "../sandbox/shell-scan";
 import { SessionManager } from "../session/manager";
 import type { AppendEntryInput, JsonValue, SessionEntry } from "../session/types";
+import type { OutputFormat } from "./commands/args";
 
 /** 模型端口：与 adapters 线合约对齐的最小驱动面（真实 SSE 驱动 BI-23.3 接入）。 */
 export interface ModelPort {
@@ -85,6 +89,11 @@ export interface HeadlessOptions {
 	readonly hookSpawn?: HookSpawnImpl;
 	/** 输出汇（缺省 process.stdout 逐行；测试注入收集）。 */
 	readonly out?: (line: string) => void;
+	/**
+	 * 输出形态（BI-30.3）：缺省 "stream-json" = 逐行透传 StreamEvent + 末行
+	 * session_done（现状行为，契约不变）；"text" = 仅落最终 finalText 一段。
+	 */
+	readonly outputFormat?: OutputFormat;
 	/** 模型回合上限（防失控，缺省 8）。 */
 	readonly maxRounds?: number;
 }
@@ -145,7 +154,12 @@ export class HeadlessError extends Error {
  */
 export async function runHeadless(options: HeadlessOptions): Promise<HeadlessResult> {
 	const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`));
-	const emit = (event: unknown): void => out(JSON.stringify(event));
+	const outputFormat: OutputFormat = options.outputFormat ?? "stream-json";
+	// text 形态：输出面收敛——事件仍内部流转（缓冲/回喂不变），仅不落 out；
+	// 最终只落 finalText 一段（见下方终局分支）。stream-json 保持逐行透传。
+	const emit = (event: unknown): void => {
+		if (outputFormat === "stream-json") out(JSON.stringify(event));
+	};
 	const toolResults: ToolResult[] = [];
 	const hookRecords: HookRunRecord[] = [];
 	const permissionDecisions: Array<{ tool: string; decision: string }> = [];
@@ -274,7 +288,12 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			messages.push({ role: "assistant", content: blocks });
 			await appendChained({ type: "assistant", payload: { content: blocks } as unknown as JsonValue });
 			agentLoop.finishTurn();
-			emit({ type: "session_done", sessionId, exit: "ok", rounds, finalText });
+			if (outputFormat === "text") {
+				// text 形态：meta（session_done 等）不落 out，只落最终文本一段。
+				out(finalText);
+			} else {
+				emit({ type: "session_done", sessionId, exit: "ok", rounds, finalText });
+			}
 			return {
 				exitCode: 0,
 				sessionId,

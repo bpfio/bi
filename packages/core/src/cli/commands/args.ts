@@ -54,11 +54,22 @@ export const GLOBAL_ARGS: readonly GlobalArgSpec[] = [
     valueName: "<format>",
     description: "输出格式",
     repeatable: false,
-    allowedValues: ["stream-json"],
+    allowedValues: ["stream-json", "text"],
+  },
+  {
+    flag: "--max-rounds",
+    valueName: "<n>",
+    description: "无头会话模型回合上限（正整数，缺省 8）",
+    repeatable: false,
   },
 ];
 
-export type OutputFormat = "stream-json";
+/**
+ * 输出形态（BI-30.3 真消费）：
+ * - stream-json（缺省）：逐行透传 StreamEvent + 末行 session_done 汇总；
+ * - text：仅落最终 finalText 一段（meta/事件不落 out，错误诊断走 err）。
+ */
+export type OutputFormat = "stream-json" | "text";
 
 export interface ParsedArgs {
   /** --agent-file 的值。 */
@@ -69,6 +80,8 @@ export interface ParsedArgs {
   prompt?: string;
   /** --output-format 的值（已过白名单校验）。 */
   outputFormat?: OutputFormat;
+  /** --max-rounds 的值（已过正整数校验；缺省回合上限由 headless 决定）。 */
+  maxRounds?: number;
   /** 位置参数（`--` 后或裸词；子命令派发归属装配方）。 */
   positionals: string[];
 }
@@ -159,6 +172,12 @@ export function parseGlobalArgs(argv: readonly string[]): ParsedArgs {
     else if (spec.flag === "--add-dir") result.addDirs.push(value);
     else if (spec.flag === "--prompt") result.prompt = value;
     else if (spec.flag === "--output-format") result.outputFormat = value as OutputFormat;
+    else if (spec.flag === "--max-rounds") {
+      if (!/^[1-9]\d*$/.test(value)) {
+        throw new ArgParseError("invalid-value", `参数 --max-rounds 的值非法: ${value}（需要正整数）`, "--max-rounds");
+      }
+      result.maxRounds = Number(value);
+    }
   }
 
   return result;
