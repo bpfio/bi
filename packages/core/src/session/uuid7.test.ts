@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { uuid7, uuid7TimestampMs } from "./uuid7";
 
+/** 单调伪推进容差：批量生成把内部时间戳推到墙钟前的最大毫秒数（见对齐用例注释）。 */
+const MONOTONIC_PUSH_SLACK_MS = 10;
+
 describe("uuid7（RFC 9562）", () => {
   test("格式符合 v7 布局：版本位 7、变体位 10b、小写规范格式", () => {
     for (let i = 0; i < 200; i++) {
@@ -36,7 +39,9 @@ describe("uuid7（RFC 9562）", () => {
     const ts = uuid7TimestampMs(id);
     expect(ts).not.toBeNull();
     expect(ts as number).toBeGreaterThanOrEqual(before);
-    expect(ts as number).toBeLessThanOrEqual(after);
+    // 上界留单调推进容差：前序批量用例（如 10000 唯一性）同毫秒超 4096 条时，
+    // 实现按 RFC 9562 §6.2 把时间戳伪推进 1ms，内部时钟可短暂领先墙钟。
+    expect(ts as number).toBeLessThanOrEqual(after + MONOTONIC_PUSH_SLACK_MS);
   });
 
   test("时间戳提取：非法输入返回 null", () => {
