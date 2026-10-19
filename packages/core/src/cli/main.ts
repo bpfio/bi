@@ -20,6 +20,7 @@ import {
 } from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
+import { statSync } from "node:fs";
 import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRule } from "../guard/types";
 import { permissionModeFromConfig } from "./permission-mode";
@@ -124,6 +125,37 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 		return 2;
 	}
 
+	// BI-20.2b：解析后无人消费的全局 flag 接进装配面——最小诚实消费，绝不假冒成功。
+	// 1) --agent-file：读 Markdown 定义文件，内容作为系统指令注入无头会话；
+	//    文件缺失/不可读 = 结构化参数错误 exit 2。kimi 为 agentFiles 复数，bi 保持
+	//    单文件契约（差异在最终回复备案）。
+	let agentInstruction: string | undefined;
+	if (parsed.agentFile !== undefined) {
+		try {
+			agentInstruction = await Bun.file(parsed.agentFile).text();
+		} catch (cause) {
+			err(`bi: 参数错误 [param-error]: --agent-file 不可读或不存在: ${parsed.agentFile}（${cause instanceof Error ? cause.message : String(cause)}）`);
+			return 2;
+		}
+	}
+	// 2) --add-dir（可重复）：存在性 + 目录校验（缺失/非目录 = 结构化 exit 2）；
+	//    透传进无头会话上下文（toolset 暂单根，仅校验+透传+备案边界，不静默丢弃）。
+	let additionalDirs: string[] = [];
+	if (parsed.addDirs.length > 0) {
+		for (const dir of parsed.addDirs) {
+			try {
+				if (!statSync(dir).isDirectory()) {
+					err(`bi: 参数错误 [param-error]: --add-dir 不是目录: ${dir}`);
+					return 2;
+				}
+			} catch (cause) {
+				err(`bi: 参数错误 [param-error]: --add-dir 不可访问或不存在: ${dir}（${cause instanceof Error ? cause.message : String(cause)}）`);
+				return 2;
+			}
+		}
+		additionalDirs = parsed.addDirs;
+	}
+
 	const h = options.headless ?? {};
 	let model = options.model;
 	let configGate: PermissionGate | undefined;
@@ -176,6 +208,9 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...(h.hookSpawn !== undefined ? { hookSpawn: h.hookSpawn } : {}),
 			// BI-30.3 接线：CLI --output-format 接进无头输出面（缺省 stream-json 由 headless 决定）。
 			...(parsed.outputFormat !== undefined ? { outputFormat: parsed.outputFormat } : {}),
+			// BI-20.2b 接线：--agent-file → 系统指令注入面；--add-dir → 附加目录透传面。
+			...(agentInstruction !== undefined ? { systemInstruction: agentInstruction } : {}),
+			...(additionalDirs.length > 0 ? { additionalDirs } : {}),
 			// CLI --max-rounds 优先于 deps 透传（BI-30 dogfood 发现：真实工单 8 回合不够）。
 			...((parsed.maxRounds ?? h.maxRounds) !== undefined
 				? { maxRounds: parsed.maxRounds ?? h.maxRounds }

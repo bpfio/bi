@@ -96,6 +96,18 @@ export interface HeadlessOptions {
 	readonly outputFormat?: OutputFormat;
 	/** 模型回合上限（防失控，缺省 8）。 */
 	readonly maxRounds?: number;
+	/**
+	 * 系统指令注入面（BI-20.2b：--agent-file 内容作为系统指令前置）。
+	 * 若存在，渲染为消息序首条 { role:"system" }；缺省不注入。绝不假冒——
+	 * 只有 CLI 真实读到文件才传此值。
+	 */
+	readonly systemInstruction?: string;
+	/**
+	 * 附加可访问目录（BI-20.2b：--add-dir 聚合透传）。toolset 暂仅单根，本面
+	 * 只做"存在性校验（缺失由 CLI 判 exit 2）+ 透传进会话上下文"，不暴露进
+	 * 文件工具访问面，边界在最终回复备案；不许静默丢弃。
+	 */
+	readonly additionalDirs?: readonly string[];
 }
 
 export interface HeadlessResult {
@@ -107,6 +119,8 @@ export interface HeadlessResult {
 	readonly hookRecords: readonly HookRunRecord[];
 	/** 权限审计轨迹（工具序）。 */
 	readonly permissionDecisions: ReadonlyArray<{ tool: string; decision: string }>;
+	/** 附加目录透传面（BI-20.2b；供验收确认未静默丢弃；toolset 单根边界见备案）。 */
+	readonly additionalDirs: readonly string[];
 }
 
 /** 工具调用增量按 index 拼装缓冲（BI-23.2 TUI 挂载复用）。 */
@@ -241,7 +255,13 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	});
 
 	// ---- 装配序 ④：模型对话驱动器 ----
-	const messages: AgentMessage[] = [{ role: "user", content: options.prompt }];
+	// BI-20.2b：--agent-file 内容作为系统指令前置（系统消息面；无则单条 user）。
+	const messages: AgentMessage[] = [
+		...(options.systemInstruction !== undefined
+			? [{ role: "system" as const, content: options.systemInstruction }]
+			: []),
+		{ role: "user", content: options.prompt },
+	];
 	const maxRounds = options.maxRounds ?? 8;
 	let finalText = "";
 	let rounds = 0;
@@ -302,6 +322,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 				toolResults,
 				hookRecords,
 				permissionDecisions,
+				additionalDirs: options.additionalDirs ?? [],
 			};
 		}
 
