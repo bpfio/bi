@@ -1,0 +1,15 @@
+工单 ORGAN-WIRE W3-D8(BI-16.2 + BI-07.7):PTC 程序化工具调用 + Cron 会话调度器,双工具注册(工具面单)。
+
+器官现状(cwd=/home/yupeng/bi):
+- packages/core/src/ptc/ptc-runner.ts——BI-16.2 PtcRunner:执行模型回传的单轮脚本,脚本内 `await tools.<name>(args)` 程序化调用工具(PtcToolExecutor 注入面);
+- packages/core/src/cron/cron-service.ts——BI-07.7 会话内 Cron 调度器(CronEntry/CronAction/CronEvent 面,CronCorePort 接缝①委托);
+- 装配先例(必读,风格对齐):toolset.ts 的 ask_user 条件注册与 spawn_subagent 条件注册(W1-D1/W2-D4:仅注入依赖才挂,缺省零变动)。
+
+交付目标:
+1) 工具 run_ptc_script:输入 {script}(脚本内 await tools.<name>(args));实现=PtcRunner + PtcToolExecutor=按白名单工具名转发到既有 ToolBinding(read_file/grep/glob/web_search/web_fetch 五件只读子集,不开放 bash/edit/write——程序化调用不允许写与执行,安全边界写头注);单轮执行上限与超时有界;条件注册(config [ptc] enabled 缺省 false,经 BuildDefaultToolsetOptions 注入 runner,先例同 ask_user);
+2) 工具 cron_schedule/cron_list/cron_remove:CronCorePort 会话内调度(CronAction 由 host 注入回调承载——本单只做条目管理与列表查询两动作的注册,实际触发执行归 host 运行环=备案不做定时触发,绝不假冒"已可定时执行");条件注册(config [cron] enabled 缺省 false);
+3) 测试:ptc 脚本跑通(替身 executor)/白名单外工具拒绝/超时边界/注册门;cron add/list/remove 生命周期/非法表达式结构化/注册门;缺省零变化对照。
+
+边界:packages/core/src/cli/{main,headless}.ts(注册走 toolset 依赖注入,如需 headless 装配一行则限一行)、cli/commands/**、session/、subagent-adapter.ts、export/;ptc/ 与 cron/ 器官本体只读消费;不 commit 不 push。
+完成判据:cd /home/yupeng/bi && bun test ./packages/core/src/ 全绿(既有零改动)+ cd packages/core && bunx tsc --noEmit 0 错。
+最终回复(结论清单):改动文件清单/两工具语义(注册门/白名单/边界)/测试数+tsc/未尽边界。
