@@ -6,11 +6,40 @@
  *   空不渲染；流收束（正常/取消/异常）清空缓冲并让 StreamView 退场，完整
  *   文本按既有逻辑 transcribe 进投影（落盘行为不变）。running 状态行追加
  *   已用秒数（turnStartedAt 起算，随每帧自然刷新）。
+ * BI-27.3 —— 富文本转录：assistant 条目正文走 renderMarkdown（手写零依赖，
+ *   标题/粗斜体/行内代码/围栏代码块/列表；latex/mermaid 围栏复用 BI-19.8 /
+ *   BI-19.6 现成器官），视图层由 StyledTranscript 承载（与 TranscriptProjection
+ *   并行消费同一份 L1 条目；plain 条目文本与 L3 逐字节一致，仅样式新增）。
+ *   全部落格走 VirtualTerminal.write 的 Cell 样式面，无裸转义序列。
+ * BI-27.4 —— 候选与命令菜单：mount/candidate-menu.ts 提供候选面端口
+ *   （CandidatesProvider，缺省 builtinSlashCandidates，与 core
+ *   SlashCommandSurfaceEntry 字段同构便于宿主接线）+ CandidateMenu 状态机；
+ *   斜杠草稿自动开菜单（前缀/模糊过滤、↑↓ 移动、Tab/Enter 接受、Esc 关闭），
+ *   菜单视图画状态行上方（永不触碰状态行/提示行）；非斜杠 Tab 经 provider
+ *   前缀延伸补全（mount/repl.ts 路由）。命令真实分发归宿主装配（缝已留）。
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ADR（BI-27.5）：REPL 视口方案裁定 —— 维持 inline（正常屏幕）
+ * - 裁定：REPL 继续以「正常屏幕 + 行内重绘窗」为视口架构。不启用 alt-screen
+ *   （备用屏全屏 TUI），不引入 scroll region（滚动区域）混合方案。
+ * - 理由：kimi Code CLI 基线（RULE-BI-07）为 inline 式 REPL，bi 遵循 shell
+ *   基线——stdout 可直接被管道/重定向/日志采集消费；终端原生选择复制、
+ *   搜索与滚动习惯零成本保留；进程崩溃不留备用屏残骸。
+ * - 语义：转录窗（rows-2 尾窗）是 inline 视口上的差分重绘窗，不是终端
+ *   scrollback 本身；窗内历史滚回由本卡滚轮偏移（scrollTranscript，SGR
+ *   1000/1006 鼠标上报）承担，不依赖终端原生 scrollback。
+ * - 代价（接受）：alt-screen 式全屏布局/原地进度条不在本架构内；重绘窗与
+ *   终端原生 scrollback 内容在真实终端上并存（不视为缺陷，不加消除逻辑）。
+ * - 复核条件：若未来需要全屏面板（多窗格/内嵌滚动列表编辑器），另立 ADR
+ *   评审，不在本卡内渐进混入。
+ * ─────────────────────────────────────────────────────────────────────────
  *
  * 挂载面（kimi 装配序 tui 段；器官全量复用、不改动）：
  * - **双缓冲投影**：TranscriptProjection（BI-19.1 同构 L1→L3）承载会话视图，
  *   TuiApp/DiffRenderer（begin/end 差分帧）负责双缓冲提交；onFrame 钩子回吐
- *   每帧可见行集（注入渲染面断言点）。
+ *   每帧可见行集（注入渲染面断言点）。BI-27.3 起渲染面为 StyledTranscript
+ *   （富文本），投影保留 L4 导出与同构不变式职责；resize 双侧同步重算
+ *   （BI-27.5 折行宽跟随，滚动锚底语义不变）。
  * - **审批 ask 回路**：manual 模式下 PermissionGate 'ask' 决策 → 栈顶审批浮层
  *   （y=允许 / n=拒绝 / Esc=拒绝），回答经 Promise 回喂装配执行体；deny 以
  *   结构化 permission-denied 回喂模型（与无头降级同一回喂语义，不再假冒）。
@@ -48,6 +77,16 @@ import type { ParsedKey, Writer } from "../engine/diff-renderer";
 import { VirtualTerminal } from "../engine/virtual-terminal";
 import { charWidth, textWidth } from "../components/cjk-width";
 import { TranscriptProjection, type TranscriptKind } from "../transcript-projection";
+import { StyledTranscript } from "../transcript-styled";
+import type { MarkdownRow } from "../render/markdown";
+import { builtinSlashCandidates, CandidateMenu, type CandidatesProvider } from "./candidate-menu";
+
+/** SGR 鼠标上报开关序列（BI-27.5 滚轮历史）：1000=按键上报，1006=SGR 编码。 */
+export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
+export const MOUSE_DISABLE = "\x1b[?1006l\x1b[?1000l";
+
+/** 滚轮单格滚动行数（BI-27.5 滚轮历史；一格 = 三行，readline/分页器惯例）。 */
+export const WHEEL_SCROLL_LINES = 3;
 
 /** 流式帧节流窗口（毫秒，BI-27.2）：窗口内的 delta 合并到下一次出帧。 */
 const STREAM_FRAME_THROTTLE_MS = 80;
@@ -121,6 +160,23 @@ export interface TuiSessionOptions {
 	/** 渲染面尺寸（缺省 24x80）。 */
 	readonly rows?: number;
 	readonly cols?: number;
+	/**
+	 * 候选面（BI-27.4）：斜杠菜单与非斜杠 Tab 补全的候选源；缺省
+	 * builtinSlashCandidates。宿主接线自定义命令：
+	 * `(draft) => slashCommandSurface(discoverSlashCommands(dirs, fs).commands)`。
+	 */
+	readonly candidates?: CandidatesProvider;
+	/**
+	 * 注入门禁（BI-28.3 接线）：装配层与斜杠命令面共享同一 PermissionGate
+	 * 实例时注入；缺省按 permissionMode 自建（manual）。
+	 */
+	readonly gate?: PermissionGate;
+	/**
+	 * 斜杠命令拦截（BI-28.3 接线）：注入后,`/` 开头的提交改走本地命令面
+	 * （如 /permissions）——不入模型回合、不落会话 JSONL,输出以 system 行
+	 * 转录上屏。缺省不拦截（/ 开头照常进模型）。
+	 */
+	readonly slashCommand?: (line: string) => Promise<string>;
 	readonly clock?: Clock;
 	readonly hooks?: TuiSessionHooks;
 	/** 帧字节输出面（缺省 no-op；真实终端注入 WriteStream，BI-24.2 REPL 挂载用）。 */
@@ -186,20 +242,26 @@ class ApprovalOverlay implements Component {
 	}
 }
 
-/** 会话视图组件：投影 L3 行集 + 状态行；不消费按键（放行浮层）。
- * 布局（BI-24.3 修复同格叠写）：状态条独占倒数第二行，最底行让给 REPL 提示行
- * ——此前状态行与 PromptView 同写最底行，"❯ "仅 2 格宽盖掉"[manual]"前两格，
- * 真机呈现 `❯ anual] 就绪` 乱码。 */
+/** 会话视图组件：富文本视图行（BI-27.3 StyledTranscript）+ 状态行；不消费按键
+ * （放行浮层）。布局（BI-24.3 修复同格叠写）：状态条独占倒数第二行，最底行
+ * 让给 REPL 提示行——此前状态行与 PromptView 同写最底行，"❯ "仅 2 格宽盖掉
+ * "[manual]"前两格，真机呈现 `❯ anual] 就绪` 乱码。滚动偏移（BI-27.5）下
+ * 窗口行数可少于 viewRows，按区域底部锚定绘制（状态行下方不留悬空）。 */
 class TranscriptView implements Component {
 	constructor(private readonly session: AgentTuiSession) {}
 
 	render(term: VirtualTerminal): void {
-		const lines = this.session.projection.render();
-		const rows = this.session.rows;
-		const viewRows = Math.max(1, rows - 2);
-		const visible = lines.slice(-viewRows);
-		for (let i = 0; i < visible.length; i++) term.write(0, i, visible[i]!);
-		term.write(0, rows - 2, this.session.statusText());
+		const rows = this.session.visibleTranscriptRows();
+		const viewRows = Math.max(1, this.session.rows - 2);
+		const startY = Math.max(0, viewRows - rows.length);
+		for (let i = 0; i < rows.length; i++) {
+			let x = 0;
+			for (const span of rows[i]!.spans) {
+				term.write(x, startY + i, span.text, span.style);
+				x += textWidth(span.text);
+			}
+		}
+		term.write(0, this.session.rows - 2, this.session.statusText());
 	}
 
 	wantsKey(_key: ParsedKey): boolean {
@@ -215,6 +277,34 @@ class StreamView implements Component {
 	render(term: VirtualTerminal): void {
 		const line = streamPreviewLine(this.session.streamBuffer, this.session.cols);
 		if (line !== "") term.write(0, this.session.rows - 3, line);
+	}
+
+	wantsKey(_key: ParsedKey): boolean {
+		return false;
+	}
+}
+
+/**
+ * 候选菜单视图组件（BI-27.4）：菜单可见时把菜单行画在状态行上方区域
+ * （最底行菜单行 = rows-3，向上生长），覆盖转录尾窗底部（瞬态覆盖，菜单
+ * 关闭后由转录差分重绘还原）。永不触碰状态行（rows-2）与提示行（rows-1）
+ * ——BI-24.3 布局合约。按键不在此消费（runRepl 主回路显式路由 up/down/
+ * Tab/Enter/Esc，字符键照常进编辑器）。
+ */
+class CandidateMenuView implements Component {
+	constructor(private readonly session: AgentTuiSession) {}
+
+	render(term: VirtualTerminal): void {
+		const menu = this.session.candidateMenu;
+		if (!menu.visible) return;
+		const lines = menu.lines(this.session.cols);
+		// 自底向上画：菜单最后一行贴 rows-3（状态行正上方），行数增长向上伸展。
+		const bottomY = this.session.rows - 3;
+		for (let i = 0; i < lines.length; i++) {
+			const y = bottomY - (lines.length - 1 - i);
+			if (y < 0) break; // 窗口过小：放不下的行丢弃（网格安全）
+			term.write(0, y, lines[i]!);
+		}
 	}
 
 	wantsKey(_key: ParsedKey): boolean {
@@ -245,6 +335,12 @@ export class AgentTuiSession {
 	#state: TuiSessionState = "idle";
 	#rounds = 0;
 	#activeOverlay: ApprovalOverlay | undefined;
+	/** BI-27.3：富文本转录视图（与 projection 并行消费同一份 L1 条目）。 */
+	readonly #styled: StyledTranscript;
+	/** BI-27.5：转录窗滚回偏移（0 = 实时锚底；向上为正，按可见窗高钳制）。 */
+	#scrollOffset = 0;
+	/** BI-27.4：候选菜单（斜杠草稿开合/过滤/选择；repl 主回路驱动）。 */
+	readonly candidateMenu: CandidateMenu;
 	/** BI-27.2：流式预览缓冲（content_delta 追加；流收束清空，文本改走 transcribe）。 */
 	#streamText = "";
 	/** BI-27.2：上次流式出帧时刻（-∞ 保证首个 delta 立即出帧）。 */
@@ -253,6 +349,8 @@ export class AgentTuiSession {
 	#turnStartedAt: number | undefined;
 	/** BI-27.2：注入时钟（节流与秒数共用；缺省 Date.now）。 */
 	readonly #clock: Clock | undefined;
+	/** 斜杠命令拦截（BI-28.3 接线；缺省 undefined = 不拦截）。 */
+	readonly #slashCommand: ((line: string) => Promise<string>) | undefined;
 
 	constructor(options: TuiSessionOptions) {
 		this.#rows = options.rows ?? 24;
@@ -267,7 +365,11 @@ export class AgentTuiSession {
 		this.app = new TuiApp(writer, this.#rows, this.#cols);
 		this.app.push(new TranscriptView(this));
 		this.app.push(new StreamView(this)); // BI-27.2：流式预览（缓冲空时不落格）
-		this.#gate = new PermissionGate({ mode: options.permissionMode ?? "manual" });
+		this.app.push(new CandidateMenuView(this)); // BI-27.4：斜杠候选菜单（不可见时不落格）
+		this.#styled = new StyledTranscript(this.#cols);
+		this.candidateMenu = new CandidateMenu(options.candidates ?? (() => builtinSlashCandidates));
+		this.#gate = options.gate ?? new PermissionGate({ mode: options.permissionMode ?? "manual" });
+		this.#slashCommand = options.slashCommand;
 		for (const binding of options.tools) this.#registry.set(binding.definition.name, binding);
 		const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
 		this.#manager = new SessionManager(options.sessionsRoot !== undefined ? { rootDir: options.sessionsRoot } : {});
@@ -357,6 +459,49 @@ export class AgentTuiSession {
 	// 渲染与键位
 	// ------------------------------------------------------------------
 
+	/** 转录窗可见行数上限（rows-2：状态行与提示行之外的全部网格行）。 */
+	#viewRows(): number {
+		return Math.max(1, this.#rows - 2);
+	}
+
+	/** 滚回偏移上限（视图行超出窗高的部分；不足一窗时为 0）。 */
+	#maxScrollOffset(): number {
+		return Math.max(0, this.#styled.rows().length - this.#viewRows());
+	}
+
+	/**
+	 * 转录窗可见富文本行（BI-27.3 StyledTranscript + BI-27.5 滚回窗口）：
+	 * styled 全量视图行按滚回偏移取尾窗（offset=0 实时锚底；offset>0 冻结
+	 * 历史视图，新条目照常入投影但窗口不跟随）；越界偏移按当前窗高钳制。
+	 * TranscriptView 渲染单一来源（网格面）；onFrame 帧探针仍走 projection
+	 * L3 尾窗（投影探针语义，不随视图滚回偏移）。
+	 */
+	visibleTranscriptRows(): MarkdownRow[] {
+		const all = this.#styled.rows();
+		const viewRows = this.#viewRows();
+		const offset = Math.min(this.#scrollOffset, this.#maxScrollOffset());
+		const end = Math.max(0, all.length - offset);
+		const start = Math.max(0, end - viewRows);
+		return all.slice(start, end);
+	}
+
+	/** 当前滚回偏移（测试与诊断观察面）。 */
+	get scrollOffset(): number {
+		return this.#scrollOffset;
+	}
+
+	/**
+	 * 转录窗滚回（BI-27.5 滚轮历史）：delta>0 向更旧（上滚）、delta<0 向更新
+	 * （下滚）；0 为实时锚底下界、#maxScrollOffset 为顶界（不悬空）。偏移
+	 * 变化即出帧。
+	 */
+	scrollTranscript(delta: number): void {
+		const next = Math.max(0, Math.min(this.#scrollOffset + Math.trunc(delta), this.#maxScrollOffset()));
+		if (next === this.#scrollOffset) return;
+		this.#scrollOffset = next;
+		this.#frame();
+	}
+
 	#frame(): void {
 		this.app.render();
 		const lines = this.projection.render();
@@ -374,25 +519,46 @@ export class AgentTuiSession {
 		this.#hooks.onFrame?.(frame, { approvalVisible: this.#state === "awaiting-approval", state: this.#state });
 	}
 
-	/** 终端尺寸变更（SIGWINCH 桥，BI-24.3）：双缓冲与转录窗同步重绘。
-	 * 投影折行宽仍为构造期 cols（已渲染行不重排，仅影响后续折行，备案）。 */
+	/**
+	 * 终端尺寸变更（SIGWINCH 桥，BI-24.3）：双缓冲与转录窗同步重绘。
+	 * BI-27.5：折叠行宽跟随——projection/styled 双侧按新宽度全量重算折行
+	 * （L2 history 与宽度无关不重算，L3/L4 与 styled 视图行重排），滚动锚底
+	 * 语义不变（BI-24.3 备案的「已渲染行不重排」就此消除：重排后仍锚底，
+	 * 滚回偏移按新窗高钳制）。
+	 */
 	resize(rows: number, cols: number): void {
 		if (rows === this.#rows && cols === this.#cols) return;
 		this.#rows = rows;
 		this.#cols = cols;
+		this.projection.resize(cols);
+		this.#styled.resize(cols);
+		// 重排后行数变化：滚回偏移按新窗高钳制（顶部不悬空，锚底语义保持）。
+		this.#scrollOffset = Math.min(this.#scrollOffset, this.#maxScrollOffset());
 		this.app.resize(rows, cols);
 		this.#frame();
 	}
 
 	#transcribe(kind: TranscriptKind, text: string): void {
-		this.projection.append({ kind, text });
+		const entry = { kind, text };
+		this.projection.append(entry);
+		this.#styled.append(entry); // BI-27.3：富文本视图同步消费同一份 L1 条目
 	}
 
 	/**
 	 * Esc 键位（宿主键派发调用点）：运行中=二段取消语义；审批浮层/Esc 由浮层
 	 * 经 TuiApp.dispatchKey 自行消费；idle 不消费。
+	 * BI-27.5：wheel-up/wheel-down（SGR 鼠标滚轮，InputLoop 解析）= 转录窗
+	 * 滚回（全态可用——审批挂起/回合在飞时同样可翻历史）。
 	 */
 	async handleKey(key: ParsedKey): Promise<void> {
+		if (key.kind === "wheel-up") {
+			this.scrollTranscript(WHEEL_SCROLL_LINES);
+			return;
+		}
+		if (key.kind === "wheel-down") {
+			this.scrollTranscript(-WHEEL_SCROLL_LINES);
+			return;
+		}
 		if (key.kind !== "esc" || this.#state !== "running") return;
 		const outcome = await this.#agentLoop.cancelRequest();
 		if (outcome.action === "exit") {
@@ -420,6 +586,22 @@ export class AgentTuiSession {
 		if (this.#sessionId === undefined) throw new TuiSessionError("not-started", "会话未初始化：先调用 start()");
 		if (this.#state === "exited" || this.#agentLoop.state === "exit") {
 			throw new TuiSessionError("session-exited", "会话已退出（Esc 二段），不可继续提交");
+		}
+		// 斜杠命令拦截（BI-28.3 接线）：/ 开头且装配层注入了 handler 时走本地
+		// 命令面——不入模型回合、不落会话 JSONL（本地操作），输出以 system 行
+		// 转录上屏；finalText 带回输出，endedAs=finish（非模型回合语义）。
+		if (prompt.startsWith("/") && this.#slashCommand !== undefined) {
+			const output = await this.#slashCommand(prompt);
+			this.#transcribe("system", output);
+			this.#frame();
+			return {
+				sessionId: this.#sessionId,
+				finalText: output,
+				rounds: this.#rounds,
+				toolResults: [...this.#toolResults],
+				permissionDecisions: [...this.#permissionDecisions],
+				endedAs: "finish",
+			};
 		}
 		this.#turnCancelled = false;
 		this.#exitRequested = false;

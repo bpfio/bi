@@ -20,13 +20,16 @@ import {
 } from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
+import { PermissionGate } from "../guard/permission-gate";
+import type { PermissionRule } from "../guard/types";
+import { permissionModeFromConfig } from "./permission-mode";
 
 export interface RunBiOptions {
 	/** 无头模型端口（缺省 = 从配置文件装配真实 BI-04.2 驱动；测试注入替身）。 */
 	model?: ModelPort;
 	/** 透传 runHeadless 其余选项（测试注入 sessionsRoot/cwd/tools/hooks 等；homeDir 供 ConfigService 注入）。 */
 	headless?: Partial<
-		Pick<HeadlessOptions, "cwd" | "sessionsRoot" | "tools" | "hooks" | "permissionMode" | "trust" | "hookSpawn" | "maxRounds"> & { homeDir: string }
+		Pick<HeadlessOptions, "cwd" | "sessionsRoot" | "tools" | "hooks" | "permissionMode" | "trust" | "hookSpawn" | "maxRounds" | "gate"> & { homeDir: string }
 	>;
 	/** 输出汇（缺省 stdout）。 */
 	out?: (line: string) => void;
@@ -123,6 +126,7 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 
 	const h = options.headless ?? {};
 	let model = options.model;
+	let configGate: PermissionGate | undefined;
 	if (model === undefined) {
 		// BI-23.3：真实驱动装配 = 配置装载（三级 TOML+env）→ BI-02 凭据门 → BI-04.2 双模态适配器。
 		try {
@@ -136,6 +140,18 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			});
 			err(`bi: 模型已装配 provider=${selection.providerName} mode=${selection.mode} model=${selection.wireModel}`);
 			model = selection.port;
+			// BI-28.3 接线:config [permission] mode → 门禁三态;规则表灌入(config 规则
+			// 无 scope 字段,静态规则缺省 scope="always");与 /permissions 共享实例由
+			// gate 注入面承载(无头路径无命令面,直接装配)。
+			configGate = new PermissionGate({ mode: permissionModeFromConfig(config.permission?.mode) });
+			// config 规则的 ask 动作 = 缺省语义,门禁静态层(allow/deny)不表,装配时剔除;
+			// 显式构造(不用展开+窄化推断,与仓库 TS 版本的推断行为解耦)。
+			const staticRules: PermissionRule[] = [];
+			for (const rule of config.permission?.rules ?? []) {
+				if (rule.action === "ask") continue;
+				staticRules.push({ tool: rule.tool, pattern: rule.pattern, action: rule.action, scope: "always" });
+			}
+			configGate.addRules(staticRules);
 		} catch (cause) {
 			if (cause instanceof ConfigError || cause instanceof ModelPortConfigError) {
 				err(`bi: ${cause.message}`);
@@ -154,6 +170,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...(h.hooks !== undefined ? { hooks: h.hooks } : {}),
 			...(h.sessionsRoot !== undefined ? { sessionsRoot: h.sessionsRoot } : {}),
 			...(h.permissionMode !== undefined ? { permissionMode: h.permissionMode } : {}),
+			...(h.gate !== undefined ? { gate: h.gate } : {}),
+			...(configGate !== undefined ? { gate: configGate } : {}),
 			...(h.trust !== undefined ? { trust: h.trust } : {}),
 			...(h.hookSpawn !== undefined ? { hookSpawn: h.hookSpawn } : {}),
 			...(h.maxRounds !== undefined ? { maxRounds: h.maxRounds } : {}),

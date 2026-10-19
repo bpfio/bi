@@ -4,6 +4,17 @@
  * BI-27.1 —— 输入补齐：光标可视化（▏1 格条）、多行粘贴（换行原样入稿）、
  *   pageup/pagedown 十条跳页。
  *
+ * BI-27.4 —— 候选与命令菜单接线：斜杠草稿（"/" 开头无空白）自动开候选菜单
+ *   （session.candidateMenu；前缀/模糊过滤、↑↓ 移动、Tab/Enter 接受补全
+ *   "/name "、Esc 关闭）；菜单可见时上述键先于历史翻页/补全/编辑器裁决，
+ *   字符键照常进编辑器（菜单随草稿刷新过滤）；非斜杠 Tab 在缺省历史补全
+ *   无进益时经候选菜单 provider 前缀延伸补全。候选面注入点 =
+ *   AgentTuiSession options.candidates（菜单视图组件在 agent-tui.ts 落格，
+ *   状态行/提示行两行永不侵占）；命令真实分发归宿主装配（bin/** 缝）。
+ * BI-27.5 —— 视口接线：wheel-up/wheel-down（SGR 1000/1006 鼠标上报）全态
+ *   转发 session.handleKey = 转录窗滚回（步长 3 行/格，锚底钳顶，审批挂起/
+ *   回合在飞时同样可翻历史且不触碰审批/取消路由）。
+ *
  * 挂载面（器官全量复用、不改动；本文件为 mount 层新配件）：
  * - **LineEditor**：基于 ParsedKey（diff-renderer.ts）的单行编辑器。可见字符
  *   追加/插入、backspace、left/right/home/end 光标移动、Enter 提交非空行
@@ -448,7 +459,9 @@ export interface ReplOptions {
   readonly onPrompt?: (draft: string) => void;
   /** Ctrl+E 外编执行面（缺省真实 editExternally；测试注入离屏 fake）。 */
   readonly editExternally?: (initialText: string) => Promise<EditResult>;
-  /** Tab 补全候选面（BI-25.3；缺省 historyCompletions = 历史前缀匹配）。 */
+  /** Tab 补全候选面（BI-25.3；缺省 historyCompletions = 历史前缀匹配）。
+   * BI-27.4 起与候选菜单并存：历史补全无进益时经 session.candidateMenu 的
+   * provider 前缀延伸补全（候选面注入点=AgentTuiSession options.candidates）。 */
   readonly completions?: CompletionsFn;
 }
 
@@ -515,6 +528,13 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   };
 
   const iterator = keys[Symbol.asyncIterator]();
+  /** 草稿变化后的统一重绘：菜单同步（BI-27.4）→ 提示行 → 探针 → 帧。 */
+  const redraw = (): void => {
+    session.candidateMenu.sync(editor.draft);
+    prompt.update(editor.draft, editor.cursor);
+    onPrompt(editor.draft);
+    session.app.render();
+  };
   try {
     let next = await iterator.next();
     while (next.done !== true) {
@@ -526,8 +546,11 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
         break;
       }
 
-      // 审批浮层在栈顶：全部键交 TuiApp 派发（浮层消费 y/n/Esc，其余落空）。
-      if (stateOf(session) === "awaiting-approval") {
+      // BI-27.5：滚轮（SGR 鼠标上报）= 转录窗滚回，全态可用（审批挂起/
+      // 回合在飞时同样可翻历史，不影响审批/取消路由）。
+      if (key.kind === "wheel-up" || key.kind === "wheel-down") {
+        await session.handleKey(key);
+      } else if (stateOf(session) === "awaiting-approval") {
         session.app.dispatchKey(key);
       } else if (stateOf(session) === "running") {
         // 回合在飞：Esc=二段取消语义（await 落定）；其余键透传组件栈。
@@ -541,14 +564,29 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           session.app.dispatchKey(key);
         }
       } else {
-        // 编辑态（idle）：up/down 历史翻页与 tab 补全先于编辑器裁决（BI-25.3）。
-        if (key.kind === "up" || key.kind === "down") {
+        // 编辑态（idle）：候选菜单（BI-27.4）先于历史翻页/补全裁决——菜单
+        // 可见时 up/down=菜单选择移动、Tab/Enter=接受选中、Esc=关闭菜单
+        // （均不落编辑器/历史；字符键照常进编辑器，redraw 内 sync 刷新过滤）。
+        const menu = session.candidateMenu;
+        if (menu.visible && (key.kind === "up" || key.kind === "down")) {
+          if (key.kind === "up") menu.moveUp();
+          else menu.moveDown();
+          session.app.render(); // 仅选择移动：草稿不变，重绘菜单即可
+        } else if (menu.visible && (key.kind === "tab" || key.kind === "enter")) {
+          const accepted = menu.accept();
+          if (accepted !== undefined) {
+            editor.replaceAllRaw(accepted); // 补全草稿 "/name "（菜单随 sync 关闭）
+            redraw();
+          }
+          // 防御：可见但无选中（空集不可见，理论不可达）——不吞提交，落空。
+        } else if (menu.visible && key.kind === "esc") {
+          menu.dismiss(); // Esc 第一义=关菜单（会话取消语义不被触发）
+          session.app.render();
+        } else if (key.kind === "up" || key.kind === "down") {
           const recalled = key.kind === "up" ? history.up(editor.draft) : history.down();
           if (recalled !== undefined) {
             editor.replaceAllRaw(recalled); // 历史条目原样回填（多行条目保留换行）
-            prompt.update(editor.draft, editor.cursor);
-            onPrompt(editor.draft);
-            session.app.render();
+            redraw();
           }
           // no-op（无历史/已在草稿槽）：草稿不动。
         } else if (key.kind === "pageup" || key.kind === "pagedown") {
@@ -563,28 +601,27 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           }
           if (recalled !== undefined) {
             editor.replaceAllRaw(recalled);
-            prompt.update(editor.draft, editor.cursor);
-            onPrompt(editor.draft);
-            session.app.render();
+            redraw();
           }
           // no-op（无历史/已在草稿槽）：草稿不动。
         } else if (key.kind === "tab") {
-          const completed = completeDraft(editor.draft, completions(editor.draft));
+          // BI-25.3 缺省历史补全优先（既有语义不变）；无进益时经候选菜单的
+          // provider 前缀延伸补全（BI-27.4；斜杠草稿归菜单，此处恒 undefined）。
+          const completed =
+            completeDraft(editor.draft, completions(editor.draft)) ??
+            menu.completeNonSlash(editor.draft);
           if (completed !== undefined) {
             editor.replaceAllRaw(completed);
-            prompt.update(editor.draft, editor.cursor);
-            onPrompt(editor.draft);
-            session.app.render();
+            redraw();
           }
           // 无候选/无进益：no-op。
         } else {
           const action = editor.feed(key);
           if (action.kind === "edit") {
-            prompt.update(editor.draft, editor.cursor);
-            onPrompt(editor.draft);
-            session.app.render();
+            redraw();
           } else if (action.kind === "submit") {
             history.record(action.line); // 已提交行入史（BI-25.3）
+            session.candidateMenu.sync(editor.draft); // 草稿已自清：菜单随草稿关闭
             prompt.hide(); // 提示行让位，状态行透出
             session.app.render();
             submittedLines += 1;
@@ -600,9 +637,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
             if (outcome.status === "submitted") {
               editor.replaceAllRaw(outcome.text.trimEnd());
             }
-            prompt.update(editor.draft, editor.cursor);
-            onPrompt(editor.draft);
-            session.app.render();
+            redraw();
           }
           // none：空 Enter/无关键落空。
         }

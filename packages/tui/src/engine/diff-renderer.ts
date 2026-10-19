@@ -24,7 +24,8 @@ export interface Writer {
   write(data: string): void;
 }
 
-/** 解析后的按键。paste 事件由 PasteBurst 聚合产生，text 为整段粘贴文本。 */
+/** 解析后的按键。paste 事件由 PasteBurst 聚合产生，text 为整段粘贴文本。
+ * wheel-up/wheel-down（BI-27.5）为 SGR 鼠标滚轮上报（1000/1006 模式）。 */
 export interface ParsedKey {
   kind:
     | "char"
@@ -41,7 +42,9 @@ export interface ParsedKey {
     | "home"
     | "end"
     | "ctrl"
-    | "paste";
+    | "paste"
+    | "wheel-up"
+    | "wheel-down";
   /** kind === "char" 时的字符；kind === "ctrl" 时的字母（小写）。 */
   char?: string;
   /** kind === "paste" 时的聚合文本。 */
@@ -62,6 +65,58 @@ export function cup(row1Based: number): string {
 
 /** 行尾清除（EL0，光标起至行末）。 */
 export const EL = "\x1b[K";
+
+// SGR 样式发射（BI-27.3）：网格单元携带 fg/bg/bold/dim/italic 时按最小 SGR
+// 差量发射；无样式行字节面与旧契约完全一致（纯文本 + EL）。
+
+/** 前景色名 → SGR 编号（30-37 基本色；未知色名忽略，网格安全）。 */
+const SGR_FG: Record<string, string> = {
+  black: "30",
+  red: "31",
+  green: "32",
+  yellow: "33",
+  blue: "34",
+  magenta: "35",
+  cyan: "36",
+  white: "37",
+};
+
+/** 背景色名 → SGR 编号（40-47）。 */
+const SGR_BG: Record<string, string> = {
+  black: "40",
+  red: "41",
+  green: "42",
+  yellow: "43",
+  blue: "44",
+  magenta: "45",
+  cyan: "46",
+  white: "47",
+};
+
+/** SGR 复位。 */
+const SGR_RESET = "\x1b[0m";
+
+/** 单元样式 → SGR 序列（无任何样式返回 null）。 */
+function sgrOf(fg?: string, bg?: string, bold?: boolean, dim?: boolean, italic?: boolean): string | null {
+  const params: string[] = [];
+  if (bold) params.push("1");
+  if (dim) params.push("2");
+  if (italic) params.push("3");
+  if (fg !== undefined) {
+    const code = SGR_FG[fg];
+    if (code !== undefined) params.push(code);
+  }
+  if (bg !== undefined) {
+    const code = SGR_BG[bg];
+    if (code !== undefined) params.push(code);
+  }
+  return params.length === 0 ? null : `\x1b[${params.join(";")}m`;
+}
+
+/** 单元样式等价键（同一运行合并；与 rowEquals 同字段集）。 */
+function styleKey(fg?: string, bg?: string, bold?: boolean, dim?: boolean, italic?: boolean): string {
+  return `${fg ?? ""}|${bg ?? ""}|${bold ? 1 : 0}|${dim ? 1 : 0}|${italic ? 1 : 0}`;
+}
 
 /** 差分渲染器：双缓冲 + 最小 ANSI 输出。 */
 export class DiffRenderer {
@@ -84,19 +139,47 @@ export class DiffRenderer {
     return this.back;
   }
 
-  /** 结束一帧：差分 back vs front → 最小 ANSI 输出 → swap。 */
+  /** 结束一帧：差分 back vs front → 最小 ANSI 输出 → swap。changed 行按单元
+   * 样式发射 SGR 运行（BI-27.3）；无样式行输出与旧契约逐字节一致。 */
   end(): void {
     const ops = this.computeOps();
     let payload = "";
     for (const op of ops) {
       if (op.kind === "unchanged") continue;
       payload += cup(op.row + 1);
-      if (op.kind === "changed") payload += op.text;
+      if (op.kind === "changed") payload += this.renderStyledRow(op.row);
       payload += EL;
     }
     if (payload.length > 0) this.out.write(payload);
     this.front = this.back;
     this.back = new VirtualTerminal(this.rows, this.cols);
+  }
+
+  /** 渲染目标行：按连续同样式单元分段发射 SGR；纯文本行退化为 rowText 等价。 */
+  private renderStyledRow(row: number): string {
+    const cells = this.back.rowCells(row);
+    let out = "";
+    let activeKey: string | null = null; // 当前 SGR 运行样式键；null = 无样式
+    let styled = false; // 本行是否发射过任何 SGR（行尾复位判定）
+    for (const cell of cells) {
+      if (cell.wideTail) continue; // 宽字符右半延续：与 rowText 同步跳过
+      const key = styleKey(cell.fg, cell.bg, cell.bold, cell.dim, cell.italic);
+      if (key !== activeKey) {
+        if (activeKey !== null && activeKey !== styleKey(undefined)) out += SGR_RESET;
+        const sgr =
+          key === styleKey(undefined)
+            ? null
+            : sgrOf(cell.fg, cell.bg, cell.bold, cell.dim, cell.italic);
+        if (sgr !== null) {
+          out += sgr;
+          styled = true;
+        }
+        activeKey = key;
+      }
+      out += cell.char;
+    }
+    if (styled) out += SGR_RESET; // 行尾复位，SGR 不越过 EL/CUP 泄漏到后续行
+    return out;
   }
 
   /** 差分计算：首帧只绘非空行（终端基线即空白）；后续帧全行三态差分。 */
@@ -310,6 +393,14 @@ export class InputLoop {
     this.escHold = [];
     const finalByte = hold[hold.length - 1] as number;
     const params = String.fromCharCode(...hold.slice(2, hold.length - 1));
+    // SGR 鼠标上报（BI-27.5，1000/1006 模式）：`ESC [ < btn ; col ; row M`。
+    // 滚轮 64=上 / 65=下，仅在按下终字 'M' 分发；其余按键/松开（'m'）忽略。
+    if (finalByte === 0x4d && params.startsWith("<")) {
+      const btn = params.slice(1).split(";")[0];
+      if (btn === "64") this.onKey({ kind: "wheel-up" });
+      else if (btn === "65") this.onKey({ kind: "wheel-down" });
+      return; // 点击/拖拽等其余按钮码：合约按键集之外，忽略
+    }
     let key: ParsedKey["kind"] | null = null;
     switch (finalByte) {
       case 0x41: // A

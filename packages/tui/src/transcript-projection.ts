@@ -167,8 +167,11 @@ function splitUnits(line: string): LayoutUnit[] {
  * - 单元自身超宽（行宽小于一个宽字符/组合序列）时独立成行硬放：
  *   「不拆」优先于「不超」；
  * - 折行无损：join("\n") 后逐字还原原行（不插连字符、不吞空白）。
+ *
+ * BI-27.3 起导出复用（styled 转录对非 assistant 条目取同一折行路径，
+ * 保证视口文本与 L3 逐字节一致）。
  */
-function wrapLine(line: string, width: number): string[] {
+export function wrapLine(line: string, width: number): string[] {
   if (textWidth(line) <= width) return [line];
   const units = splitUnits(line);
   const out: string[] = [];
@@ -236,9 +239,9 @@ interface EntryLayers {
 
 /** 同构 Transcript 投影：L1 条目 → L2 逻辑行 → L3 折行视图 → L4 markdown。 */
 export class TranscriptProjection {
-  private readonly viewWidth: number;
+  private viewWidth: number;
   private readonly entryList: TranscriptEntry[] = [];
-  private readonly layerList: EntryLayers[] = [];
+  private layerList: EntryLayers[] = [];
 
   constructor(opts: TranscriptProjectionOptions = {}) {
     const width = opts.width ?? DEFAULT_VIEW_WIDTH;
@@ -251,6 +254,25 @@ export class TranscriptProjection {
   /** 视图行宽（显示列）。 */
   get width(): number {
     return this.viewWidth;
+  }
+
+  /**
+   * 视口行宽变更（BI-27.5 resize 折行宽跟随）：按新宽度对全部条目重算 L3/L4
+   * 视图层。L2 history 与宽度无关不重算（增量构建的单向推进性保持：既有
+   * append 语义不变）；重算后四层同构不变式依旧成立（assertProjectionInvariants
+   * 可随时复验）。宽度等值时 no-op。
+   */
+  resize(width: number): void {
+    if (!Number.isInteger(width) || width < 1) {
+      throw new RangeError(`TranscriptProjection 行宽非法: ${String(width)}`);
+    }
+    if (width === this.viewWidth) return;
+    this.viewWidth = width;
+    this.layerList = this.layerList.map((l) => ({
+      entry: l.entry,
+      history: l.history,
+      view: buildView(l.history, width),
+    }));
   }
 
   /** L1 只读快照（append 顺序；快照变动不影响投影）。 */

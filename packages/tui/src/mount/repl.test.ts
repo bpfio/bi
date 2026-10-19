@@ -1133,3 +1133,172 @@ describe("BI-27.1 · runRepl pageup/pagedown 跳页", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// BI-27.4 · runRepl 候选菜单接线（斜杠草稿菜单 + provider Tab 补全）
+// ---------------------------------------------------------------------------
+
+describe("BI-27.4 · runRepl 候选菜单接线", () => {
+  test("斜杠菜单：/ 开菜单 → down/up 移动选择不翻史 → Tab 接受补全 → Esc 关闭", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([[{ type: "content_delta", delta: "好的。" }, { type: "done", stopReason: "stop" }]]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 10,
+        cols: 60,
+        hooks: sink.hooks,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      // 先提交一条历史（验证菜单态 up/down 不与历史翻页打架）
+      for (const key of [...text("历史条目"), enter]) stream.push(key);
+      await until(() => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[assistant]"))));
+
+      // "/" 开菜单（builtin 候选可见）
+      stream.push({ kind: "char", char: "/" });
+      await until(() => session.candidateMenu.visible);
+      expect(session.candidateMenu.items.length).toBeGreaterThan(0);
+
+      // down/up 在菜单上移动选择，draft 不变（不触发历史翻页）
+      stream.push(downKey);
+      await until(() => session.candidateMenu.selectedIndex === 1);
+      stream.push(upKey);
+      await until(() => session.candidateMenu.selectedIndex === 0);
+      expect(prompts.at(-1)).toBe("/"); // 草稿未被动过（历史未闯入）
+
+      // Tab 接受选中 → 补全 "/copy "（builtin 首项），菜单随草稿含空白关闭
+      stream.push(tabKey);
+      await until(() => prompts.at(-1) === "/copy ");
+      expect(session.candidateMenu.visible).toBe(false);
+
+      // Ctrl+C 清空已补全草稿，再开菜单：Enter 同样接受（/re → /reload ）
+      stream.push(ctrlC);
+      await until(() => prompts.at(-1) === "");
+      for (const key of [...text("/re"), enter]) stream.push(key);
+      await until(() => prompts.at(-1) === "/reload ");
+      expect(session.candidateMenu.visible).toBe(false);
+
+      // Ctrl+C 清空已补全草稿
+      stream.push(ctrlC);
+      await until(() => prompts.at(-1) === "");
+
+      // Esc 第一义=关菜单：草稿保留、不提交
+      stream.push({ kind: "char", char: "/" });
+      await until(() => session.candidateMenu.visible);
+      stream.push(esc);
+      await until(() => !session.candidateMenu.visible);
+      expect(prompts.at(-1)).toBe("/"); // 草稿保留
+
+      stream.push(ctrlD);
+      const result = await done;
+      expect(result.submittedLines).toBe(1); // 仅最初那条历史；菜单补全稿均未误提交
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("非斜杠 Tab：历史补全优先（既有语义），无进益时 provider 前缀延伸补全", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const sink = frameSink();
+      const prompts: string[] = [];
+      const session = new AgentTuiSession({
+        model: scriptedModel([
+          [{ type: "content_delta", delta: "收到。" }, { type: "done", stopReason: "stop" }],
+        ]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 10,
+        cols: 60,
+        hooks: sink.hooks,
+        candidates: () => [
+          { name: "deploy-prod", description: "发布生产" },
+          { name: "deploy-staging", description: "发布预发" },
+        ],
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream, onPrompt: (d) => prompts.push(d) });
+
+      // 历史条目先入史（等回合收束帧：state idle 可能先于回合开始瞬时成立）
+      for (const key of [...text("list files"), enter]) stream.push(key);
+      await until(
+        () => session.state === "idle" && sink.frames.some((f) => f.lines.some((l) => l.includes("[assistant] 收到。"))),
+      );
+
+      // 历史补全优先（BI-25.3 语义不变）
+      for (const key of text("list")) stream.push(key);
+      await until(() => prompts.at(-1) === "list");
+      stream.push(tabKey);
+      await until(() => prompts.at(-1) === "list files");
+
+      // Ctrl+C 清稿 → 历史无进益（"dep" 不前缀命中）→ provider 共同前缀补全
+      //（deploy-prod / deploy-staging → deploy-）
+      stream.push(ctrlC);
+      await until(() => prompts.at(-1) === "");
+      for (const key of text("dep")) stream.push(key);
+      await until(() => prompts.at(-1) === "dep");
+      stream.push(tabKey);
+      await until(() => prompts.at(-1) === "deploy-");
+
+      // 唯一候选整稿补全（"deploy-pro" → deploy-prod）
+      stream.push(ctrlC);
+      await until(() => prompts.at(-1) === "");
+      for (const key of text("deploy-pro")) stream.push(key);
+      await until(() => prompts.at(-1) === "deploy-pro");
+      stream.push(tabKey);
+      await until(() => prompts.at(-1) === "deploy-prod");
+
+      stream.push(ctrlD);
+      const result = await done;
+      expect(result.submittedLines).toBe(1);
+      expect(prompts).toContain("deploy-");
+      expect(prompts).toContain("deploy-prod");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("菜单可见性落格：斜杠草稿帧中出现菜单行；状态/提示行不受菜单侵占", async () => {
+    const { root, cleanup } = await makeRoot();
+    try {
+      const writer = new MemoryWriter();
+      const session = new AgentTuiSession({
+        model: scriptedModel([]),
+        tools: [],
+        cwd: root,
+        sessionsRoot: join(root, "sessions"),
+        permissionMode: "auto",
+        rows: 10,
+        cols: 60,
+        writer,
+      });
+      const stream = new KeyStream();
+      const done = runRepl({ session, keys: stream });
+      stream.push({ kind: "char", char: "/" });
+      await until(() => session.candidateMenu.visible);
+      await new Promise((r) => setTimeout(r, 20)); // 等差分帧落 writer
+      // 菜单行落到渲染面（❯ /copy 描述行）
+      expect(writer.output).toContain("/copy");
+      expect(writer.output).toContain("复制上一轮回答到系统剪贴板");
+      // 关菜单后差分清掉菜单行（转录/提示行恢复）
+      writer.clear();
+      stream.push(esc);
+      await until(() => !session.candidateMenu.visible);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(writer.output).not.toContain("复制上一轮回答到系统剪贴板");
+      stream.push(ctrlD);
+      await done;
+    } finally {
+      await cleanup();
+    }
+  });
+});

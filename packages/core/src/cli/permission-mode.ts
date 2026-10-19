@@ -18,6 +18,7 @@
  * 默认模式 manual（最安全缺省，BI-28.3 默认不变）。
  */
 import { PermissionGate, type SessionApprovalEntry } from "../guard/permission-gate";
+import type { PermissionsPorts } from "./commands/permissions-command";
 import type { PermissionDecision, PermissionMode, PermissionRequest } from "../guard/types";
 
 /** 三态模式合法词面（parsePermissionMode 用；其余一律拒绝，不猜别名、不认大写）。 */
@@ -122,5 +123,22 @@ export class PermissionSessionController {
   /** 权限决策（透传门禁三层矩阵：会话记忆 → 静态规则 → 三态默认）。 */
   check(req: PermissionRequest): PermissionDecision {
     return this.#gate.check(req);
+  }
+
+  /**
+   * PermissionsPorts 投影（BI-28.3 接线缝）：/permissions 命令面的注入面。
+   * 控制器的 mode 是属性、端口面约定是方法——此适配是唯一换算点，宿主
+   * （bin/TUI 拦截层）一律经 toPorts() 注入，禁止手搓第二个适配。
+   */
+  toPorts(): PermissionsPorts {
+    return {
+      mode: () => this.mode,
+      setMode: (mode) => this.switchMode(mode),
+      grants: () => this.grants(),
+      grantAlways: (tool, argSummary) => this.grantAlways(tool, argSummary),
+      denyAlways: (tool, argSummary) => this.denyAlways(tool, argSummary),
+      revokeGrant: (tool, argSummary) => this.revokeGrant(tool, argSummary),
+      clearGrants: () => this.clearGrants(),
+    };
   }
 }

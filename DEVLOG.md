@@ -313,3 +313,28 @@ npm 迁移(BI-25.4 增补,commit 5ffb2ba):用户网页建 bpfio org → SCOPE @b
 **排障两条(devlog #262)**:pty 断言 `"anual]"` 是 `"manual]"` 子串必误报,缺陷特征须锚定 ❯;execFileSync 阻塞事件循环会饿死同进程 Bun.serve 伪端点(子进程 fetch 永挂),须异步化。
 
 **门禁:4205 pass/0 fail(220 文件,含门控套件),双 tsc 0,origin=2a04a9f。F-LEASE-28(lease 工具只认 agy 身份)wontfix 备案。诚实边界**:沙箱包装/命令词级裁决归 28.4;余 11 项 planned(26.1/26.3、27.3/27.4/27.5、28.3/28.4/28.5、29.1/29.2、30)。
+
+## 十二、生产冲刺批次 (BI-PROD-2026-10-20,第二波收官,2026-10-19)
+
+用户口令"第二波 开跑"→ 余 10 卡 running(26.1/26.3、27.3/27.4/27.5、28.3/28.4/28.5、29.1/29.2),双 agent 并发(A=tui/B=执行面)+主控线。**事故与恢复**:首批双 Agent 死于 10-18 15:21 会话中断(僵尸记录,TaskStop 报 startedAt.getTime=F-HARNESS-29 wontfix);主控盘点断点遗产后派 A2/B2 续跑,零返工。三段提交:13884f4(主线四卡)→3525fca(B 侧执行面)→本提交(A 侧 TUI+集成接线)。
+
+| 卡 | 标题 | 执行方 | 落点 |
+|---|---|---|---|
+| BI-29.1 | doctor 去母体化(五检查项) | 主控 | 13884f4 |
+| BI-29.2 | upgrade 自升级真链(BI-20.7 上妆) | 主控 | 13884f4 |
+| BI-26.3 | 崩溃恢复演练(e2e-drill-m 6 用例) | 主控 | 13884f4 |
+| BI-28.3 | 权限模式产品化(/permissions+控制器) | Agent-B2 | 3525fca |
+| BI-28.4 | 执行面真实任务演练(exec-drill) | Agent-B2 | 3525fca |
+| BI-28.5 | grep/glob 工具(rg 语义) | Agent-B2 | 3525fca |
+| BI-27.3 | 富文本转录(markdown+styled) | Agent-A2 | 本提交 |
+| BI-27.4 | 候选与命令菜单(candidate-menu) | Agent-A2 | 本提交 |
+| BI-27.5 | 视口裁定+resize 折行宽+滚轮历史 | Agent-A2 | 本提交 |
+| BI-26.1 | 演练矩阵 L 域(e2e-drill-l 9 用例) | 主控 | 本提交 |
+
+**落位要点**:①运维面——doctor 五检查项(配置装载/凭据门 resolveModelPort 同链/所配 provider base_url 网络/OsSandbox 真探/工具注册面),open.bigmodel.cn+ZHIPU 面+pandas 遗产退役;upgrade 走 manifest→sha256→native-swap 真链(--manifest-url>BI_UPGRADE_MANIFEST_URL>exit 4),python3 upstream_sync.py 替身退役;②权限面——PermissionSessionController+`/permissions`(show/mode/grant/deny/revoke/clear),config [permission] mode→门禁三态(default/plan→manual)+规则表灌入(ask 缺省语义剔除),switchMode 不清会话授权(显式裁决强于三态),bin/main/headless 三处 gate 注入缝,REPL `/` 行拦截走本地命令面(不入模型回合不落 JSONL);③壳层面——markdown 富文本进转录(StyledTranscript 双消费 L1,latex/mermaid 围栏透传)、斜杠候选菜单(内置+~/.bi/commands+<cwd>/.bi/commands 发现,Tab/↑↓/Enter/Esc)、视口裁定=inline REPL(RULE-BI-07 kimi 基线 ADR)、resize 折行宽双侧跟随(BI-24.3 备案限制消除)、SGR 滚轮历史(±3 行,归零实时锚底);④演练面——e2e-drill-l 五链(toolset 真面/model-port 装配/agent-tui 挂载/acp 桥全生命周期/八子命令)+e2e-drill-m 四链(JSONL 撕裂痊愈/meta 残缺拒载/双 manager 并发/kill -9 真子进程)。
+
+**演练抓真缺陷三则**:28.4 演练暴露 bash 输出泵在子进程管道突闭(嵌套 bun test 复现)时 releaseLock 抛 TypeError 杀死结果管线(已修);28.5 grep include 改 rg 语义(无斜杠按 basename);27.3 修 markdown.ts JSDoc 内 `*/` 致命解析断点+transcript-styled 多行溢格。
+
+**技术裁决**:acp 演练输入流必须 pull 式 ReadableStream 按真实协议顺序供帧(write 回调反压注入僵死读泵);prompt 回执只含 stopReason(文本走 session/update);fake-endpoint 双协议按 URL 路径自适应无 mode 选项;worktree 验证提交态前必须 bun install。
+
+**门禁:4310 pass/0 fail(228 文件,50953 expect,含 BI_PTY_E2E=1)+root tsc 0,origin=本提交。诚实边界**:自定义斜杠命令执行面未接线(候选可补全,提交回"执行面归后续卡"应答);B2 备案 headless permissionMode 仍可经注入面覆盖;BI-30(dogfood 用 bi 修 bi)为下一波开工卡。

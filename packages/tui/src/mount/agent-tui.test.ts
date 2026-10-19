@@ -351,6 +351,131 @@ describe("BI-23.2 · Esc 二段取消（可控时钟）", () => {
 });
 
 // ---------------------------------------------------------------------------
+// BI-27.5 · 视口工程（resize 重排 + 滚轮滚回 + 富文本视图行）
+// ---------------------------------------------------------------------------
+
+describe("BI-27.5 · 视口工程", () => {
+	test("resize 重排：折叠行宽跟随（projection/styled 双侧重算），滚动锚底", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const longText = "这是一条相当长的用户消息，用来验证宽度变更后折行跟随重排。";
+			const session = new AgentTuiSession({
+				model: scriptedModel([[{ type: "done", stopReason: "stop" }]]).port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 6,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session.start("resize");
+			const pending = session.submit(longText);
+			await pending;
+			expect(session.projection.width).toBe(80);
+			const rows80 = session.visibleTranscriptRows().map((r) => r.spans.map((s) => s.text).join(""));
+			// styled 视图行（user 条目）与 L3 同折行语义（width 80）
+			const l3At80 = session.projection.render();
+			expect(rows80).toEqual(l3At80);
+
+			// 缩窄到 20：双侧重算折行，行数增加，锚底不变（尾行 = 状态行上方）
+			session.resize(6, 20);
+			expect(session.projection.width).toBe(20);
+			const rows20 = session.visibleTranscriptRows().map((r) => r.spans.map((s) => s.text).join(""));
+			expect(rows20.length).toBeGreaterThan(rows80.length);
+			expect(rows20[0]!.startsWith("[user] 这是一")).toBe(true); // 首行前缀 + 折行
+			expect(rows20.join("")).toContain("折行跟随重排。"); // 折行无损
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("滚轮滚回：wheel-up 翻旧（步长 3）、wheel-down 翻新、双端钳制、归零实时锚底", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const session = new AgentTuiSession({
+				// 三个回合 × (user+assistant) = 6 条目；rows=6 → 窗高 4 → maxOffset=2
+				model: scriptedModel([
+					[{ type: "content_delta", delta: "答一" }, { type: "done", stopReason: "stop" }],
+					[{ type: "content_delta", delta: "答二" }, { type: "done", stopReason: "stop" }],
+					[{ type: "content_delta", delta: "答三" }, { type: "done", stopReason: "stop" }],
+				]).port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 6,
+				cols: 60,
+			});
+			await session.start("滚回");
+			await session.submit("问一");
+			await session.submit("问二");
+			await session.submit("问三");
+			expect(session.scrollOffset).toBe(0);
+			const live = session.visibleTranscriptRows().map((r) => r.spans.map((s) => s.text).join(""));
+
+			// wheel-up 一格 = 3 行：翻向更旧（偏移 3 → 钳到 maxOffset=2）
+			await session.handleKey({ kind: "wheel-up" });
+			expect(session.scrollOffset).toBe(2); // 顶端钳制（不悬空）
+			const scrolled = session.visibleTranscriptRows().map((r) => r.spans.map((s) => s.text).join(""));
+			expect(scrolled).not.toEqual(live);
+			expect(scrolled.join("")).toContain("问一"); // 旧条目回到窗内
+
+			// wheel-down 一格 = 3 行：回到实时锚底（偏移归零）
+			await session.handleKey({ kind: "wheel-down" });
+			expect(session.scrollOffset).toBe(0);
+			expect(session.visibleTranscriptRows().map((r) => r.spans.map((s) => s.text).join(""))).toEqual(live);
+
+			// scrollTranscript 直接调用面：向上一步长 1；底部继续下滚 no-op
+			session.scrollTranscript(1);
+			expect(session.scrollOffset).toBe(1);
+			session.scrollTranscript(-5); // 越过底部：钳 0
+			expect(session.scrollOffset).toBe(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("富文本视图行：assistant markdown 剥离落格（styled），帧探针保持 L3 原文", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const session = new AgentTuiSession({
+				model: scriptedModel([
+					[{ type: "content_delta", delta: "# 计划\n**执行** `run`" }, { type: "done", stopReason: "stop" }],
+				]).port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 60,
+				hooks: sink.hooks,
+			});
+			await session.start("富文本");
+			await session.submit("给我计划");
+
+			// 视图行（网格面）：markdown 标记剥离，正文保样式分段
+			const viewText = session.visibleTranscriptRows().map((r) => r.spans.map((s) => s.text).join(""));
+			expect(viewText.some((t) => t === "[assistant] 计划")).toBe(true); // # 剥离
+			expect(viewText.some((t) => t.includes("执行 run"))).toBe(true); // **/` 剥离
+			expect(viewText.some((t) => t.includes("**"))).toBe(false);
+			// 样式分段：粗体落格（BI-27.3 cell 样式面）
+			const boldRow = session.visibleTranscriptRows().find((r) => r.spans.some((s) => s.style?.bold === true));
+			expect(boldRow).toBeDefined();
+
+			// 帧探针（投影面）：L3 原文不变（markdown 保留）
+			const last = sink.frames.at(-1)!;
+			expect(last.lines.some((l) => l.includes("[assistant] # 计划"))).toBe(true);
+			expect(last.lines.some((l) => l.includes("**执行** `run`"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
 // BI-27.2 · 流式渲染（节流帧 + StreamView 预览行 + 运行态秒数）
 // ---------------------------------------------------------------------------
 

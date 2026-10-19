@@ -70,6 +70,12 @@ export interface HeadlessOptions {
 	readonly hooks?: HooksSection;
 	/** 权限门初始模式（缺省 "auto"：全自动放行 + 审计标记；manual 下 ask 走降级拒绝）。 */
 	readonly permissionMode?: "manual" | "auto" | "yolo";
+	/**
+	 * 注入门禁（BI-28.3 接线）：装配层已按 config [permission] mode/rules 建好
+	 * 门禁时注入（与 /permissions 命令面共享实例）；缺省按 permissionMode 自建
+	 * （缺省 auto：无头路径 ask 不可达，走结构化降级拒绝）。
+	 */
+	readonly gate?: PermissionGate;
 	/** 会话存储根（缺省 SessionManager 默认根）。 */
 	readonly sessionsRoot?: string;
 	readonly sessionId?: string;
@@ -185,7 +191,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	}
 
 	// ---- 装配序 ③：权限门（BI-06.5）与工具注册表 ----
-	const gate = new PermissionGate({ mode: options.permissionMode ?? "auto" });
+	const gate = options.gate ?? new PermissionGate({ mode: options.permissionMode ?? "auto" });
 	const registry = new Map<string, ToolBinding>();
 	for (const binding of options.tools) registry.set(binding.definition.name, binding);
 	const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));

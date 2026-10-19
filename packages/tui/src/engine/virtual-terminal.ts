@@ -22,6 +22,8 @@ export interface Cell {
   bg?: string;
   bold?: boolean;
   dim?: boolean;
+  /** 斜体（BI-27.3 富文本转录；DiffRenderer 发射 SGR 3）。 */
+  italic?: boolean;
   /** 内部标记：该格是前一格宽字符的右半延续（toString 与渲染时跳过）。 */
   wideTail?: boolean;
 }
@@ -198,6 +200,7 @@ export class VirtualTerminal {
       if (ca.fg !== cb.fg || ca.bg !== cb.bg) return false;
       if ((ca.bold ?? false) !== (cb.bold ?? false)) return false;
       if ((ca.dim ?? false) !== (cb.dim ?? false)) return false;
+      if ((ca.italic ?? false) !== (cb.italic ?? false)) return false;
       if ((ca.wideTail ?? false) !== (cb.wideTail ?? false)) return false;
     }
     return true;
