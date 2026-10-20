@@ -49,3 +49,10 @@
 ```
 
 原始产物在 `/tmp/bi-eval/`（subject/bi-judge/kimi-judge 三套 × 7）；被测会话 JSONL 在沙箱 `~/.bi/sessions/`。
+
+## 补遗：F-EV-01 修复回测（cb5cadf，kimi 派单 + 主控四步验收）
+
+- **修复面**：config `[session] max_rounds`（挂载式分区，0=缺省 8；优先级 CLI --max-rounds > deps > config > 8）+ rounds-exceeded 结构化失败面（stream-json 落 session_done 帧 / json 落完整对象 exit="rounds-exceeded" / stderr 带调高提示）。门禁 4870 pass/0 fail（+12 用例）。
+- **真机回测**：config 24 → 原 P4 探针 5 回合完答（原 8 回合打死）；`--max-rounds 1` → stdout 单对象可 parse、进程 exit=1；旗标 2 压过 config 24。`bi config get session.max_rounds` 真机读 24、`config list` 恰 70 键。
+- **P4 答案补得（修复后）**：答"11 个子命令"（GT=16）。根因：模型用 PATH 上旧版全局 bi 0.2.1（恰好缺 query/worktree/dag/a2a/plugins 五命令）做验证，并把结论过度外推到被测仓库（"无遗漏或隐藏项"）。非凭空编造，属**证据错配型错误**。教训：评测探针必须钉死被测二进制路径（`bun /home/yupeng/bi/bin/bi.ts`），禁裸 `bi`。
+- **新发现 F-EV-02 (P3, open)**：config `[loop_control]` 分区四键全仓零消费，纯库态虚账（WIRE-1 同款疾病新例），处置待定。

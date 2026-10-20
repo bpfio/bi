@@ -791,3 +791,12 @@ origin=**cc7eb08**（bpfio/bi，树净零差）；提交链 8152de1→4b43ba3→
 - **装饰性编造**（P3）：小模型会在正确答案上追加无据修饰，幻觉低危形态，可由"只答所问"输出契约压制。
 
 **结论**：bi 的失败模式是"诚实地跑不完"而非"编个答案交差"——宁缺勿假是幻觉率 0 的直接原因；最大能力瓶颈不是模型而是回合预算。评审角色上 bi（longcat）7/7 合法 JSON、零工具乱逛、与 kimi 全一致，bi 批 bi 的自评通道可用。
+
+## 二十八、F-EV-01 修复波：回合上限可配 + 失败面结构化 (2026-10-20 深夜)
+
+评测唯一 open 项派 kimi（裸 -p，13 分钟，session_b2433421），主控四步验收全过 → **cb5cadf**。
+
+- **改动**：config `[session] max_rounds`（挂载式分区仿 verify/ptc/memory 族，0=缺省 8；优先级 CLI --max-rounds > deps > config > 8）+ rounds-exceeded 结构化失败面（stream-json 落 session_done 帧、json 落完整对象 exit="rounds-exceeded"、stderr 带调高提示；text 不落）。config get/set/list 键面 +1（总 70），README 三处计数同步。+12 测试。
+- **kimi 两处自主偏离均判合格**：①[session] 走挂载式而非根键（保 17 根键钉死测试，功能等价，比简报原案更对）；②简报优先级措辞自相矛盾处取显式链并申辩。另自主加触碰 config.ts（MOUNTED_SECTIONS 注册），理由成立收货。
+- **验收四步**：diff 逐行亲验（7 文件）/门禁复跑 4870 pass-0 fail+三 tsc 0/真机冒烟三连（config 24 → 原 P4 五回合完答；--max-rounds 1 → stdout 完整失败对象+exit 1 脱离管道直取；旗标 2 压 config 24）/抽样（config get 读 24、list 恰 70 键）。
+- **冒烟连带捕获**：模型把 PATH 上旧版全局 bi 0.2.1 当被测仓库验证（11 命令 vs GT 16）——非产品缺陷（仓库帮助面 16 条齐全），属证据错配；评测探针从此钉死 `bun bin/bi.ts`。**新发现 F-EV-02 (P3, open)**：[loop_control] 四键全仓零消费虚账。
