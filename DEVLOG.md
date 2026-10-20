@@ -732,3 +732,7 @@ FX-B 单测过但真机 /exit 落"执行面尚未接线"兜底——根因=候�
 - 门禁：**4823 pass / 0 fail（264 文件）**+三包 tsc 0（core/tui/a2a）
 - 冒烟七项全绿：/help 目录渲染、/exit 退出 exit=0、bi query 真机检索、json 形态单行可解析、BI.md 注入抓包、MCP echo 挂载+调用回环、write 门禁（10 例+真实 C3 场景复验）
 - finding 处置：F-ST-01/02/03/04/05/06/07/08/11 → fixed；F-ST-09/10 → open（WAIT-FST10 待用户裁定插件/四大件装配路线）
+
+### WAIT-FST10 落定（依设计计划直接裁决，无需用户新裁决）
+
+用户问"能否按设计计划直接决策"——核后答案=能：①worktree 库态系 kimi-batch-2 审计批注在案（"独立私有包，未提供 CLI 子命令面"）；②workflow/A2A 显式面系维护态观察项"演练备案非缺陷维持"；③沙箱 substrate 切分系 AUDIT-10③ 用户裁决（BI-16.1 零工具注入=设计本身）；④plugins 适用"待外部消费者"同款先例。**裁决=维持库态备案不排期接线**（MCP 除外，FX-F 已因配置键陷阱接线）。配套：README 增"库态能力面"节明示（防未来自测重复误报）+[a2a] 键面陷阱注记归 0.4.0 默认值策略；F-ST-09/10 置 wontfix；WAIT-FST10 closed。至此本战役 findings 11 项全部终态（9 fixed + 2 wontfix 备案），零 open。

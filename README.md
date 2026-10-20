@@ -176,6 +176,13 @@ get/set 键面，直接写 TOML）：
 | `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`） |
 | `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
+| `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；坏条目结构化警告不阻塞；SSE 型暂未支持） |
+
+### 库态能力面（器官在、CLI 面随里程碑）
+
+以下能力以 workspace 包形态交付、暂不接 CLI/工具面，属备案设计而非缺陷（虚账审计批注与维护态裁决在案）：
+`@bi/worktree`（Git worktree 并发沙箱引擎）/ `@bi/a2a`（鉴权+邮件信令+GitHub 中枢+WS 中继+黑板）/ `@bi/workflow`（DAG 引擎+持久化调度）/ `@bi/plugins`（双协议插件加载器）/ CodeMode JS 沙箱（BI-16.1 纯计算 substrate，工具编排归 PTC `run_ptc_script`）。
+配置注意：`[a2a]` 分区键面存在但运行面未接，显式配置不会生效（fail-closed 架构事实，0.4.0 默认值策略一并处理）。
 
 ### 环境变量覆盖
 
