@@ -64,6 +64,11 @@ base_url = "https://api.example.com"     # 空串 = 该协议官方默认端点
 kind = "anthropic"                       # openai | anthropic | google
 models = ["my-model"]                    # 模型名提示列表
 
+[providers.entries.my_provider.extra_headers]
+# 附加请求头（可选）：原样合并进该 provider 每次 wire 请求，同键覆盖缺省头。
+# 特例 "auto"：x-opencode-session 每会话自动生成稳定 UUID（opencode Go 网关要求）。
+"x-opencode-session" = "auto"
+
 [providers]
 default = "my_provider"
 

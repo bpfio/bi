@@ -362,6 +362,12 @@ export const providerEntrySchema = sEntity({
   kind: sEnum(PROVIDER_KINDS, "openai"),
   /** 该 provider 下可用的模型名列表（提示用，数组整体替换）。 */
   models: sStrList([]),
+  /**
+   * 附加请求头：原样合并进该 provider 的每次 wire 请求（同键覆盖缺省头）。
+   * 特例：`x-opencode-session = "auto"` 由装配层解析为每装配一个稳定随机 UUID
+   * （opencode Go 网关要求会话级稳定 ID 做路由与 prompt 缓存）。
+   */
+  extra_headers: sRecord(sStr("")),
 });
 export type ProviderEntry = InferSchema<typeof providerEntrySchema>;
 

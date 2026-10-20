@@ -234,3 +234,47 @@ describe("schema: 工具函数", () => {
     expect(BI_CONFIG_SCHEMA.defaultValue()).toEqual(DEFAULT_BI_CONFIG);
   });
 });
+
+describe("schema: provider extra_headers", () => {
+  /** 装载路径（对齐 ConfigService.compose）：校验 → 合并到默认底 → backfill 回填叶子默认。 */
+  function load(raw: unknown): { config: BiConfig; issues: ConfigIssue[] } {
+    const { layer, issues } = validate(raw);
+    const base = createDefaultConfig();
+    deepMergeLayer(base, layer);
+    BI_CONFIG_SCHEMA.backfill?.(base);
+    return { config: base, issues };
+  }
+
+  test("字面量装载往返：extra_headers 原样进入 provider 条目", () => {
+    const extraHeaders = { "x-opencode-session": "auto", "user-agent": "bi-test/1.0" };
+    const { config, issues } = load({
+      providers: {
+        entries: { p1: { api_key_env: "BI_TEST_KEY", kind: "openai", extra_headers: extraHeaders } },
+      },
+    });
+    expect(issues).toEqual([]);
+    expect(config.providers.entries["p1"]?.extra_headers).toEqual(extraHeaders);
+    expect(config.providers.entries["p1"]?.kind).toBe("openai");
+  });
+
+  test("未声明 extra_headers 的条目：装载后为 {}（强类型缺省，非 undefined）", () => {
+    const { config, issues } = load({
+      providers: { entries: { p1: { api_key_env: "BI_TEST_KEY", kind: "openai" } } },
+    });
+    expect(issues).toEqual([]);
+    const entry = config.providers.entries["p1"];
+    expect(entry?.extra_headers).toEqual({});
+    expect(entry?.extra_headers).not.toBeUndefined();
+  });
+
+  test("extra_headers 值为非字符串 → 该键丢弃并记录诊断（条目 fail-closed 整体丢弃）", () => {
+    const { layer, issues } = validate({
+      providers: {
+        entries: { p1: { kind: "openai", extra_headers: { "x-bad": 42, "x-ok": "v" } } },
+      },
+    });
+    const entries = (layer?.providers as { entries?: Record<string, unknown> } | undefined)?.entries;
+    expect(entries?.["p1"]).toBeUndefined();
+    expect(issues.some((i) => i.path === "providers.entries.p1.extra_headers.x-bad")).toBe(true);
+  });
+});

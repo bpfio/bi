@@ -9,7 +9,9 @@
  * - kind → WireMode（openai/anthropic/google）；
  * - 凭据门（BI-02）：api_key_env 未设置结构化报错、已设置流入 Authorization /
  *   x-api-key 头、未声明 = 无静态 Key；
- * - createAdapterModelPort 双模态 URL 与事件透传（注入 fetch，假 SSE 流）。
+ * - createAdapterModelPort 双模态 URL 与事件透传（注入 fetch，假 SSE 流）；
+ * - provider.extra_headers 装配：resolveExtraHeaders（auto 会话头 → UUID）+
+ *   resolveModelPort 端到端落到 wire 请求头（注入 fetch，零网络）。
  */
 import { describe, expect, test } from "bun:test";
 
@@ -17,6 +19,7 @@ import {
 	createAdapterModelPort,
 	effortToAdapter,
 	ModelPortConfigError,
+	resolveExtraHeaders,
 	resolveModelPort,
 } from "./model-port";
 import type { BiConfig } from "../config/schema";
@@ -83,6 +86,9 @@ const OPENAI_SSE =
 	'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n' +
 	"data: [DONE]\n\n";
 
+/** UUID 形态（8-4-4-4-12 十六进制段）——auto 会话头的期望形状。 */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function configWith(overrides: {
 	provider?: Partial<BiConfig["providers"]["entries"][string]>;
 	model?: Partial<BiConfig["models"]["entries"][string]>;
@@ -95,6 +101,8 @@ function configWith(overrides: {
 			base_url: "https://mimo.test/v1",
 			kind: "openai",
 			models: ["test-model"],
+			// 强类型缺省：未声明 extra_headers 的条目装载后为 {}（非 undefined）。
+			extra_headers: {},
 			...(overrides.provider ?? {}),
 		},
 	};
@@ -179,6 +187,88 @@ describe("BI-23.3 · resolveModelPort 选择链", () => {
 		await collect(selection.port.stream({ messages: [{ role: "user", content: "hi" }], tools: [] }));
 		expect(calls.length).toBe(1);
 		expect(calls[0]!.body).toMatchObject({ model: "test-model", temperature: 0.7 });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveExtraHeaders · provider.extra_headers 装配
+// ---------------------------------------------------------------------------
+
+describe("BI-23.3 · resolveExtraHeaders 解析", () => {
+	test("x-opencode-session=\"auto\" → UUID 形态（8-4-4-4-12 十六进制段）", () => {
+		const out = resolveExtraHeaders({ "x-opencode-session": "auto" });
+		expect(out["x-opencode-session"]).toMatch(UUID_PATTERN);
+	});
+
+	test("两次独立调用产生不同 UUID（跨会话不同，非固定值）", () => {
+		const first = resolveExtraHeaders({ "x-opencode-session": "auto" })["x-opencode-session"];
+		const second = resolveExtraHeaders({ "x-opencode-session": "auto" })["x-opencode-session"];
+		expect(first).toMatch(UUID_PATTERN);
+		expect(second).toMatch(UUID_PATTERN);
+		expect(first).not.toBe(second);
+	});
+
+	test("非 auto 值原样透传（不替换成 UUID）", () => {
+		const out = resolveExtraHeaders({ "x-opencode-session": "sess-fixed-42" });
+		expect(out["x-opencode-session"]).toBe("sess-fixed-42");
+	});
+
+	test("其他键不受影响；auto 只作用于 x-opencode-session 一个键", () => {
+		const out = resolveExtraHeaders({
+			"x-opencode-session": "auto",
+			"user-agent": "bi-test/1.0",
+			"x-other-auto": "auto",
+		});
+		expect(out["x-opencode-session"]).toMatch(UUID_PATTERN);
+		expect(out["user-agent"]).toBe("bi-test/1.0");
+		expect(out["x-other-auto"]).toBe("auto");
+		expect(Object.keys(out).sort()).toEqual(["user-agent", "x-opencode-session", "x-other-auto"]);
+	});
+
+	test("空对象 → 空结果（不注入任何头）", () => {
+		expect(resolveExtraHeaders({})).toEqual({});
+	});
+});
+
+describe("BI-23.3 · provider.extra_headers 端到端装配", () => {
+	test("extra_headers 落到 wire 请求头：静态头原样、auto 会话头 → UUID", async () => {
+		const { fetchImpl, calls } = makeFetch(() => sseResponse(OPENAI_SSE));
+		const config = configWith({
+			provider: {
+				extra_headers: { "x-opencode-session": "auto", "user-agent": "bi-test/1.0" },
+			},
+		});
+		const selection = resolveModelPort(config, { env: { BI_TEST_KEY_23_3: "k" }, fetchImpl });
+		await collect(selection.port.stream({ messages: [{ role: "user", content: "hi" }], tools: [] }));
+		expect(calls.length).toBe(1);
+		expect(calls[0]!.headers["user-agent"]).toBe("bi-test/1.0");
+		expect(calls[0]!.headers["x-opencode-session"]).toMatch(UUID_PATTERN);
+		// 缺省鉴权头不受影响（extra 只追加未声明的键）
+		expect(calls[0]!.headers["authorization"]).toBe("Bearer k");
+	});
+
+	test("同一装配实例内会话头稳定（多次 stream 同一 UUID）；不同装配实例互不相同", async () => {
+		const { fetchImpl, calls } = makeFetch(() => sseResponse(OPENAI_SSE));
+		const config = configWith({
+			provider: { extra_headers: { "x-opencode-session": "auto" } },
+		});
+		const selection = resolveModelPort(config, { env: { BI_TEST_KEY_23_3: "k" }, fetchImpl });
+		await collect(selection.port.stream({ messages: [{ role: "user", content: "hi" }], tools: [] }));
+		await collect(selection.port.stream({ messages: [{ role: "user", content: "hi" }], tools: [] }));
+		expect(calls.length).toBe(2);
+		expect(calls[0]!.headers["x-opencode-session"]).toBe(calls[1]!.headers["x-opencode-session"]);
+
+		const other = resolveModelPort(config, { env: { BI_TEST_KEY_23_3: "k" }, fetchImpl });
+		await collect(other.port.stream({ messages: [{ role: "user", content: "hi" }], tools: [] }));
+		expect(calls[2]!.headers["x-opencode-session"]).not.toBe(calls[0]!.headers["x-opencode-session"]);
+	});
+
+	test("未声明 extra_headers 的 provider：不注入任何附加头", async () => {
+		const { fetchImpl, calls } = makeFetch(() => sseResponse(OPENAI_SSE));
+		const selection = resolveModelPort(configWith({}), { env: { BI_TEST_KEY_23_3: "k" }, fetchImpl });
+		await collect(selection.port.stream({ messages: [{ role: "user", content: "hi" }], tools: [] }));
+		expect(calls[0]!.headers["x-opencode-session"]).toBeUndefined();
+		expect(calls[0]!.headers["user-agent"]).toBeUndefined();
 	});
 });
 

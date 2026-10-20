@@ -778,6 +778,82 @@ describe('stream · openai 模态', () => {
 });
 
 // ---------------------------------------------------------------------------
+// stream() — extraHeaders 合并
+// ---------------------------------------------------------------------------
+
+describe('stream · extraHeaders 合并', () => {
+  test('缺省头仍在 + extra 键追加（openai 模态）', async () => {
+    const { fetchImpl, calls } = makeFetch(() => sseResponse([bytesOf(OPENAI_SSE)]));
+    const adapter = DeepSeekAdapter({
+      fetchImpl,
+      baseUrl: 'https://mock.test',
+      apiKey: 'sk-o',
+      extraHeaders: { 'user-agent': 'bi-test/1.0', 'x-opencode-session': 'sess-1' },
+    });
+    const events = await collect(
+      adapter.stream(buildRequest([{ role: 'user', content: 'hi' }], { mode: 'openai', model: 'm' })),
+    );
+    expect(events.at(-1)).toEqual({ type: 'done', stopReason: 'tool_use' });
+    const headers = new Headers(calls[0]?.init?.headers);
+    // 缺省头仍在
+    expect(headers.get('content-type')).toBe('application/json');
+    expect(headers.get('accept')).toBe('text/event-stream');
+    expect(headers.get('authorization')).toBe('Bearer sk-o');
+    // extra 键追加
+    expect(headers.get('user-agent')).toBe('bi-test/1.0');
+    expect(headers.get('x-opencode-session')).toBe('sess-1');
+  });
+
+  test('同键覆盖缺省头（extra 在后合并）；未声明的缺省头不受影响', async () => {
+    const { fetchImpl, calls } = makeFetch(() => sseResponse([bytesOf(OPENAI_SSE)]));
+    const adapter = DeepSeekAdapter({
+      fetchImpl,
+      baseUrl: 'https://mock.test',
+      apiKey: 'sk-o',
+      extraHeaders: {
+        'content-type': 'application/vnd.bi+json',
+        authorization: 'Bearer override',
+      },
+    });
+    await collect(
+      adapter.stream(buildRequest([{ role: 'user', content: 'hi' }], { mode: 'openai', model: 'm' })),
+    );
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get('content-type')).toBe('application/vnd.bi+json');
+    expect(headers.get('authorization')).toBe('Bearer override');
+    expect(headers.get('accept')).toBe('text/event-stream');
+  });
+
+  test('未提供 extraHeaders → 不注入任何附加头（缺省行为不变）', async () => {
+    const { fetchImpl, calls } = makeFetch(() => sseResponse([bytesOf(OPENAI_SSE)]));
+    const adapter = DeepSeekAdapter({ fetchImpl, baseUrl: 'https://mock.test', apiKey: 'sk-o' });
+    await collect(
+      adapter.stream(buildRequest([{ role: 'user', content: 'hi' }], { mode: 'openai', model: 'm' })),
+    );
+    const raw = calls[0]?.init?.headers as Record<string, string>;
+    expect(Object.keys(raw).sort()).toEqual(['accept', 'authorization', 'content-type']);
+  });
+
+  test('messages 模态：x-api-key / anthropic-version 缺省头仍在 + extra 追加', async () => {
+    const { fetchImpl, calls } = makeFetch(() => sseResponse([bytesOf(MESSAGES_SSE)]));
+    const adapter = DeepSeekAdapter({
+      fetchImpl,
+      baseUrl: 'https://mock.test',
+      apiKey: 'sk-bi',
+      extraHeaders: { 'x-opencode-session': 'sess-42' },
+    });
+    await collect(
+      adapter.stream(buildRequest([{ role: 'user', content: 'hi' }], { mode: 'messages', model: 'm' })),
+    );
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get('x-api-key')).toBe('sk-bi');
+    expect(headers.get('anthropic-version')).toBe('2023-06-01');
+    expect(headers.get('x-opencode-session')).toBe('sess-42');
+    expect(headers.get('authorization')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // HTTP 错误五分类
 // ---------------------------------------------------------------------------
 

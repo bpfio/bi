@@ -940,6 +940,11 @@ export interface DeepSeekAdapterOptions {
   apiKey: string;
   /** Messages 模态版本头，缺省 `2023-06-01`。 */
   anthropicVersion?: string;
+  /**
+   * 附加请求头（provider.extra_headers 装配透传）：合并进每次请求，
+   * 同键覆盖缺省头（content-type/accept/鉴权头）；空/缺省 = 不注入。
+   */
+  extraHeaders?: Record<string, string>;
 }
 
 export interface DeepSeekAdapterInstance {
@@ -955,6 +960,7 @@ export function DeepSeekAdapter(options: DeepSeekAdapterOptions): DeepSeekAdapte
   const baseUrl = (options.baseUrl ?? 'https://api.deepseek.com').replace(/\/+$/, '');
   const apiKey = options.apiKey;
   const anthropicVersion = options.anthropicVersion ?? '2023-06-01';
+  const extraHeaders = options.extraHeaders ?? {};
   const fetchImpl: FetchLike =
     options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
 
@@ -972,6 +978,7 @@ export function DeepSeekAdapter(options: DeepSeekAdapterOptions): DeepSeekAdapte
       ...(isMessages
         ? { 'x-api-key': apiKey, 'anthropic-version': anthropicVersion }
         : { authorization: `Bearer ${apiKey}` }),
+      ...extraHeaders,
     };
 
     let res: Response;

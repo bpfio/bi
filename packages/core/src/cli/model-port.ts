@@ -21,6 +21,7 @@ import {
 	type ThinkingEffort,
 	type WireMode,
 } from "../adapters/deepseek-adapter";
+import { randomUUID } from "node:crypto";
 import type { BiConfig } from "../config/schema";
 import type { ModelPort } from "./headless";
 
@@ -90,6 +91,23 @@ export interface AdapterModelPortOptions {
 	/** 注入 fetch（离线测试用）；缺省 globalThis.fetch。 */
 	fetchImpl?: FetchLike;
 	anthropicVersion?: string;
+	/** provider.extra_headers 透传（auto 会话头已在本模块解析为具体值）。 */
+	extraHeaders?: Record<string, string>;
+}
+
+/**
+ * 解析 provider.extra_headers → 请求头实值。
+ * 特例：`x-opencode-session = "auto"` → 每次装配生成一个随机 UUID——
+ * 装配实例 = 一个会话（REPL/ACP 进程内 memo 化，headless 一次性），
+ * 满足 opencode Go 网关"会话内稳定、跨会话不同"的路由要求。
+ */
+export function resolveExtraHeaders(raw: Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		out[key] =
+			key === "x-opencode-session" && value === "auto" ? randomUUID() : value;
+	}
+	return out;
 }
 
 /** 直连形态：BI-04.2 双模态适配器包装为 ModelPort（每回合按当前消息重建请求）。 */
@@ -100,6 +118,7 @@ export function createAdapterModelPort(options: AdapterModelPortOptions): ModelP
 		apiKey: options.apiKey,
 		...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
 		...(options.anthropicVersion === undefined ? {} : { anthropicVersion: options.anthropicVersion }),
+		...(options.extraHeaders === undefined ? {} : { extraHeaders: options.extraHeaders }),
 	});
 	return {
 		stream({ messages, tools, signal }): AsyncIterable<StreamEvent> {
@@ -210,6 +229,9 @@ export function resolveModelPort(
 			...(modelEntry.max_tokens > 0 ? { maxTokens: modelEntry.max_tokens } : {}),
 			...(modelEntry.temperature === undefined ? {} : { temperature: modelEntry.temperature }),
 			...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+			...(Object.keys(providerEntry.extra_headers).length > 0
+				? { extraHeaders: resolveExtraHeaders(providerEntry.extra_headers) }
+				: {}),
 		}),
 		providerName,
 		modelId,
