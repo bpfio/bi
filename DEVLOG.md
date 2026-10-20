@@ -532,3 +532,32 @@ P4(xhub hy3)产出:版本三源对齐(core/tui package.json 0.1.0→0.2.0)+**四
 **发布终态:@bpfio/bi 0.2.1(latest)三包上线(@bpfio/bi-linux-x64 / @bpfio/bi-darwin-arm64),本机全局 bi --version=0.2.1(session 全通);dist 用户一条 `npm install -g @bpfio/bi` 即得生产化完整版。**教训:发布验证必须区分 registry(权威)与 CDN(滞后)两层;optionalDependencies 静默跳过是"装不上"类问题的头号嫌疑。
 
 **PROD-READY 战役总记分**:4 卡全闭(P1 文档/P2 帮助面/P3 config 键面/P4 发布);派工 4 单(xhub hy3×3 接力+本机 step-5×1 违规幸存照收);主控手术 2 台(copy 未知旗标/README 键数同步)+发布自持 1 波(0.2.1);门禁 4655 pass/0 fail(253 文件)+双 tsc 0+CI 绿;提交链 8dee07b→efcf5a9→1a5bb08→b9d0fe1→1683b08→20ff79e。**生产化四差距:全部清零。**
+
+## 二十、kimi CLI 派工通道实测 + provider extra_headers 手术 (2026-10-20)
+
+### 缘起:LongCat 接入撞出适配器缺口
+
+用户下发 opencode Go 免费模型接入(LongCat 2.5 Preview Free,key 走 `~/.bi-longcat-key` 0600+bashrc 运行期注入,config.toml 加 provider/model 条目,doctor 5/5)。真机冒烟被端点拒:`Request is missing x-opencode-session`——opencode Go 要求会话级稳定 ID 做路由与 prompt 缓存,而 DeepSeekAdapter 请求头硬编码,无扩展面。**手术方案:provider 级通用 `extra_headers`**(schema sRecord+adapter 合并+model-port 装配透传),特例 `x-opencode-session = "auto"` → 装配时 randomUUID()(装配实例=会话:REPL/ACP 进程 memo 化,headless 一次性),满足"会话内稳定、跨会话不同"。
+
+### kimi CLI(v2.2.0)派工通道实测(用户指令:测试完成质量)
+
+通道已由用户接好:provider=opencode(OpenAI 兼容,OpenCode Go 端点),默认模型 **minimax-m3.1-flash-free**。能力面探测与真单派发:
+
+| 探测 | 结果 |
+|---|---|
+| 裸 `kimi -p` 冒烟 | 通道在线,响应正常 |
+| `-p -y` / `-y -p` 组合 | **仍禁止**(2.2.0 明确报 "Cannot combine --prompt with --yolo",旧版教训仍有效) |
+| 裸 `-p` 写文件+shell | **放行了!** 自主完成 echo 写入→cat→od 字节校验→结构化总结——旧版"只读任务"约束不复存在,具备完整派工能力 |
+
+**真单派发**:extra_headers 三测试文件补齐(简报含任务边界/红线/验收标准)。580s 超时杀管道,**kimi-code 主进程 detach 幸存继续干活**(PROD-1 codebuddy 同款)——**叫停复核铁律跨工具成立:TaskStop/timeout 杀的是管道,不是代理进程树根,杀单后必须 pgrep 复核**。复核:树已静止(交付已落盘)→kill -9 兜底→pgrep 清零。
+
+### 产出验收(四步)
+
+1. **diff 亲验**:三测试文件 +76/+92/+44 行,红线零违反(产品代码零触碰);不仅覆盖简报全部断言点,还自主补了"同装配实例会话头稳定/跨实例互不相同"——正中语义核心的测试,schema 面 fail-closed(非字符串值→条目整体丢弃)也测了
+2. **门禁复跑**:工单面 81/0 → 全仓 **4670 pass/0 fail(253 文件)**+双 tsc 0
+3. **真机冒烟**:config 补 `[providers.entries.longcat.extra_headers]`(auto+user-agent=bi/0.2.1)→ 仓库版 `bun bin/bi.ts --prompt` LongCat 对话全通(thinking+content 流,exit ok)→ **bash 工具调用全通**(rounds=1 闭环);冒烟后 default 切回 main(mimo)
+4. **提交推送**:ba3f15b(7 文件+251 行),README 配置参考同步 extra_headers 用法
+
+**kimi 通道质量结论:合格。** 简报理解准确、测试设计有自主判断(超出工单的语义测试)、代码风格跟随所在文件(tab/两空格自辨)、零红线违反;缺陷=无超时自管理(需主控兜底)+幸存进程需复核。派工参数:裸 `kimi -p "$(cat 简报)"`,禁与 -y/--auto 组合,杀单后 pgrep 复核。
+
+**入口备注**:仓库版 bi 真机冒烟入口是 `bun bin/bi.ts`(根 bin 层,BI-25.5 起);`bun packages/core/src/cli/main.ts` 无副作用入口,零输出零退出,别误判。
