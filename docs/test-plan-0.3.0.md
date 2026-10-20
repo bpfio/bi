@@ -30,7 +30,8 @@
 | A2 | 主帮助 | `bi --help` | 用法+11 子命令列表，exit 0 |
 | A3 | 裸跑 | `bi` | 用法+指引，exit 2（不是崩溃） |
 | A4 | 体检 | `bi doctor` | 配置/凭据/网络/沙箱/工具注册 5 项，全 ✓ |
-| A5 | 无头首单 | `bi --prompt "用 bash 工具执行 echo ok 并告诉我输出"` | 会话 exit ok，能看到工具调用与 `ok`；`--output-format stream-json` 可见 `tool_call`/`usage`/`session_done` 事件 |
+| A5a | 无头纯会话 | `bi --prompt "用一句话介绍你自己"` | `--output-format stream-json` 可见 `thinking_delta`/`content_delta`/`usage`/`session_done`，exit ok |
+| A5b | 无头工具会话 | **先开 `[ptc] enabled=true`**，再 `bi --prompt "用 bash 工具执行 echo ok"` | 事件链含 `tool_call` 类事件，真实执行并汇报 `ok`；**未开 [ptc] 时模型会"文本演"工具（编造输出），属已知边界 G1** |
 | A6 | 子命令帮助 | `bi config --help`（及任选 3 个子命令） | 各自 usage，exit 0 |
 
 ## B. CLI 子命令面（15 分钟）
@@ -100,6 +101,9 @@
 - 会话 JSONL 中 grep 不到明文 key。
 
 ## 已知边界（非缺陷，遇到不算失败）
+
+0. **无头工具面总门**：headless 会话工具面整体受 `[ptc] enabled` 门控，缺省关=模型无工具。此时让它"执行命令"会得到编造的文本输出（非真实执行）——**无头跑任务务必开 [ptc]**。（改进候选：无工具时对疑似工具调用文本给出 stderr 提示。）
+
 
 1. opencode Go 免费端点：>10 分钟长会话可能断流/限流——生产请配稳定 provider。
 2. LSP/Skill/swarm 依赖外部资源（server/目录/subagent 使能），未配置时结构化降级是**正确行为**。
