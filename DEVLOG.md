@@ -501,3 +501,23 @@ W1 收尾全量门禁间歇红(7/8 绿),捕获定性:**BI-26.3 双 manager 同�
 **审计中实测已达标项**(不再浪费工时):`bi --version` 正常、主 help 正常、`bi doctor` 已实质化(配置装载/凭据门/provider 网络/沙箱探针/工具注册面五项+修复建议+exit 1 语义)、`bi init` 可用(.bi/local.toml+BI.md 草稿+栈检测)、TUI/REPL 已挂载(bin/bi.ts import runRepl 链)、4621 测试全绿+CI 绿。
 
 批次 `BI-PROD-2026-10-20` 立四卡。**首波派发**:P2 帮助面→xhub hy3、P3 config 键面→本机 hy3(429 阵亡,限流 13:08 重置)→按"限流即换节点"改排队 xhub 接力;P1 文档面→本机 step-5-preview 兜底(轻单,双节点保持并发 2)。P4 发布面待首波落定后第二波。工单档案:docs/dispatch/2026-10-20-prod-ready/。
+
+### 模型纪律收紧(用户中途指令)
+
+P1(step-5-preview)起跑后用户中途叫停:**"只准 hy3,别的模型额度消耗大"**——杀单+残骸清查(当时零污染),P1 改排 xhub hy3 队列。**插曲:被杀的 step-5 进程 detach 未死,后台继续把 P1 干完**(README 重写+两 example 删除+p1-report 全套产出在树)。处置:成果照常走验收四步,合格即收(额度已消耗,弃之纯损);政策入 memory:唯一允许模型=hy3,429 宁排队不换模型。
+
+### 首波验收:三单全闭 + 主控手术两台
+
+| 单 | 节点/模型 | 验收结论 |
+|---|---|---|
+| P2 帮助面 | xhub hy3 | **四步全过**:diff 亲验(SUBCOMMAND_HELP 文案逐字对齐 handler 参数面/dispatch 入口 --help 短路"帮助优先于用法校验"/main 顶层 help 仅无子命令时短路/缺 key 指引三挂点:凭据门+解析失败+model-port);本机门禁 4644/0;真机冒烟 11 子命令 --help 全 exit 0+缺 key 尾挂 doctor 指引+主 help 对齐列表。**主控修一台**:copy 未知旗标被静默吞(`bi copy --bogus` exit 0 直接执行)违反工单"未知用法 exit 2"——parseCopyArgs 补拒绝+测试,修后 78/0+真机 exit 2 |
+| P3 config 键面 | xhub hy3(接力) | **四步全过**:MOUNTED_SECTIONS 表以 schema 为单一事实源(零硬编码键名)/withMountedDefaults 仅回填未声明分区(已声明保持合并值)/DEFAULT 17 根键未动(schema.ts 零 diff);真机冒烟五连绿(get ptc.enabled 缺省 false→set true 回读→list 62 键→非法数字 exit 2→六分区键全在列);抽样核实 verify.checks 实体数组 set 拦截(期望 table 拒 string)与报告一致;21/21 分区契约测试 |
+| P1 文档面 | 本机 step-5(违规,见上) | **四步全过**:README 过时断言零残留(「尚未接线」「211 测试文件」「装配中」grep 清零)+结构完整(快速上手四步/子命令一览/配置参考/退出码语义);两 example 删除后全仓零引用;**真机回环实测**:README 最小 TOML 配置→doctor 5/5 全健康→config get→--prompt 首单 ECHO 五帧 session_done 全链通过(fake-endpoint 常驻驱动) |
+
+**主控修第二台**:P3 落地后键面 42→62,README 三处"42 键"表述同步更新+配置参考表补 20 分区键+挂载节补"get 读缺省≠物化"语义说明。
+
+**bisect 教训(差点冤枉好人)**:首轮回环驱动把 `startFakeEndpoint`(同进程 Bun.serve)与 `spawnSync`(阻塞主线程)混用——server 事件循环被阻塞无法应答 bi 请求,假象"装配后挂死 0 请求",stash 对比一度指向"存量 bug"。受控实验(端点独立进程)EXIT=0 全帧通过,定性=**驱动自身 bug,产品无恙**。教训:回环验证的 server 与被测进程必须分进程;假象定位前先质疑测量工具。
+
+**xhub 环境项归档**:P2 报 3 失败/P3 报 2 失败(kill -9 真实子进程/xlsx_audit 财报勾稽/研报生成),两单各自 stash 验证为预存;本机同测试全绿(4652/0 权威),定性=xhub 环境依赖(联网真值/真实子进程),与产出无关。
+
+**门禁终态:4652 pass/0 fail(253 文件,BI_PTY_E2E=1)+双 tsc 0。**P4 发布面(简报已备:npm @bpfio/bi 三包通道健在,差距=0.2.0 未重发+版本三源漂移;publish 外发动作主控自持)随后派发。
