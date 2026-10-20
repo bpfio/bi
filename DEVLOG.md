@@ -603,3 +603,33 @@ P4(xhub hy3)产出:版本三源对齐(core/tui package.json 0.1.0→0.2.0)+**四
 ### 通道纪要
 
 kimi 6 批均 5-9 分钟/批稳定交付；批 6 长会话格式自省循环（超 20 分钟不落盘）→杀单从日志提取，**报告落盘类工单应禁用长格式自省**（简报加"格式从简,先落盘后润色"）。bi(longcat) 长会话四连阻实证：同端点池下 kimi 短单稳、bi 长会话不稳，**长 agent 任务优先 codebuddy hy3 双节点，opencode Go 只派短单**。
+
+## 二十二、虚账清偿全波：12 项全消化 (2026-10-20)
+
+### 派工格局（用户指令：三通道动态派工+限流错峰+节约主控 token）
+
+| 单 | 通道/模型 | 交付 | 验收 |
+|---|---|---|---|
+| S 键面集中包 | 本机 hy3 | schema 四键一次加齐(tools.lsp/select_tools+context.image_offload/auto_compactor)+README 66 键同步 | 门禁绿+断言同步合理越界(主控裁可) |
+| C 工具面挂载包 | 本机 hy3 | BI-07.8 AgentSwarm(随 subagent.enabled 联动)+BI-07.9 Skill(常挂器官容错)+BI-13.2 LSP(键控);9 测试 | 72/0+全仓 4732/0 |
+| D 管线包 | xhub hy3 | **首派撞 429(重置 21:14 UTC+8)阵亡**→按用户授权实测三候选免费模型(glm-5.3-flash/hy3-x/minimax-m3.1-flash 全在线)→D2 重派 xhub **glm-5.3-flash** | 296/0+全仓 4696(2 fail=xhub openpyxl 环境项) |
+| E TUI 包 | 本机 kimi | BI-11 TokenHud 全链+/compact 三命令+BI-20 diff 门入口 | 报告规范先落盘;尾部 workspace 物化 RuntimeError 系 kimi 自身 checkpoint bug 不影响交付 |
+| H 插槽路由 | xhub glm-5.3-flash | BI-04 缺件补齐:model-router.ts 新模块(route() 回退永不失败)+subagent 消费接线;8 测试 | 模块面+合并门禁 |
+| F TUI 包二 | 本机 kimi 接力 | BI-20.1 /mode 全链(plan 联 permission manual+只读拦截)+BI-20.5 令牌轮转(env 可选增强,依赖不倒置) | 报告落盘 |
+| G select_tools 合流 | 本机 hy3 接力 | BI-13.1 门控挂载+BI-13.3 catalog 为其名录后端(两姊妹卡合流);5 测试 | 全仓 4767/0 |
+
+事件驱动调度:D 阵亡→xhub 空窗→用户授权扩免费模型→H 顶上;C 完→G 接力本机;E 完→F 接力 kimi。**kimi 与 bi 自测严格错峰**(bi 自测压轴,用户指令)。
+
+### 合并与验收（主控线）
+
+- xhub 回收:scp 单文件(D2 域三件+H 两新件);main.ts 不拉整文件(H/D2 增量手工合并四处:import/装配块/subagent route/context 两开关——首并错放 imageOffload 于顶层对象,对齐 D2 的 HeadlessContextOptions 嵌套形态后修复);漏拉 model-router.ts 致 tsc 断链,补拉后绿
+- **合并门禁:4782 pass/0 fail(261 文件,波前 4681→+101 用例)+core/tui/a2a 三包 tsc 0**
+- **bi 自测(kimi 全完工后)**:临时开启四开关+ptc→抓包 **16 工具挂载**(基础 8+ptc+media+jobs×3+lsp_navigate+Skill+select_tools;AgentSwarm 随 subagent.enabled=false 未挂=联动门控正确);真端点 longcat 会话自列 16 工具全通→临时配置撤回
+
+### 免费模型白名单扩容(用户授权)
+
+xhub hy3 429 期间实测:**glm-5.3-flash / hy3-x / minimax-m3.1-flash 三候选全部在线可用**(H/D2 两单由 glm-5.3-flash 交付,质量合格)。codebuddy 模型全列表已录(--help 面 20 ID);dispatch skill 白名单待注明扩容。
+
+### 终态
+
+**虚账 14 项→全部消化**(3 项第一波 6e8887f+12 项本波 ed78745);DEBT-1 父卡+12 子卡全字段闭卡;台账 170+13=183 卡,零悬空。提交 ed78745(33 文件+3917 行)。kimi 通道两单(E/F)质量合格且报告纪律改善(先落盘后润色条款生效);遗留观察:kimi file-history checkpoint 的 workspace 物化 RuntimeError 系其自身 bug,两单尾部复现,不影响交付,已录。
