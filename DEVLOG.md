@@ -521,3 +521,14 @@ P1(step-5-preview)起跑后用户中途叫停:**"只准 hy3,别的模型额度�
 **xhub 环境项归档**:P2 报 3 失败/P3 报 2 失败(kill -9 真实子进程/xlsx_audit 财报勾稽/研报生成),两单各自 stash 验证为预存;本机同测试全绿(4652/0 权威),定性=xhub 环境依赖(联网真值/真实子进程),与产出无关。
 
 **门禁终态:4652 pass/0 fail(253 文件,BI_PTY_E2E=1)+双 tsc 0。**P4 发布面(简报已备:npm @bpfio/bi 三包通道健在,差距=0.2.0 未重发+版本三源漂移;publish 外发动作主控自持)随后派发。
+
+### P4 发布面收官:0.2.1 三包上线 (2026-10-20 上午)
+
+P4(xhub hy3)产出:版本三源对齐(core/tui package.json 0.1.0→0.2.0)+**四源同步门禁测试**(根/core/tui/VERSION 常量恒等,任一处单独升版全仓测试即红——BI-25.5 漂移教训结构化固化)+build:bin 实测(linux-x64 95MB+sha256 --check+裸跑 --version+空 HOME exit 3 凭据门=REPL 装配路径锁)+npm-pack 三包+冷安装冒烟(added 2 packages/平台包自动选装/session 真实列出)+publish runbook。主控验收后照单执行发布,两插曲:
+
+1. **registry 0.2.0 已被占用**:publish 报 "cannot publish over 0.2.0"——实测 `npm view` 发现 2026-10-18(ORGAN-WIRE 前)已发过 0.1.2+0.2.0,DEVLOG"最后发布 0.1.1"记载过时。**同版本号不同内容**(registry 0.2.0=10-18 旧码,本仓 0.2.0=十器官+PROD 三单新码)。决策:**升 0.2.1**(四源同升,version-sync 门禁绿;0.3.0 留给已备案的默认值策略再议),20ff79e。
+2. **CDN 传播双形态延迟**:publish 回执成功后,元包 packument 先可见(~70s),**平台包 CDN 索引滞后约 4 分钟**——期间 optionalDependencies 解析失败被 npm **静默跳过**(不报错!),冷装只 1 包、全局装报"平台二进制缺失",极易误判为发布物缺陷。声明形态与 0.1.1 逐字段一致排除了回归;轮询至 CDN 同步后冷装 2 包+全局装全通。
+
+**发布终态:@bpfio/bi 0.2.1(latest)三包上线(@bpfio/bi-linux-x64 / @bpfio/bi-darwin-arm64),本机全局 bi --version=0.2.1(session 全通);dist 用户一条 `npm install -g @bpfio/bi` 即得生产化完整版。**教训:发布验证必须区分 registry(权威)与 CDN(滞后)两层;optionalDependencies 静默跳过是"装不上"类问题的头号嫌疑。
+
+**PROD-READY 战役总记分**:4 卡全闭(P1 文档/P2 帮助面/P3 config 键面/P4 发布);派工 4 单(xhub hy3×3 接力+本机 step-5×1 违规幸存照收);主控手术 2 台(copy 未知旗标/README 键数同步)+发布自持 1 波(0.2.1);门禁 4655 pass/0 fail(253 文件)+双 tsc 0+CI 绿;提交链 8dee07b→efcf5a9→1a5bb08→b9d0fe1→1683b08→20ff79e。**生产化四差距:全部清零。**
