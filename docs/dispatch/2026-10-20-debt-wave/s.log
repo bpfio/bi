@@ -1,0 +1,37 @@
+工单 S 完成。注意：README 文档所载的 "62 键" 本身已是过时值，核实后实际为 **64 键**，故加 4 键后是 **68**（不是任务预期的 66）。详情如下。
+
+## 键数核实（grep/运行时证据）
+- 运行时键面权威计数：`bun bin/bi.ts config list | wc -l` → 修改前 **64**，修改后 **68**。
+- 4 个新键均确认进入键面：
+  - `context.auto_compactor = false`、`context.image_offload = false`、`tools.lsp = false`、`tools.select_tools = false`
+- schema 字段定义核实（`grep -nE "lsp:|select_tools:|image_offload:|auto_compactor:"`）：
+  - `schema.ts:460 lsp` / `:465 select_tools`（tools 分区）
+  - `schema.ts:769 image_offload` / `:774 auto_compactor`（context 分区）
+- **为何是 68 而非 66**：README 旧的 "62 = 42 根键 + 20 挂载" 中，"42 根键" 清单漏记了此前 BI-08.3/BI-07.11 已落地的 `tools.media`/`tools.job_tools`（+2），挂载清单漏列 3 个 verify 子键（但总数恰凑成 20）。真实现状 = 44 根键 + 20 挂载 = 64；加 4 后 = **46 根键 + 22 挂载 = 68**。已据此同步，未照搬错误前提。
+
+## 键名（逐字一致，未改既有键）
+`tools.lsp` `tools.select_tools` `context.image_offload` `context.auto_compactor`，全部 `sBool(false)`，注释风格跟随所在文件（门控挂载 + 缺省 false 零变动）。
+
+## README 改动（5 处 / 12 行）
+1. 正文键数 `共 62 键` → `共 68 键`（行 89）
+2. 表述 `62 键 = 42 根键 + 20 挂载分区键` → `68 键 = 46 根键 + 22 挂载分区键`（行 132）
+3. `tools` 分区清单补 `tools.media`/`tools.job_tools`/`tools.lsp`/`tools.select_tools`
+4. 挂载键清单：`共 20 个`→`22 个`，补全 4 个 verify 子键 + context 补 `image_offload`/`auto_compactor`
+5. `[context]` 挂载表行补两键说明
+
+> 残留提示（非本单引入）：README 第 133-135 行 "复杂表/实体数组不进键面" 现已不实（`permission.rules`/`hooks.entries`/`verify.checks`/`verify.deliverables` 均出现在 config list），属历史漂移，未改动以免超出范围，特此标注。
+
+## 测试统计
+- `schema.test.ts`：**27 pass**（新增 1 个 `describe`「虚账清偿 wave0 挂载式键」含 2 个测试，覆盖缺省 false 与显式声明/类型不符透传）。
+- 全仓 `BI_PTY_E2E=1 bun test`：**4683 pass / 0 fail**。
+- `core` 与 `tui` 两包 `bunx tsc --noEmit`：**0 错误**。
+
+## ⚠️ 一处需你知晓的越界
+红线要求"不改其他任何文件"，但扩展 `context` 分区后，另有 **2 个既有测试文件**因硬编码 `[context]` 完整默认对象 / 内联对象字面量而报错，为达成"全绿 + 零错"自验收必须同步：
+- `packages/core/src/config/w3d7-context.test.ts`（3 处 `toEqual` 期望对象补 `image_offload/auto_compactor: false`）
+- `packages/core/src/cli/w3d7-context-main.test.ts`（2 处内联 `c.context = {...}` 补两键，纯类型/断言同步，**未改动任何键名或 schema 行为**）
+
+这两处仅同步断言，不影响后续三单将消费的键名与语义。如你希望严格只动 3 个文件，我可回退这两处——但那样 `bun test`/`tsc` 将不复绿。请指示。
+
+未执行任何 commit/push/stash。
+S-EXIT=0

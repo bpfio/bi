@@ -1,0 +1,30 @@
+## 工单 C 完成自检报告
+
+### 一、每器官的绑定形态与依赖注入面（`packages/core/src/cli/toolset.ts`）
+
+| 器官 | 注册名 | 绑定函数 | 定义来源（单一事实源） | readOnly | 注入面（BuildDefaultToolsetOptions） | 门控语义 |
+|---|---|---|---|---|---|---|
+| **BI-13.2 LSP** `mcp/src/lsp/lsp-tool.ts` | `lsp_navigate` | `lspNavigateBinding(client?)` | 手写 name=`lsp_navigate`，operation 枚举引用器官 `LSP_OPERATIONS`（器官 spec 名为 `lsp` 无同名 SPEC，故手写） | `true`（查询类） | `lsp?: boolean` + `lspClient?: LspToolClientLike` | `lsp===true` 即挂载；`lspClient` 未注入 → execute 结构化 `{ok:false,code:"lsp-unavailable"}`，不抛 |
+| **BI-07.8 AgentSwarm** `subagent/swarm/agent-swarm-tool.ts` | `AgentSwarm` | `agentSwarmBinding(runner)` | `AGENT_SWARM_TOOL_SPEC` 常量直引 | `false`（派发子代理） | `swarm?: boolean` + `swarmRunner?: SwarmService` | `swarm===true && swarmRunner!==undefined` 才挂载；runner 未注入 → 开关无效不挂载 |
+| **BI-07.9 Skill** `subagent/skill-tool.ts` | `Skill` | `skillBinding(registry?)` | `SKILL_TOOL_SPEC` 常量直引 | `true`（查询类） | `skill?: boolean` + `skillRegistry?: SkillRegistry` | `skill===true` 常挂；registry 缺省按 `node:fs` 端口自建（零网络/子进程），每次 execute 刷新；目录缺失 → `{ok:false,code:"no-skills"}` |
+
+注入缝均未在绑定层接 server/子进程实装——`lspClient` 由宿主 LSP 连接面注入（本单不接 server 装配），`swarmRunner` 由宿主经 `SubagentRunner` 派生面装配（`spawnFn → subagentRunner.spawn("explore", prompt, {})`），`skillRegistry` 测试可替身注入。
+
+### 二、开关装配语义（两处 `buildDefaultToolset` 调用，照 media/jobs 先例，未发明新 config 键）
+- `main.ts`：`lsp: loadedConfig?.tools.lsp === true`；`swarm: subagentSection?.enabled === true` + `swarmRunner`（由 `subagentRunner` 装配 `SwarmService`）；`skill: true`。
+- `bin/bi.ts`：`lsp: config.tools?.lsp === true`；`swarm: subagentSection?.enabled === true` + `swarmRunner`；`skill: true`。
+
+### 三、新增测试数（toolset.test.ts，新增 9 条，`工单 C` describe 块）
+- 三开关不挂载回归（缺省集合不含三者）+ lsp 挂载 + lsp 未注入降级 + lsp 注入 dispatch + swarm 未注入不挂载 + swarm 注入派发 ok + skill 挂载+no-skills + skill 展开 prompt + skill 非法参数 structured。
+- 全部注入替身，零真实网络/子进程。
+
+### 四、门禁统计
+- 新增门控 3（`lsp` / `swarm` / `skill`）+ 注入缝 3（`lspClient` / `swarmRunner` / `skillRegistry`），缺省全关，既有 8 件工具面零变动（既有"八件全在表"用例仍绿）。
+
+### 五、自检结果
+- `cd packages/core && bun test src/cli/toolset.test.ts` → **72 pass 0 fail** ✅
+- 全仓 `BI_PTY_E2E=1 bun test` → **4732 pass / 0 fail / 0 error** ✅（首轮 20 fail 系 `bin/bi.ts` 误把 `subagent-adapter` 写成 `../packages/core/src/subagent-adapter`（漏 `/cli/`），导致 `bun build --compile` 解析失败并连锁拖垮 e2e；已修正为 `../packages/core/src/cli/subagent-adapter`，复跑全绿）
+- core 包 `bunx tsc --noEmit` 零错 ✅；tui 包 `bunx tsc --noEmit` 零错 ✅
+
+红线核查：未改 `schema.ts`/`headless.ts`/`packages/tui/**`/`packages/a2a/**`；器官文件只读不改；注释缩进随所在文件；零真实网络零子进程。仓库中其余改动（schema.ts、tui 各文件、README 等）属并行工单施工面，非本单所为。
+C-EXIT=0

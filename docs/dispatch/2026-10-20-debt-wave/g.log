@@ -1,0 +1,19 @@
+工单 G 完成。两姊妹卡合流、接线零 schema 改动、自检全绿。
+
+## 交付摘要
+
+**改动面（仅 4 处，均为本允许施工面）**
+- `packages/core/src/cli/toolset.ts`：import 接入只读器官（`createToolActivator` + `buildCatalog`/`flattenBudget` + `summarizeToolLine`）；`BuildDefaultToolsetOptions` 增 `select_tools?: boolean`；`buildDefaultToolset` 末尾加缺省 false 的挂载门；新增 `makeSelectToolsRegistry`（薄适配 `ToolBinding[]`→`SelectToolsRegistryLike`）+ `selectToolsBinding` + 候选建议（`nearestNames`/`levenshtein`）。
+- `packages/core/src/cli/main.ts` 与 `bin/bi.ts`：装配点补传 `select_tools: config.tools?.select_tools === true`（延用既有 media/jobs/lsp/swarm/skill 同序）。
+- `packages/core/src/cli/toolset.test.ts`：+5 用例。
+
+**合流设计（钉死）**：catalog 不是独立模块，而是 select_tools 的名录后端——`makeSelectToolsRegistry` 以单命名空间 `builtin` 调 `buildCatalog` 建分级名录，`select(names)` 换全量 schema、未知名给 Levenshtein 近邻候选；`surfaceByteStats` 喂器官 `compressionStats` 压降口径。MCP 面工具与 usageStats 激活计数按需求留接缝注释备案。
+
+**红线遵守**：未 commit/push/stash；器官只读；未触 `schema.ts`/`headless.ts`/`packages/tui/**`/`packages/mcp/**`；C 单已合入的 lsp/swarm/skill 绑定原样保留未回退。
+
+**自检**
+- `BI_PTY_E2E=1 bun test`：**4767 pass / 0 fail**（含跨包 `packages/mcp/select-tools.test.ts` 不受影响）。
+- `core` 包 tsc：零错。
+
+报告已落盘 `/tmp/brief-g-report.md`（合流设计 / 新增测试 5 项 / 门禁统计）。
+G-EXIT=0

@@ -1,0 +1,12 @@
+工单 H 完成，报告已落盘 /tmp/brief-h-report.md。
+
+**交付面**
+- `packages/core/src/cli/model-router.ts`（新）：`ModelRouter`（main + 插槽映射，`route(slot)` 回退永不失败）+ `assembleModelRouter(config, resolvePort, {main, log})`（三键逐装配，失败置空 + stderr 一行结构化日志 `[slot-model-missing]`/`[slot-model-empty]`/`[slot-port]`，不阻断）
+- `packages/core/src/cli/main.ts`：真实装配路径主端口就绪后接 router；resolveSlotPort 经派生 config 复用 `resolveModelPort` 全链（凭据门/thinking/extra_headers 同构）；subagentRunner model 换 `modelRouter?.route("subagent") ?? model`；background/summarize 注释备案随 BI-10 跟进
+- `packages/core/src/cli/model-router.test.ts`（新）：8 个离线用例，resolvePort 注入替身零网络
+
+**门禁**
+- 单测 8 pass / 0 fail；core `tsc --noEmit` 零错
+- 全仓 `BI_PTY_E2E=1 bun test`：4691 tests，2 fail —— 均为 `e2e-drill.test.ts` 链 4/链 5 预存失败（GDP/xlsx eval 链，import 面不含 cli/main 或 model-router，与本单无关）
+- 红线全守：未 commit；schema.ts/toolset.ts/headless.ts/tui/mcp/a2a 未动；并行单工作树改动原样保留
+H-EXIT=0
