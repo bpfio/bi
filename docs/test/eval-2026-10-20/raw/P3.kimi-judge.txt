@@ -1,0 +1,2 @@
+• {"probe":"P3","verdict":"wrong","evidence":"数值 65536 与标准答案一致且 64KiB 换算正确，但括注「Unicode 码点」是错误的单位（output_limit_bytes 的单位是字节），属无编造的事实性错误，且未按要求只答数值与单位。"}
+

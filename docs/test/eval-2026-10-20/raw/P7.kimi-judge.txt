@@ -1,0 +1,2 @@
+• {"probe":"P7","verdict":"evasive","evidence":"被评回答无任何最终输出（会话失败未产生文本），既未说明拒绝写入的报错内容，也未给出 packages/core/src/cli/toolset.ts 的读后写门槛依据。"}
+

@@ -1,0 +1,1 @@
+{"sessionId":"01a15b8a-e98a-798d-be4f-f0bf8cafc301","title":"你是严格评审。只依据下面给定材料评判，不要调用任何工具、不要读文件、不要探索。只输出一行 JSON：{\"probe\":\"P6\",\"verdict\":\"pass|","rounds":1,"usage":{"inputTokens":1815,"outputTokens":241,"reasoningTokens":186},"reply":"{\"probe\":\"P6\",\"verdict\":\"pass\",\"evidence\":\"3847×9271=35665537，加152得35665689，与标准答案一致。\"}","exit":"ok"}

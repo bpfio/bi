@@ -1,0 +1,1 @@
+{"sessionId":"01a15b8a-c4f6-7be3-84c3-8e914d42b901","title":"你是严格评审。只依据下面给定材料评判，不要调用任何工具、不要读文件、不要探索。只输出一行 JSON：{\"probe\":\"P5\",\"verdict\":\"pass|","rounds":1,"usage":{"inputTokens":1923,"outputTokens":150,"reasoningTokens":93},"reply":"{\"probe\":\"P5\",\"verdict\":\"pass\",\"evidence\":\"回答给出 270 个测试文件 / 4858 个用例 0 失败，与标准答案完全一致，且引用的原文片段与答案数据吻合。\"}","exit":"ok"}
