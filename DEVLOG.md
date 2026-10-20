@@ -479,3 +479,12 @@ W1 收尾全量门禁间歇红(7/8 绿),捕获定性:**BI-26.3 双 manager 同�
 **战役总记分**:14 卡全闭(9 装配+5 备案);12 单派工(hy3×10+step-5-preview×1+429 重派×1)+主控手术 4 台(session 竞态/uuid7 deflake/D6 剪贴板管道/D8 语义漂移收紧);门禁 4621 pass/0 fail(253 文件)+双 tsc 0;提交链 1ffe666→6f65667→7102599→783c870→91dae53+W1/W2 前段,CI 全绿贯穿。
 
 **诚实边界(全战役)**:所有新行为 config 显式开启才生效(缺省逐字节等价,九单一致);[context]/[verify]/[subagent]/[ptc]/[cron]/[memory] 六个挂载式分区不进 bi config 42 键面(手工 TOML 才能开,bi config 结构化键面增强归后续);PTC 定时触发/cron 触发/ask overlay/bi dream 手动触发/doctor 健康面/Spill 落盘等宿主环能力归后续卡;context 十重器官归档件各附建议卡。
+
+### 十八·附 战役终验:六门控器官真入口线上验证 (2026-10-20 凌晨)
+
+九器官装配后,补最后一层**真入口线上验证**(exec-drill 同款真码路径:真实 runBi/config-schema/fake-endpoint,仅模型替身)。初版冒烟"全开挂死"经 bisect 证伪——系冒烟脚本自身 TOML 写错([models.default] 形状),修正后全开组合 exit 0 无挂死。真验结论:
+
+- **线上面验证通过**:subagent→spawn_subagent 挂载、ptc→run_ptc_script 挂载(8+1=9 件)、memory→BI.dream.md 内容真实到达线上 system 字段、context→time-context(Asia/Shanghai)真实到达;**缺省全关场景线上逐字节等价**(无注入、工具面=0/8 按装配路径);
+- **教训**:anthropic 协议 system 在请求顶层字段而非 messages 数组——首版冒烟查错位置误报"注入未生效",修正后全绿;真实验收要验到**协议线上字段**,不止函数返回值;
+- **cron 诚实边界复核**:[cron] enabled 但宿主未注入 CronCorePort → 不挂载不假冒,与备案一致;
+- 全部六器官已进"真实可用"态:装 Chromium 后浏览器看 bi vis、配凭据后真 REPL 手感两项环境挂账不变。
