@@ -353,6 +353,37 @@ describe("schema: 虚账清偿 wave0 挂载式键（lsp / select_tools / image_o
   });
 });
 
+describe("schema: BI-16.1 code_mode 挂载门控键（run_js 工具面）", () => {
+  /** 装载路径（对齐 ConfigService.compose）：校验 → 合并到默认底 → backfill 回填叶子默认。 */
+  function load(raw: unknown): { config: BiConfig; issues: ConfigIssue[] } {
+    const { layer, issues } = validate(raw);
+    const base = createDefaultConfig();
+    deepMergeLayer(base, layer);
+    BI_CONFIG_SCHEMA.backfill?.(base);
+    return { config: base, issues };
+  }
+
+  test("缺省 false（工具面零变动）；显式 true/false 原样透传", () => {
+    const { config, issues } = load({});
+    expect(issues).toEqual([]);
+    expect(config.tools.code_mode).toBe(false);
+    expect(DEFAULT_BI_CONFIG.tools.code_mode).toBe(false);
+
+    const on = load({ tools: { code_mode: true } });
+    expect(on.issues).toEqual([]);
+    expect(on.config.tools.code_mode).toBe(true);
+
+    const off = load({ tools: { code_mode: false } });
+    expect(off.config.tools.code_mode).toBe(false);
+  });
+
+  test("类型不符的键丢弃并诊断（回缺省 false）", () => {
+    const bad = load({ tools: { code_mode: "yes" } });
+    expect(bad.config.tools.code_mode).toBe(false);
+    expect(bad.issues.some((i) => i.path === "tools.code_mode")).toBe(true);
+  });
+});
+
 describe("schema: permission.mode 五词面（0.3.0 测试发现修复）", () => {
   function loadMode(mode: unknown): string | undefined {
     const { layer } = validate({ permission: { mode } });

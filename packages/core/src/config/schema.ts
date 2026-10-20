@@ -470,6 +470,12 @@ export const toolsSchema = sObj({
    * 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
    */
   select_tools: sBool(false),
+  /**
+   * BI-16.1：run_js 挂载门控。true = 注册 run_js（CodeMode JS 沙箱，纯计算；
+   * 禁网络/禁 fs/禁工具注入）；缺省 false 工具面零变动（同款门控模式：config
+   * 显式开启才挂载，否则维持既有注册面）。
+   */
+  code_mode: sBool(false),
 });
 export type ToolsSection = InferSchema<typeof toolsSchema>;
 

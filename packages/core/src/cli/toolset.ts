@@ -27,6 +27,9 @@
  *   截断风格一致）。两件都走 assertInsideRoot + PathJail read 裁决；grep 再
  *   逐文件过 PathJail read（凭据文件名/工作区 .env 不入扫描结果，防内容外泄，
  *   与器官读语义一致）。
+ * - run_js（BI-16.1）：CodeMode JS 沙箱（器官 = a2a 包 vm-runner，node:vm 纯计算，
+ *   零工具注入）——禁网络/禁 fs；timeout_ms 请求值 clamp 上限 1000ms；execute 返回
+ *   JSON {ok:true,value,console?} / {ok:false,error}。门控 codemode 开启才挂载。
  * - 信号透传：web 两器官自身不带 AbortSignal，绑定层 withSignal 竞出 abort
  *   （中止即 reject，绝不悬挂）；bash 自带 abort 竞出（先 kill 子进程再
  *   reject）；edit/write 的 fs 段走 withSignal；read_file 同步读无需透传。
@@ -71,6 +74,8 @@ import { PathJail } from "../sandbox/path-jail";
 import { atomicWriteFile } from "../utils/atomic-write";
 import { ReadFileStateMap } from "../tool/read-file-state";
 import { matchOldText } from "../tool/edit-matchers";
+// BI-16.1：CodeMode JS 沙箱工具面（run_js；器官 = a2a 包 vm-runner，经相对路径桥接）。
+import { makeCodemodeTool } from "../tool/codemode-tool";
 import { UserQuestionService } from "../interaction/user-questions";
 import { AskUserTool, ASK_USER_QUESTION_TOOL_SPEC } from "../interaction/ask-user-tool";
 import { SubagentRunner } from "../subagent/runner";
@@ -252,6 +257,12 @@ export interface BuildDefaultToolsetOptions {
 	 * 模型传工具名 → 换全量 inputSchema。false 时本项不挂载、零变动。
 	 */
 	readonly select_tools?: boolean;
+	/**
+	 * BI-16.1 run_js 挂载门：true 才注册 run_js 工具（缺省不挂，维持既有工具面
+	 * 零变动）。host 按 config [tools] code_mode 实例化并注入；本卡仅做绑定装配。
+	 * 工具内跑 node:vm 纯计算沙箱（禁网络/禁 fs/禁工具注入），超时上限 1000ms。
+	 */
+	readonly codemode?: boolean;
 }
 
 /**
@@ -346,6 +357,10 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 	if (options.select_tools === true) {
 		const registry = makeSelectToolsRegistry(tools);
 		tools.push(selectToolsBinding(registry));
+	}
+	// BI-16.1：run_js —— 仅当 host 显式开启 codemode 门控才注册（缺省不挂，工具面零变动）。
+	if (options.codemode === true) {
+		tools.push(makeCodemodeTool());
 	}
 	return tools;
 }
