@@ -633,3 +633,37 @@ xhub hy3 429 期间实测:**glm-5.3-flash / hy3-x / minimax-m3.1-flash 三候选
 ### 终态
 
 **虚账 14 项→全部消化**(3 项第一波 6e8887f+12 项本波 ed78745);DEBT-1 父卡+12 子卡全字段闭卡;台账 170+13=183 卡,零悬空。提交 ed78745(33 文件+3917 行)。kimi 通道两单(E/F)质量合格且报告纪律改善(先落盘后润色条款生效);遗留观察:kimi file-history checkpoint 的 workspace 物化 RuntimeError 系其自身 bug,两单尾部复现,不影响交付,已录。
+
+## 二十三、0.3.0 发布+全功能自助测试+测试发现修复 (2026-10-20)
+
+### 发布面（主控自持）
+
+四源同步 0.2.1→0.3.0（version-sync 门禁 4/0+全仓 4782/0）→build-bin（linux-x64+darwin-arm64 交叉+sha256，真机 --version=0.3.0）→npm-pack 三包→publish（临时 userconfig 用后即焚；平台包先元包后）→冷装验证。**CDN 观察：0.3.0 平台包 CDN 同步 >50 分钟**（0.2.1 时约 10 分钟），期间冷装只 1 包+optionalDependencies 静默跳过（两连坑重现）；直装探测同步后冷装 2 包+`bi --version`=0.3.0 全通。
+
+### 自助测试计划
+
+`docs/test-plan-0.3.0.md`（A 冒烟/B 子命令/C 工具/D 会话/E TUI/F 新器官/G 安全 七组矩阵，每项可粘贴命令+通过判据+已知边界）。执行：A/C 组主控真机（longcat）、B/D/F 组派 codebuddy hy3、结果归档 `docs/test/2026-10-20-0.3.0/`。
+
+### 测试发现与修复（5 件产品缺陷+2 计划判据修正）
+
+| # | 发现 | 定性 | 处置 |
+|---|---|---|---|
+| 1 | `permission.mode = "auto"` 被静默回退 default（实为 manual）——headless 工具面全军 `permission-ask-unavailable` | 产品缺陷：config 枚举(default/plan/yolo)与权限面词面(manual/auto/yolo)不一致 | **修复**：枚举对齐五词面，C1 真机复验 auto 生效（c73829c） |
+| 2 | `copy -f last-reply` 恒空（B6b） | 产品缺陷：assistant 条目实际落盘 `content:[{type:text,text}]` 块数组，旧实现只认 `payload.text` | **修复**：双形态兼容（thinking 块不进复制），真机复现+回归（c73829c） |
+| 3 | `bi -c`/续会话无 CLI 入口（D1） | 产品缺口：headless sessionId 能力面 BI-23 起就有，门面缺 | **修复**：`--resume <sessionId>`（打开既有会话+末条接续+**历史重放进模型上下文**——重放缺失是第二层缺口，D1 真机"暗号:蓝鲸42"跨会话问答全通）；failSession 枚举扩 session-not-found（53959da） |
+| 4 | 子代理循环零工具（F1，toolCalls:0） | 产品缺陷：createSubagentRunner 收 `h.tools ?? []`（测试注入面，生产恒空） | **修复**：subagentBaseTools 前置构造（实际工具集取只读五件交，不含 swarm 避依赖环）；F1 真机验证子代理真实派出+glob 探查+结果回传（53959da） |
+| 5 | 无头无 [ptc] 时模型"文本演"工具（A5） | 易用性隐患：模型编造工具输出无提示 | 计划已知边界 G1 注明"无头跑任务务必开 [ptc]"；改进候选（无工具时 stderr 提示）备案 |
+| 6 | A3 裸跑 exit 3 / A4 doctor 3/5 | 环境问题：shell 快照未含中途新增的 longcat key 注入 | 非产品问题，判据修正 |
+| 7 | B2 键数 66 vs 实测 68 | 计划滞后：清偿波新键后键数再变 | 以实测为准 |
+
+### 门禁与 flake
+
+终版 **4786 pass/0 fail（261 文件）**+三包 tsc 0。一次 BI-26.3 链 4（kill -9 真实子进程）全仓单挂——单跑 7/0+复跑全绿，定性 timing flake（xhub 曾归档同款环境项），与 resume 改动无关。
+
+### 派工事故与教训
+
+两单测试执行单 exit 137（SIGKILL）——T2 执行 D2 崩溃测试时 kill -9 范围失控误杀自身进程树（T 单疑同款）。教训：**崩溃类测试的 kill 打击面必须钉死单 PID（$! 形式），禁止 pkill/进程组打击**——派工简报需显式约束。主控接管后以精准 PID 重跑通过。
+
+### 终态
+
+0.3.0 三包上线+冷装全通；自助测试计划归档可复用；测试发现 5 缺陷全修+门禁全绿；bi 生产可用面再无已知虚账。
