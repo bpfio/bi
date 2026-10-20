@@ -352,3 +352,31 @@ describe("schema: 虚账清偿 wave0 挂载式键（lsp / select_tools / image_o
     expect(bad.issues.some((i) => i.path === "context.image_offload")).toBe(true);
   });
 });
+
+describe("schema: permission.mode 五词面（0.3.0 测试发现修复）", () => {
+  function loadMode(mode: unknown): string | undefined {
+    const { layer } = validate({ permission: { mode } });
+    const perm = layer?.permission as { mode?: string } | undefined;
+    return perm?.mode;
+  }
+  test("auto 与 manual 为合法词面，原样装载（不再静默回退 default）", () => {
+    expect(loadMode("auto")).toBe("auto");
+    expect(loadMode("manual")).toBe("manual");
+  });
+  test("原有三态 default/plan/yolo 装载不变", () => {
+    expect(loadMode("yolo")).toBe("yolo");
+    expect(loadMode("default")).toBe("default");
+    expect(loadMode("plan")).toBe("plan");
+  });
+  test("非法词面仍回退缺省 default", () => {
+    expect(loadMode("bogus")).toBeUndefined();
+    const { config } = (() => {
+      const r = validate({ permission: { mode: "bogus" } });
+      const base = createDefaultConfig();
+      deepMergeLayer(base, r.layer);
+      BI_CONFIG_SCHEMA.backfill?.(base);
+      return { config: base };
+    })();
+    expect(config.permission.mode).toBe("default");
+  });
+});

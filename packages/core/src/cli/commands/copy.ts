@@ -129,14 +129,30 @@ export async function copyToClipboard(
 // 字段提取
 // ---------------------------------------------------------------------------
 
-/** 末条 assistant 文本（payload.text）；无 assistant 条目返回空串（诚实，非错误）。 */
+/**
+ * 末条 assistant 文本；无 assistant 条目返回空串（诚实，非错误）。
+ * 兼容两种 payload 形态：`{text}` 直出（user/旧形态）与
+ * `{content:[{type:"text",text}]}` 块数组（assistant 回复的实际落盘形态——
+ * 0.3.0 自助测试 B6b 发现：旧实现只认前者，对 assistant 条目恒空）。
+ */
 function lastReplyText(entries: { type: string; payload: unknown }[]): string {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (entry.type === "assistant") {
-      const payload = entry.payload as { text?: unknown } | null;
-      if (payload !== null && typeof payload === "object" && typeof payload.text === "string") {
-        return payload.text;
+      const payload = entry.payload as { text?: unknown; content?: unknown } | null;
+      if (payload === null || typeof payload !== "object") continue;
+      if (typeof payload.text === "string") return payload.text;
+      if (Array.isArray(payload.content)) {
+        const text = payload.content
+          .filter(
+            (block): block is { type: string; text: string } =>
+              block !== null && typeof block === "object" &&
+              (block as { type?: unknown }).type === "text" &&
+              typeof (block as { text?: unknown }).text === "string",
+          )
+          .map((block) => block.text)
+          .join("");
+        if (text.length > 0) return text;
       }
     }
   }

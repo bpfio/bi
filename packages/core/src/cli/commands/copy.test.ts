@@ -119,6 +119,29 @@ describe("BI-24.x copy：字段语义", () => {
     expect(c.out).toContain("末条回复文本");
   });
 
+  test("field=last-reply 兼容 content 块数组形态（0.3.0 B6b 修复：assistant 实际落盘形态）", async () => {
+    const mgr = await tmpManager();
+    const meta = await mgr.createSession({ sessionId: "s-blocks", title: "块形态" });
+    const e1 = await mgr.append(meta.sessionId, null, { type: "user", payload: { text: "问" } });
+    await mgr.append(meta.sessionId, e1.id, {
+      type: "assistant",
+      payload: { content: [
+        { type: "thinking", thinking: "内心戏不进复制" },
+        { type: "text", text: "第一段。" },
+        { type: "text", text: "第二段。" },
+      ] },
+    });
+    const c = collector();
+    const code = await handleCopy(["s-blocks", "-f", "last-reply"], c.io, deps({
+      sessionsRoot: mgr.rootDir,
+      cmdRunner: fakeRunner({ available: ["pbcopy"] }),
+      osPlatform: "darwin",
+    }));
+    expect(code).toBe(0);
+    expect(c.out).toContain("第一段。第二段。");
+    expect(c.out).not.toContain("内心戏");
+  });
+
   test("last-reply 无 assistant 条目时返回空串（不报错）", async () => {
     const mgr = await tmpManager();
     const meta = await mgr.createSession({ sessionId: "s-empty", title: "空" });

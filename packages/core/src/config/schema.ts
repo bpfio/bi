@@ -477,7 +477,14 @@ export type PermissionRule = InferSchema<typeof permissionRuleSchema>;
 
 /** 权限分区：批准模式 + 有序规则表（先命中先生效）。 */
 export const permissionSchema = sObj({
-  mode: sEnum(["default", "plan", "yolo"] as const, "default"),
+  /**
+   * 批准模式词面：default/plan/yolo 为 BI-28.3 config 原有三态；
+   * auto/manual 为权限会话面同义词（permissionModeFromConfig 桥接：
+   * auto→auto 全自动放行，manual→manual，default/plan→manual）。
+   * 0.3.0 前枚举缺 auto/manual：用户写 "auto" 被静默回退 default、实际
+   * 行为 manual——headless 工具面全军 ask 拒绝（0.3.0 自助测试发现修复）。
+   */
+  mode: sEnum(["default", "plan", "yolo", "auto", "manual"] as const, "default"),
   rules: sListOf(permissionRuleSchema, []),
 });
 export type PermissionSection = InferSchema<typeof permissionSchema>;
