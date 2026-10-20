@@ -89,7 +89,7 @@ model = "my-model"
 bun bin/bi.ts doctor
 ```
 
-也可以按键查询生效值（`get` / `set` / `list`，共 69 键，见下文「配置参考」）：
+也可以按键查询生效值（`get` / `set` / `list`，共 70 键，见下文「配置参考」）：
 
 ```bash
 bun bin/bi.ts config get models.default
@@ -102,6 +102,11 @@ bun bin/bi.ts config get models.default
 ```bash
 MY_PROVIDER_API_KEY=sk-... bun bin/bi.ts --prompt "用一句话介绍你自己"
 ```
+
+模型回合上限缺省 8（调研型任务不够）：CLI `--max-rounds <n>` 临时调高，或写进配置的
+`[session] max_rounds`（0 = 用缺省 8，调研型任务建议 16-32）。回合打尽时的输出契约：
+stream-json 形态落末帧 `session_done`（`exit="rounds-exceeded"`），`--output-format json`
+形态 stdout 落一个完整 JSON 对象（`exit="rounds-exceeded"`、`reply` 空串），两者退出码均非零。
 
 交互形态（无参进 REPL；`Ctrl+D` 或空草稿 `Ctrl+C` 退出）：
 
@@ -138,7 +143,7 @@ REPL 同一面）/ `4` 已识别但能力未配置（如 `upgrade` 无 manifest 
 
 ## 配置参考
 
-键面以 `bun bin/bi.ts config list` 实测为准（共 69 键 = 47 根键 + 22 挂载分区键，
+键面以 `bun bin/bi.ts config list` 实测为准（共 70 键 = 47 根键 + 23 挂载分区键，
 按分组；复杂表/实体数组如
 `providers.entries` / `models.entries` / `permission.rules` / `hooks.entries` 不进
 get/set 键面，直接写 TOML）：
@@ -162,11 +167,12 @@ get/set 键面，直接写 TOML）：
 | `watch` | `watch.debounce_ms`、`watch.enabled`、`watch.ignore` |
 | `workspace` | `workspace.additional_dir`、`workspace.respect_gitignore` |
 
-挂载分区的标量子键已进 get/set 键面（共 22 个）：`verify.on_completion` / `verify.checks` / `verify.deliverables` / `verify.objective`；
+挂载分区的标量子键已进 get/set 键面（共 23 个）：`verify.on_completion` / `verify.checks` / `verify.deliverables` / `verify.objective`；
 `subagent.enabled` / `subagent.max_iterations` / `subagent.timeout_ms` / `subagent.default_profile` / `subagent.btw_enabled`；
 `ptc.enabled` / `ptc.timeout_ms` / `ptc.max_tool_calls`；`cron.enabled`；
 `context.time_context` / `context.date_change_sensor` / `context.tool_result_prune` / `context.max_history_entries` / `context.timezone` / `context.image_offload` / `context.auto_compactor`；
-`memory.dream_enabled` / `memory.inject_enabled`。
+`memory.dream_enabled` / `memory.inject_enabled`；
+`session.max_rounds`。
 
 ### 挂载式分区（config-gated，缺省关）
 
@@ -182,6 +188,7 @@ get/set 键面，直接写 TOML）：
 | `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`） |
 | `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
+| `[session]` | 无头会话回合上限：`max_rounds`（缺省 0 = 用内建缺省 8；调研型任务建议 16-32；CLI `--max-rounds` 优先级更高） |
 | `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；坏条目结构化警告不阻塞；SSE 型暂未支持） |
 
 （`[mcp]` 一行按便利列在上表内；实为根分区，缺省恒物化为 `servers = {}`，不属挂载拓扑。）

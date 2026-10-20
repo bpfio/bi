@@ -15,7 +15,7 @@ import { runBi } from "./main";
 import { runHeadless, type ModelPort, type ToolBinding } from "./headless";
 import { SessionManager } from "../session/manager";
 import type { AgentMessage, StreamEvent } from "../adapters/deepseek-adapter";
-import type { HooksSection } from "../config/schema";
+import { createDefaultConfig, type HooksSection } from "../config/schema";
 
 /** 脚本化模型端口：按回合回放事件序列，并捕获收到的消息流供接线断言。 */
 function scriptedModel(rounds: StreamEvent[][]): {
@@ -630,5 +630,172 @@ describe("F-ST-02 headless outputFormat：json 形态", () => {
 		} finally {
 			await cleanup();
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// F-EV-01 —— 回合上限可配（CLI > deps > config > 缺省 8）+ rounds-exceeded 结构化失败面
+// ---------------------------------------------------------------------------
+
+/** 回合打尽脚本：每回合只回 tool_use（无工具调用）→ 回合计数持续推进至上限。 */
+function loopingModel(): ModelPort {
+	return {
+		async *stream() {
+			yield { type: "done", stopReason: "tool_use" } as StreamEvent;
+		},
+	};
+}
+
+/** 跑一次必然"回合打尽"的无头会话，返回退出码 / stdout / stderr。 */
+async function runUntilRoundsExceeded(opts: {
+	argv?: readonly string[];
+	sessionMaxRounds?: number;
+	depsMaxRounds?: number;
+	outputFormat?: "stream-json" | "json";
+}): Promise<{ code: number; outs: string[]; errs: string[] }> {
+	const { root, cleanup } = await makeWorkspace();
+	try {
+		const outs: string[] = [];
+		const errs: string[] = [];
+		const config =
+			opts.sessionMaxRounds === undefined
+				? undefined
+				: { ...createDefaultConfig(), session: { max_rounds: opts.sessionMaxRounds } };
+		const argv = [
+			...(opts.argv ?? ["--prompt", "调研任务"]),
+			...(opts.outputFormat !== undefined ? ["--output-format", opts.outputFormat] : []),
+		];
+		const code = await runBi(argv, {
+			model: loopingModel(),
+			...(config !== undefined ? { config } : {}),
+			out: (line) => outs.push(line),
+			err: (line) => errs.push(line),
+			headless: {
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				tools: [],
+				...(opts.depsMaxRounds !== undefined ? { maxRounds: opts.depsMaxRounds } : {}),
+			},
+		});
+		return { code, outs, errs };
+	} finally {
+		await cleanup();
+	}
+}
+
+describe("F-EV-01 headless 回合上限可配 + rounds-exceeded 结构化失败面", () => {
+	test("stream-json：回合打尽落 session_done 帧（exit=\"rounds-exceeded\"），退出码非零", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const lines: string[] = [];
+			const promise = runHeadless({
+				prompt: "调研任务",
+				cwd: root,
+				model: loopingModel(),
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				maxRounds: 2,
+				out: (line) => lines.push(line),
+			} as Parameters<typeof runHeadless>[0]);
+			await expect(promise).rejects.toThrow(/模型回合超过上限 2/);
+			const parsed = lines.map((line) => JSON.parse(line) as { type: string; exit?: string; rounds?: number });
+			const done = parsed.at(-1)!;
+			expect(done.type).toBe("session_done");
+			expect(done.exit).toBe("rounds-exceeded");
+			expect(done.rounds).toBe(2);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("json：回合打尽 stdout 落完整 JSON 对象（exit/reply/rounds），进程退出码非零", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const lines: string[] = [];
+			const promise = runHeadless({
+				prompt: "调研任务",
+				cwd: root,
+				model: loopingModel(),
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				maxRounds: 2,
+				outputFormat: "json",
+				out: (line) => lines.push(line),
+			} as Parameters<typeof runHeadless>[0]);
+			await expect(promise).rejects.toThrow(/模型回合超过上限 2/);
+			// stdout 恰一个完整对象（可 parse，无残缺 JSON）
+			expect(lines).toHaveLength(1);
+			const payload = JSON.parse(lines[0]!) as {
+				sessionId: string;
+				title: string;
+				rounds: number;
+				usage: { inputTokens: number; outputTokens: number };
+				reply: string;
+				exit: string;
+			};
+			expect(payload.exit).toBe("rounds-exceeded");
+			expect(payload.reply).toBe("");
+			expect(payload.rounds).toBe(2);
+			expect(payload.sessionId.length).toBeGreaterThan(0);
+			expect(payload.usage.inputTokens).toBe(0);
+			expect(payload.usage.outputTokens).toBe(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("main 接线：json 形态回合打尽 → stdout 完整对象 + 退出码 1 + 诊断经 err", async () => {
+		const { code, outs, errs } = await runUntilRoundsExceeded({
+			argv: ["--prompt", "调研任务", "--max-rounds", "1"],
+			outputFormat: "json",
+		});
+		expect(code).toBe(1);
+		expect(outs).toHaveLength(1);
+		const payload = JSON.parse(outs[0]!) as { exit: string; reply: string; rounds: number };
+		expect(payload.exit).toBe("rounds-exceeded");
+		expect(payload.reply).toBe("");
+		expect(payload.rounds).toBe(1);
+		expect(errs.join("\n")).toContain("模型回合超过上限 1");
+		expect(errs.join("\n")).toContain("可用 --max-rounds 或 config [session] max_rounds 调高");
+	});
+
+	test("优先级：CLI --max-rounds > config [session] max_rounds", async () => {
+		const { code, errs } = await runUntilRoundsExceeded({
+			argv: ["--prompt", "调研任务", "--max-rounds", "1"],
+			sessionMaxRounds: 5,
+		});
+		expect(code).toBe(1);
+		expect(errs.join("\n")).toContain("模型回合超过上限 1");
+		expect(errs.join("\n")).not.toContain("模型回合超过上限 5");
+	});
+
+	test("优先级：deps 透传 maxRounds > config [session] max_rounds", async () => {
+		const { code, errs } = await runUntilRoundsExceeded({
+			sessionMaxRounds: 5,
+			depsMaxRounds: 3,
+		});
+		expect(code).toBe(1);
+		expect(errs.join("\n")).toContain("模型回合超过上限 3");
+		expect(errs.join("\n")).not.toContain("模型回合超过上限 5");
+	});
+
+	test("优先级：仅 config [session] max_rounds 声明 → 生效", async () => {
+		const { code, errs } = await runUntilRoundsExceeded({ sessionMaxRounds: 2 });
+		expect(code).toBe(1);
+		expect(errs.join("\n")).toContain("模型回合超过上限 2");
+	});
+
+	test("优先级：config max_rounds = 0 / 负数 → 按 0 处理，回内建缺省 8", async () => {
+		for (const value of [0, -3]) {
+			const { code, errs } = await runUntilRoundsExceeded({ sessionMaxRounds: value });
+			expect(code).toBe(1);
+			expect(errs.join("\n")).toContain("模型回合超过上限 8");
+		}
+	});
+
+	test("优先级：三者皆缺省 → 内建缺省 8（缺省语义不变）", async () => {
+		const { code, errs } = await runUntilRoundsExceeded({});
+		expect(code).toBe(1);
+		expect(errs.join("\n")).toContain("模型回合超过上限 8");
 	});
 });

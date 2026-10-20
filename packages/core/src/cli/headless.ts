@@ -19,7 +19,9 @@
  *   session_done 等 meta 不落 out；错误/诊断仍由装配方经 err 报出）。
  * - json（F-ST-02）：全程不落事件流，结束时 stdout 只落一个 JSON 对象
  *   （sessionId/title/rounds/usage/reply/exit，字段对齐 session_done 汇总）；
- *   失败路径不落任何 stdout 内容（绝不输出残缺 JSON），诊断仍由装配方经 err 报出。
+ *   失败路径不落任何 stdout 内容（绝不输出残缺 JSON），诊断仍由装配方经 err 报出；
+ *   唯一例外：rounds-exceeded（回合打尽）落一个完整对象（exit="rounds-exceeded"，
+ *   reply 空串），供自动化消费者拿到已探索状态。
  */
 import {
 	AgentLoop,
@@ -130,7 +132,10 @@ export interface HeadlessOptions {
 	 * （sessionId/title/rounds/usage/reply/exit）。
 	 */
 	readonly outputFormat?: OutputFormat;
-	/** 模型回合上限（防失控，缺省 8）。 */
+	/**
+	 * 模型回合上限（防失控，缺省 8）。装配层优先级：CLI --max-rounds > deps 透传 >
+	 * config [session] max_rounds（>0 才生效）> 本缺省 8。
+	 */
 	readonly maxRounds?: number;
 	/**
 	 * 系统指令注入面（BI-20.2b：--agent-file 内容作为系统指令前置）。
@@ -408,6 +413,13 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	 * 取最大值，防累计式重复计数；跨轮累加 = 会话总用量）。
 	 */
 	const usageTotals = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 };
+	/** json 输出面的用量载荷（成功 / rounds-exceeded 失败两处同形；cached/reasoning 仅 >0 时带出）。 */
+	const usagePayload = (): Record<string, number> => ({
+		inputTokens: usageTotals.inputTokens,
+		outputTokens: usageTotals.outputTokens,
+		...(usageTotals.cachedInputTokens > 0 ? { cachedInputTokens: usageTotals.cachedInputTokens } : {}),
+		...(usageTotals.reasoningTokens > 0 ? { reasoningTokens: usageTotals.reasoningTokens } : {}),
+	});
 
 	// ---- 装配序 ①：钩子（config [[hooks]] → BI-01.1 适配器 → BI-06.4 runner）----
 	const loadedHooks = loadHooksConfig(options.hooks ?? { enabled: true, entries: [] });
@@ -890,18 +902,15 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 				// json 形态（F-ST-02）：全程不落事件流，结束时 stdout 只落这一个
 				// JSON 对象（字段对齐 session_done 汇总：sessionId/title/rounds/
 				// usage/reply=最终 finalText/exit）。失败路径不走到这里——stdout
-				// 绝不输出残缺 JSON，诊断由装配方经 err 报出。
+				// 绝不输出残缺 JSON，诊断由装配方经 err 报出；唯一例外是
+				// rounds-exceeded（回合打尽）：该失败面落一个完整对象（exit=
+				// "rounds-exceeded"，reply 空串），其余失败仍不落 stdout。
 				out(
 					JSON.stringify({
 						sessionId,
 						title: sessionTitle,
 						rounds,
-						usage: {
-							inputTokens: usageTotals.inputTokens,
-							outputTokens: usageTotals.outputTokens,
-							...(usageTotals.cachedInputTokens > 0 ? { cachedInputTokens: usageTotals.cachedInputTokens } : {}),
-							...(usageTotals.reasoningTokens > 0 ? { reasoningTokens: usageTotals.reasoningTokens } : {}),
-						},
+						usage: usagePayload(),
 						reply: finalText,
 						exit: "ok",
 					}),
@@ -961,7 +970,28 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		messages.push({ role: "user", content: resultBlocks });
 	}
 
-	throw failSession("rounds-exceeded", `模型回合超过上限 ${maxRounds}`);
+	// F-EV-01：回合打尽 = 结构化失败面——先落终局输出，再照旧抛错（退出码仍非零）。
+	// - stream-json：落 session_done 帧（exit="rounds-exceeded"），自动化消费者据此收尾；
+	// - json：落完整 JSON 对象（字段对齐成功形态，reply 空串），stdout 仍是单对象可 parse；
+	// - text：不落 stdout（诊断经装配方 err 报出，与既有失败路径同形）。
+	if (outputFormat === "stream-json") {
+		emit({ type: "session_done", sessionId, exit: "rounds-exceeded", rounds });
+	} else if (outputFormat === "json") {
+		out(
+			JSON.stringify({
+				sessionId,
+				title: sessionTitle,
+				rounds,
+				usage: usagePayload(),
+				reply: "",
+				exit: "rounds-exceeded",
+			}),
+		);
+	}
+	throw failSession(
+		"rounds-exceeded",
+		`模型回合超过上限 ${maxRounds}（已用 ${rounds} 回合；可用 --max-rounds 或 config [session] max_rounds 调高）`,
+	);
 }
 
 function safeStringify(value: unknown): string {

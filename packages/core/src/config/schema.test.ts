@@ -5,6 +5,7 @@ import {
   buildEnvLayer,
   createDefaultConfig,
   deepMergeLayer,
+  sessionSchema,
   setDottedPath,
   validateConfigLayer,
   type BiConfig,
@@ -381,6 +382,52 @@ describe("schema: BI-16.1 code_mode 挂载门控键（run_js 工具面）", () =
     const bad = load({ tools: { code_mode: "yes" } });
     expect(bad.config.tools.code_mode).toBe(false);
     expect(bad.issues.some((i) => i.path === "tools.code_mode")).toBe(true);
+  });
+});
+
+describe("schema: F-EV-01 [session] 挂载分区（headless 回合上限）", () => {
+  /** 装载路径（对齐 ConfigService.compose）：校验 → 合并到默认底 → backfill 回填叶子默认。 */
+  function load(raw: unknown): { config: BiConfig; issues: ConfigIssue[] } {
+    const { layer, issues } = validate(raw);
+    const base = createDefaultConfig();
+    deepMergeLayer(base, layer);
+    BI_CONFIG_SCHEMA.backfill?.(base);
+    return { config: base, issues };
+  }
+
+  test("缺省 0：不声明 [session] → 不物化（回内建缺省 8，缺省路径零行为差）", () => {
+    const { config, issues } = load({});
+    expect(issues).toEqual([]);
+    expect(config.session).toBeUndefined();
+    // 挂载拓扑：不进 17 根键（既有钉死断言不红）
+    expect("session" in DEFAULT_BI_CONFIG).toBe(false);
+    expect(Object.keys(DEFAULT_BI_CONFIG)).toHaveLength(17);
+    // 分区 schema 缺省值 = 0（= 用内建缺省 8）
+    expect(sessionSchema.defaultValue().max_rounds).toBe(0);
+  });
+
+  test("正数生效：声明 max_rounds = 24 → 原样装载", () => {
+    const { config, issues } = load({ session: { max_rounds: 24 } });
+    expect(issues).toEqual([]);
+    expect(config.session?.max_rounds).toBe(24);
+  });
+
+  test("0 / 负数按 0 处理（装配层仅 >0 生效 → 回缺省 8）", () => {
+    const zero = load({ session: { max_rounds: 0 } });
+    expect(zero.issues).toEqual([]);
+    expect(zero.config.session?.max_rounds).toBe(0);
+    const negative = load({ session: { max_rounds: -5 } });
+    expect(negative.issues).toEqual([]);
+    expect(negative.config.session?.max_rounds).toBe(-5);
+  });
+
+  test("未知子键丢弃并诊断；类型不符 → 整层不物化（不冒充合法）", () => {
+    const bad = load({ session: { max_rounds: "24" } });
+    expect(bad.config.session).toBeUndefined();
+    expect(bad.issues.some((i) => i.path === "session.max_rounds")).toBe(true);
+    const unknown = load({ session: { max_round: 24 } });
+    expect(unknown.config.session).toBeUndefined();
+    expect(unknown.issues.some((i) => i.path === "session.max_round")).toBe(true);
   });
 });
 

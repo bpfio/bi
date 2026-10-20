@@ -279,6 +279,16 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const outputLimitBytes = loadedConfig?.tools.output_limit_bytes ?? 0;
 	const sanitizeErrors = loadedConfig?.telemetry.sanitize_errors ?? false;
 	const verifySection = loadedConfig?.verify;
+	// F-EV-01：config [session] max_rounds（headless 会话回合上限）。仅 >0 生效；
+	// 0 / 负数按 0 处理 → 不下发（回退内建缺省 8）。未声明 [session] 时恒 undefined。
+	const configMaxRounds = loadedConfig?.session?.max_rounds;
+	/**
+	 * 回合上限生效值：CLI --max-rounds > deps 透传 maxRounds >
+	 * config [session] max_rounds（>0 才生效）> 内建缺省 8（headless 侧兜底）。
+	 * 三者皆缺省时不下发 maxRounds（headless 侧 `options.maxRounds ?? 8` 兜底）。
+	 */
+	const effectiveMaxRounds =
+		parsed.maxRounds ?? h.maxRounds ?? (configMaxRounds !== undefined && configMaxRounds > 0 ? configMaxRounds : undefined);
 
 	// BI-07.4：config [subagent] enabled 时装配 SubagentRunner 并经 headless 注入
 	// spawn_subagent 工具（缺省 enabled=false = 不装配，既有工具面与对话流零变动）。
@@ -407,10 +417,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...(verifySection?.on_completion === true
 				? { verify: { contract: buildVerifyContract(verifySection) } }
 				: {}),
-			// CLI --max-rounds 优先于 deps 透传（BI-30 dogfood 发现：真实工单 8 回合不够）。
-			...((parsed.maxRounds ?? h.maxRounds) !== undefined
-				? { maxRounds: parsed.maxRounds ?? h.maxRounds }
-				: {}),
+			// 回合上限生效值（优先级链见上方 effectiveMaxRounds）。
+			...(effectiveMaxRounds !== undefined ? { maxRounds: effectiveMaxRounds } : {}),
 			// 0.3.0 测试发现补齐：--resume <sessionId> → 无头续会话（headless sessionId
 			// 能力面 BI-23 起就有，缺 CLI 入口——用户此前无法从命令行续会话）。
 			...(parsed.resume !== undefined ? { sessionId: parsed.resume } : {}),

@@ -35,6 +35,7 @@ import {
   cronSchema,
   contextSchema,
   memorySchema,
+  sessionSchema,
   type BiConfig,
   type ConfigIssue,
   type Schema,
@@ -82,6 +83,7 @@ export const MOUNTED_SECTIONS: Readonly<Record<string, Schema<unknown>>> = {
   cron: cronSchema,
   context: contextSchema,
   memory: memorySchema,
+  session: sessionSchema,
 };
 
 /**
@@ -107,7 +109,7 @@ export function withMountedDefaults(config: BiConfig): BiConfig {
  *   - 原始值（string/number/boolean）= 叶子；
  *   - 数组：空数组或全字符串数组视为可设置 string[] 叶子（实体表默认空，设值会被 schema 校验拒绝）；
  *   - 非字符串非空数组（实体表）跳过；对象（表/记录）递归。
- * 另挂载六分区（verify/subagent/ptc/cron/context/memory）的 schema 叶子（分区前径），
+ * 另挂载七分区（verify/subagent/ptc/cron/context/memory/session）的 schema 叶子（分区前径），
  * 其缺省不进 DEFAULT_BI_CONFIG 根键树，故单独从分区 schema 默认推导。
  */
 export function configKeySurface(): string[] {
