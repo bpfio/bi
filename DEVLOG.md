@@ -736,3 +736,27 @@ FX-B 单测过但真机 /exit 落"执行面尚未接线"兜底——根因=候�
 ### WAIT-FST10 落定（依设计计划直接裁决，无需用户新裁决）
 
 用户问"能否按设计计划直接决策"——核后答案=能：①worktree 库态系 kimi-batch-2 审计批注在案（"独立私有包，未提供 CLI 子命令面"）；②workflow/A2A 显式面系维护态观察项"演练备案非缺陷维持"；③沙箱 substrate 切分系 AUDIT-10③ 用户裁决（BI-16.1 零工具注入=设计本身）；④plugins 适用"待外部消费者"同款先例。**裁决=维持库态备案不排期接线**（MCP 除外，FX-F 已因配置键陷阱接线）。配套：README 增"库态能力面"节明示（防未来自测重复误报）+[a2a] 键面陷阱注记归 0.4.0 默认值策略；F-ST-09/10 置 wontfix；WAIT-FST10 closed。至此本战役 findings 11 项全部终态（9 fixed + 2 wontfix 备案），零 open。
+
+## 二十六、接线战役 WIRE-1：五大库态器官全上生产面 (2026-10-20)
+
+### 裁决反转与派工
+
+用户推翻库态备案："开发出来了为什么不接线？接线，并用 bi 测试。注意派单节省算力。"——五单三通道并发（本机 hy3 罚息期，glm-5.3-flash 白名单#2 首战）：X1 kimi（CodeMode→run_js 工具，[tools] code_mode 门控）/ X2 xhub hy3（bi worktree + bi dag 子命令）/ X3 本机 glm（A2aHost 配置胶水）/ X4 本机 glm（a2a+plugins 子命令装配+main 接线）/ X5 kimi（README 反备案改写）。
+
+### 通道事故与接管（本波四课）
+
+①xhub hy3 也 429 了（双节点同日枯竭首例，重置 06:49/07:10 UTC+8）；②**X2 包装壳 429 但进程 detach 幸存**——但这次幸存者约 20 分钟后也静默死亡（测试没写、DISPATCH 路由表两行没登记），文件静止 45 分钟才定性；**pgrep -f 计数会把 ssh 自身 bash 数进去=假阳性**，判死要 ps aux 看真 args；③主控接管收尾：相对路径少一级（commands/ 比 cli/ 深一层）、臆造 SubcommandDeps 字段删缝线用引擎缺省、DurableStore/JsonValue 导入位错、**shell 执行器改 sh -c 托管+非零退出即抛（CI 失败语义）**；④冒烟自踩管道吞 exit code 三连（T2/T3b/doctor 同款）——exit 判定一律脱离管道。
+
+### 交付终态（门禁 4858/0 + 三 tsc 0 + 真机/狗粮全绿）
+
+| 能力 | 生产面 | 验收证据 |
+|---|---|---|
+| worktree (BI-12) | `bi worktree create/list/merge/discard` | 真实 git 仓全链：创建/列表/合回（工作树清理）/撤销 |
+| workflow·DAG (BI-14) | `bi dag run <spec>`（run=handler 名引擎原生 DSL，shell handler 经 sh -c，MemoryDurableStore 幂等断点自愈） | 三节点并行层+失败即断（d=exit3→failed/exit1）+重入短路重试；completed/exit0 |
+| CodeMode (BI-16.1) | `run_js` 工具（[tools] code_mode 门控，vm 纯计算超时 clamp 1s） | **bi 狗粮**：longcat 真会话调 run_js 计算 `776:1031` 原样回传（JSONL tool_use 实证）；首跑暴露 manual 态+配置空转双因 |
+| A2A (BI-15) | `bi a2a host`（config [a2a] enabled/listen/allow 驱动，非回环强制 BI_A2A_TOKEN） | 实启 127.0.0.1 随机口+ephemeral token+SIGINT 干净收场；enabled=false→exit 4 |
+| plugins (BI-17) | `bi plugins list/validate`（双协议声明层发现，零代码执行，坏条目警告不阻塞） | 空目录结构化 0 插件+2 扫描根 |
+
+### 备案翻转
+
+README"库态能力面"节改写为接线面一览（X5）；F-ST-09/10 由 wontfix 翻转为 fixed（接线完成）；config list 实测 69 键。至此 BI-12/14/15/16/17 五族全部有生产消费者，"器官在装配无"清零。

@@ -72,6 +72,10 @@ import {
 import { handleConfig } from "./config";
 import { handleCopy } from "./copy";
 import { handleQuery } from "./query";
+import { handleWorktree } from "./worktree";
+import { handleDag } from "./dag";
+import { handleA2a } from "./a2a";
+import { handlePlugins } from "./plugins";
 
 /** 已接线的子命令全集（main 用法文本与子命令定位共用）。 */
 export const SUBCOMMANDS: readonly string[] = [
@@ -87,6 +91,10 @@ export const SUBCOMMANDS: readonly string[] = [
   "config",
   "copy",
   "query",
+  "worktree",
+  "dag",
+  "a2a",
+  "plugins",
 ];
 
 /**
@@ -106,6 +114,10 @@ export const SUBCOMMAND_SUMMARIES: Readonly<Record<string, string>> = {
   config: "全局配置键值读写（get / set / list）",
   copy: "复制会话字段到剪贴板（或 stdout 降级）",
   query: "检索会话语料（过滤表达式 → JSON 行命中）",
+  worktree: "Git Worktree 沙箱：create/list/merge/discard 任务工作树",
+  dag: "DAG 工作流调度：run 执行 WorkflowSpec（分层并行）",
+  a2a: "A2A 服务暴露：host 前台运行（config [a2a] 装配）",
+  plugins: "插件面：list 发现 / validate 结构化校验（@bi/plugins 声明层）",
 };
 
 /**
@@ -261,6 +273,34 @@ bi transfer import <archive.json>
   bi query "type=user"
   bi query "type=user and contains:修复"
   bi query "contains:部署" --limit 20`,
+  a2a: `bi a2a host [--listen <ip:port>]
+
+  A2A 服务暴露：读 config [a2a] 分区装配 host 并前台运行。
+  stdout 回结构化单行（实际绑定地址 + token 状态）；SIGINT/SIGTERM 干净关闭。
+  enabled=false → 结构化 exit 4（能力未配置）。
+  非回环绑定强制 BI_A2A_TOKEN（对齐 vis 安全先例）。
+
+参数:
+  --listen <ip:port>   覆盖 config [a2a] listen（port 0 = 内核随机）
+
+示例:
+  bi a2a host
+  bi a2a host --listen 127.0.0.1:0`,
+  plugins: `bi plugins [list|validate] [--dir <目录>]
+
+  插件声明层面（@bi/plugins 加载器，零代码执行）。
+  缺省扫描 ~/.bi/plugins 与 ./.bi/plugins；加载失败逐条警告不阻塞。
+
+子命令:
+  list                逐插件一行 JSON（name/version/协议/skills+mcpservers 计数）
+  validate            逐插件结构化校验报告（ok + problems；有发现项 exit 1）
+
+参数:
+  --dir <目录>   覆盖扫描根（单目录）
+
+示例:
+  bi plugins
+  bi plugins validate --dir ./.bi/plugins`,
 };
 
 /** help 旗标（短/长）。handleSubcommand 入口短路，帮助优先于用法校验。 */
@@ -755,6 +795,10 @@ const DISPATCH: Readonly<Record<string, SubcommandHandler>> = {
   config: handleConfig,
   copy: handleCopy,
   query: handleQuery,
+  worktree: handleWorktree,
+  dag: handleDag,
+  a2a: handleA2a,
+  plugins: handlePlugins,
 };
 
 /**

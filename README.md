@@ -13,16 +13,17 @@ CLI 的 fork：产品代码全部在本仓库逐卡新写，设计上以「五�
 
 ## 当前状态
 
-- **11 个子命令全部真实接线**（init / session / fork / export / transfer / acp / upgrade /
-  doctor / vis / config / copy），经 `bin/bi.ts` → `runBi` 查表派发到真实处理器；
-  未知子命令结构化 exit 2，「器官缺位」场景结构化上报、绝不假冒成功。
+- **16 个子命令全部真实接线**（init / session / fork / export / transfer / acp / upgrade /
+  doctor / vis / config / copy / query / worktree / dag / a2a / plugins），经 `bin/bi.ts` →
+  `runBi` 查表派发到真实处理器；未知子命令结构化 exit 2，「器官缺位」场景结构化上报、
+  绝不假冒成功。
 - **两种会话形态**：带 `--prompt` 走无头会话（JSONL 事件流上屏，`--output-format
   stream-json`）；无参裸跑进交互 REPL（配置装配 → 凭据门 → 真实驱动 → AgentTuiSession）。
 - **配置体系**：三级 TOML（`~/.bi/config.toml` → `~/.bi/tui.toml` → 项目级
   `.bi/local.toml`）+ 环境变量覆盖；`providers.entries.*.api_key_env` 间接引用密钥，
   配置文件永不落明文。
-- **质量门**：`bun test` 全绿（253 个测试文件 / 4621 个用例：4618 通过、3 跳过、
-  0 失败），双 tsconfig `tsc --noEmit` 0 错误。
+- **质量门**：`bun test` 全绿（BI_PTY_E2E=1 全量：270 个测试文件 / 4858 个用例 0 失败，
+  含 pty 真人面回归），三包 `tsc --noEmit`（core/tui/a2a）0 错误。
 
 ## 快速上手
 
@@ -88,7 +89,7 @@ model = "my-model"
 bun bin/bi.ts doctor
 ```
 
-也可以按键查询生效值（`get` / `set` / `list`，共 68 键，见下文「配置参考」）：
+也可以按键查询生效值（`get` / `set` / `list`，共 69 键，见下文「配置参考」）：
 
 ```bash
 bun bin/bi.ts config get models.default
@@ -110,7 +111,7 @@ bun bin/bi.ts
 
 ## 子命令一览
 
-与 `bun bin/bi.ts --help` 的真实文本一致（12 个，按 help 输出顺序）：
+与 `bun bin/bi.ts --help` 的真实文本一致（16 个，按 help 输出顺序）：
 
 | 子命令 | 职责 |
 | --- | --- |
@@ -126,13 +127,18 @@ bun bin/bi.ts
 | `config` | 全局配置键值面（`get` / `set` / `list`，键面由 schema 默认树推导） |
 | `copy` | 复制会话字段到剪贴板（`id` / `title` / `last-reply`；剪贴板工具缺失降级 stdout） |
 | `query` | 检索本地会话语料（`bi query "type=user"`，重建索引后按过滤表达式输出 JSON 行） |
+| `worktree` | Git worktree 并发沙箱：`create` / `list` / `merge` / `discard`（`bi worktree create --task <id> [--base <ref>]`；`merge --task <id> [--message <msg>]`、`discard --task <id>`；工作树落 `<repo>/.bi/worktrees`） |
+| `dag` | DAG 工作流调度：`bi dag run <spec.json> [--workflow-id <id>]`，`WorkflowSpec` 分层并行执行，已注册 `shell` 步骤 handler |
+| `a2a` | A2A 服务暴露：`bi a2a host [--listen <ip:port>]`，读 config `[a2a]` 装配 host 并前台运行（`enabled=false` → exit 4；非回环绑定强制 `BI_A2A_TOKEN`） |
+| `plugins` | 插件声明面：`bi plugins [list\|validate] [--dir <目录>]`，缺省扫 `~/.bi/plugins` 与 `./.bi/plugins`（零代码执行，`install`/`marketplace` 本波不做） |
 
 统一退出码语义：`0` 成功 / `1` 运行期失败 / `2` 用法错误 / `3` 装配凭据类（无头与
-REPL 同一面）/ `4` 已识别但能力未配置（如 `upgrade` 无 manifest 源）。
+REPL 同一面）/ `4` 已识别但能力未配置（如 `upgrade` 无 manifest 源、`a2a` 的
+`[a2a] enabled=false`）。
 
 ## 配置参考
 
-键面以 `bun bin/bi.ts config list` 实测为准（共 68 键 = 46 根键 + 22 挂载分区键，
+键面以 `bun bin/bi.ts config list` 实测为准（共 69 键 = 47 根键 + 22 挂载分区键，
 按分组；复杂表/实体数组如
 `providers.entries` / `models.entries` / `permission.rules` / `hooks.entries` 不进
 get/set 键面，直接写 TOML）：
@@ -151,7 +157,7 @@ get/set 键面，直接写 TOML）：
 | `secondary_model` | `secondary_model.background`、`secondary_model.subagent`、`secondary_model.summarize` |
 | `telemetry` | `telemetry.enabled`、`telemetry.sanitize_errors` |
 | `thinking` | `thinking.budget_tokens`、`thinking.effort`、`thinking.enabled` |
-| `tools` | `tools.allow`、`tools.deny`、`tools.output_limit_bytes`、`tools.media`、`tools.job_tools`、`tools.lsp`、`tools.select_tools` |
+| `tools` | `tools.allow`、`tools.code_mode`、`tools.deny`、`tools.output_limit_bytes`、`tools.media`、`tools.job_tools`、`tools.lsp`、`tools.select_tools` |
 | `tui` | `tui.mouse_mode`、`tui.notifications`、`tui.show_thoughts`、`tui.theme` |
 | `watch` | `watch.debounce_ms`、`watch.enabled`、`watch.ignore` |
 | `workspace` | `workspace.additional_dir`、`workspace.respect_gitignore` |
@@ -178,11 +184,37 @@ get/set 键面，直接写 TOML）：
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
 | `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；坏条目结构化警告不阻塞；SSE 型暂未支持） |
 
-### 库态能力面（器官在、CLI 面随里程碑）
+（`[mcp]` 一行按便利列在上表内；实为根分区，缺省恒物化为 `servers = {}`，不属挂载拓扑。）
 
-以下能力以 workspace 包形态交付、暂不接 CLI/工具面，属备案设计而非缺陷（虚账审计批注与维护态裁决在案）：
-`@bi/worktree`（Git worktree 并发沙箱引擎）/ `@bi/a2a`（鉴权+邮件信令+GitHub 中枢+WS 中继+黑板）/ `@bi/workflow`（DAG 引擎+持久化调度）/ `@bi/plugins`（双协议插件加载器）/ CodeMode JS 沙箱（BI-16.1 纯计算 substrate，工具编排归 PTC `run_ptc_script`）。
-配置注意：`[a2a]` 分区键面存在但运行面未接，显式配置不会生效（fail-closed 架构事实，0.4.0 默认值策略一并处理）。
+### `[a2a]` 分区（`bi a2a host` 装配面）
+
+`[a2a]` 是根分区（恒物化），三个键驱动 `bi a2a host`：
+
+| 键 | 缺省 | 说明 |
+| --- | --- | --- |
+| `a2a.enabled` | `false` | 能力总闸；`false` → 结构化 exit 4（能力未配置） |
+| `a2a.listen` | `127.0.0.1:0` | 监听 `ip:port`（`port 0` = 内核随机）；`--listen` 旗标可覆盖 |
+| `a2a.allow` | `[]` | 对端角色白名单（`coordinator`/`scout`/`auditor`/`reporter`），透传为宿主 `allowFrom`；空 = 宿主缺省全角色 |
+
+共享密钥走环境变量 `BI_A2A_TOKEN`（不进 TOML 键面）：回环绑定缺省用进程内一次性随机
+密钥；非回环绑定（含 `0.0.0.0`/`::` 通配）缺该变量即拒绝启动，不裸奔暴露。
+
+### 接线面一览
+
+以下能力既有库态器官、也已接上 CLI/工具面（原「库态备案」清单已转可调用）：
+
+| 面 | 入口 | 说明 |
+| --- | --- | --- |
+| worktree | `bi worktree create\|list\|merge\|discard` | Git worktree 并发沙箱引擎；工作树落 `<repo>/.bi/worktrees`；`merge` 冲突如实报 `conflict: true` 并回滚现场交人工审查（exit 1），`discard` 幂等 |
+| workflow·DAG | `bi dag run <spec.json> [--workflow-id <id>]` | `WorkflowSpec`（`steps[].id/run/depends_on/params`）分层并行调度；已注册 `shell` 步骤 handler（`params.command` 经 `sh -c` 执行，单步 30s 超时） |
+| a2a | `bi a2a host [--listen <ip:port>]` | 由 config `[a2a]` 装配 host 并前台运行（`enabled` 门控，false → exit 4）；回环绑定缺省一次性随机密钥，**非回环绑定强制 `BI_A2A_TOKEN`**（缺失即拒绝启动） |
+| plugins | `bi plugins [list\|validate] [--dir <目录>]` | 双协议插件声明加载器（只解析清单、零代码执行）；缺省扫 `~/.bi/plugins` 与 `./.bi/plugins`，`--dir` 覆盖扫描根；加载失败逐条警告不阻塞 |
+| CodeMode | 模型工具 `run_js` | `node:vm` 纯计算沙箱（禁网络/禁 fs/禁工具注入），由 config `[tools] code_mode` 显式 `true` 才挂载，缺省工具面零变动 |
+
+诚实边界：`bi dag` 的调度 store 只在单次进程生命周期内有效（缺省内存底座）；`bi plugins`
+不执行插件代码、`install`/`marketplace` 本波不做；`run_js` 只能算、不能碰 IO（工具编排归
+PTC `run_ptc_script`）。`@bi/a2a` 的邮件信令 / GitHub 中枢 / WS 中继 / 黑板面仍只在库内，
+CLI 面仅 `bi a2a host`。
 
 ### 环境变量覆盖
 
@@ -190,6 +222,10 @@ get/set 键面，直接写 TOML）：
 `BI_SECONDARY_MODEL`、`BI_BACKGROUND_MODEL`、`BI_THINKING_EFFORT`、
 `BI_PERMISSION_MODE`、`BI_TOOLS_ALLOW`、`BI_TOOLS_DENY`、`BI_IDENTITY_NAME`、
 `BI_WORKSPACE_ADDITIONAL_DIR`。
+
+另有一枚密钥类环境变量（不经 TOML 键面）：`BI_A2A_TOKEN` —— `bi a2a host` 的共享
+密钥来源；回环绑定缺省用进程内一次性随机密钥，非回环绑定缺它即拒绝启动
+（对齐 `BI_VIS_AUTH_TOKEN` 的 `bi vis` 先例）。
 
 ## 开发
 
@@ -206,7 +242,7 @@ bun run build:bin    # 单文件二进制构建
 | --- | --- |
 | `packages/core` | 会话（JSONL）、AgentLoop 状态机、权限门、hooks、config、headless 驱动 |
 | `packages/tui` | 终端界面（REPL 主路径 / 候选菜单 / 键位注册表） |
-| `packages/{mcp,a2a,plugins,workflow,worktree}` | BI-01 骨架包，按卡填充 |
+| `packages/{mcp,a2a,plugins,workflow,worktree}` | 子命令器官包（worktree 引擎 / DAG 引擎 / A2A host + CodeMode 沙箱 / 插件加载器 / MCP stdio 客户端），各由对应 `bi <子命令>` 或工具面消费 |
 | `bin/bi.ts` | 可执行入口 shim（无参 = REPL；带参 = runBi 分发） |
 | `scripts/build-bin.ts` | Bun Compile 单文件二进制构建（`--embed` 资产嵌入预留） |
 | `devplan.md` | 开发计划唯一事实源（SSOT） |

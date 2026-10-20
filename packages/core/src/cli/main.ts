@@ -318,6 +318,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 						jobs: loadedConfig?.tools.job_tools === true,
 						lsp: loadedConfig?.tools.lsp === true,
 						select_tools: loadedConfig?.tools.select_tools === true,
+						// X4 接线：config [tools] code_mode 显式 true 才挂 run_js（缺省 false = 不挂 = 工具面零变动）。
+						codemode: loadedConfig?.tools.code_mode === true,
 						skill: true,
 					}),
 					// FX-F：MCP stdio 装配结果并入工具集（仅 [ptc] enabled 时非空）。
@@ -380,6 +382,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 						skill: true,
 						// BI-13.1/BI-13.3：select_tools 挂载门（config [tools] select_tools，缺省 false）。
 						select_tools: loadedConfig?.tools.select_tools === true,
+						// X4 接线：config [tools] code_mode 显式 true 才挂 run_js（缺省 false = 不挂 = 工具面零变动）。
+						codemode: loadedConfig?.tools.code_mode === true,
 					}),
 						// FX-F：MCP stdio 装配结果并入工具集（仅 [ptc] enabled 时非空）。
 						...mcpTools,
