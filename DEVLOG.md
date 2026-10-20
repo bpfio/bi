@@ -667,3 +667,68 @@ xhub hy3 429 期间实测:**glm-5.3-flash / hy3-x / minimax-m3.1-flash 三候选
 ### 终态
 
 0.3.0 三包上线+冷装全通；自助测试计划归档可复用；测试发现 5 缺陷全修+门禁全绿；bi 生产可用面再无已知虚账。
+
+## 二十四、全业务领域自测（对照 183 卡台账，10 域矩阵+5 单派工）(2026-10-20)
+
+### 起点与纪律
+
+用户驱动：发现 TUI 指令不足（疑无 /exit），要求对照 170+ 项台账全业务领域自测、记录并修复。自测批 BI-SELFTEST-2026-10-20；矩阵 `docs/test/selftest-2026-10-20/matrix.md`。纪律：自测期 kimi 静默（防与 bi/longcat 抢 opencode Go 端点）；缺陷即时 finding_record；**全部自测完成后**修复统一派工（本机/xhub codebuddy + kimi）。
+
+### S0：TUI 指令面定案（用户质疑属实）
+
+内置指令全集=/btw /mode /compact /rewind /clear /diff /permissions（bin/bi.ts）+自定义 md；**无 /exit /help /quit**。退出真身=Ctrl+C(空草稿)/Ctrl+D（pty 实测 exit=0）；Esc 双段是回合级取消语义（agent-tui.ts:757 state 门），idle 态 Esc 为死键。菜单漏列 /btw /mode /permissions；/help 提交报未知且提示只列 /permissions。→ F-ST-01(P2)。
+
+### 主控真机自测（D-A/D-B/D-C/D-G）
+
+- **D-A**：11 子命令 help 面、init 幂等、config 五词面往返（auto 可写回）、doctor exit 契约（2 异常→exit 1）全 PASS。管道吞 exit code 老坑复踩一次（doctor 首测误读 tail 的 $?，PIPESTATUS 复测定案）。
+- **D-B 伪端点 8 项**：stream-json/text 两形态、--max-rounds、**--resume 历史重放**（首轮文本出现在续会话请求）、resume 未知会话结构化 session-not-found、--agent-file 注入 system 面——6 PASS；json 输出形态缺失→F-ST-02(P3)。
+- **D-C longcat 真机**：yolo bash 真 tool_use 配对 PASS；/etc/passwd 读→`path-escape` 结构化拒 PASS；manual 态→`permission-ask-unavailable-in-headless` PASS；glob/grep/edit 绑定级探针 PASS；**write 跳读直写已存在文件成功→F-ST-03(P1) BI-07.2 装配虚账**（器官/端口/消费点全在，headless.ts:499 与 agent-tui.ts:500 双装配位零接线，read_file 亦未 recordRead）；output_limit_bytes 缺省 0=截断关闭→F-ST-04(P3)。
+- **D-G pty 真机**：/mode 切换 PASS；首键 Ctrl+C 吞没 2/2 复现→F-ST-06(P3)；回合级 Esc-Esc/搜索/diff 门→W5 深探。
+
+### 派工五单（W1/W2 已闭，W3/W4 已闭，W5 进行中）
+
+| 单 | 节点/模型 | 域 | 结论 |
+|---|---|---|---|
+| W1 | 本机 hy3 | D-E 器官门+D-D 上下文 | 全 PASS：动态探针 8→22 工具、14 增量精确、容错面结构化；**BI.md 注入链断裂→F-ST-05(P2)**（init 产 BI.md，注入只读 BI.dream.md 且缺省关） |
+| W2 | xhub hy3 | D-H 会话生态 | H1-H5 全 PASS（fork 截断/export 三格式/transfer 脱敏往返）；**query 引擎无 CLI 入口→F-ST-07(P3)** |
+| W3 | 本机 hy3 | D-F MCP/ACP/插件+D-I 路由 | 路由插槽+auto UUID 全 PASS；ACP 生产面通；**MCP 键面在装配无→F-ST-08(P2)**；**插件装配+键面双缺→F-ST-09(P3)**；acp-command.ts 为未接线死镜像 |
+| W4 | xhub hy3 | D-J 装配面 | vis PASS（真机 200+令牌门）；**worktree/A2A/DAG/沙箱 四大件装配零→F-ST-10(P3，处置需用户裁定)** |
+| W5 | 本机 hy3 | D-G 深探 | （回合级取消/搜索/diff 审批门）进行中 |
+
+台账事故一起：主控 bulk_upsert 的 JSON id 误带 \r 转义产生两条脏记录——已置 wontfix 收容并以干净 id 重新闭卡。
+
+### 发现账本（9 项，全部 finding_record 在案）
+
+F-ST-01 TUI 可发现性(P2) / 02 json 形态(P3) / **03 writeGate 装配虚账(P1)** / 04 截断缺省 0(P3) / 05 BI.md 链断裂(P2) / 06 首键吞没(P3) / 07 query 无入口(P3) / 08 MCP 键面陷阱(P2) / 09 插件装配缺(P3) / 10 四大件装配零(P3)。
+
+（修复派工与验收见下节）
+
+### W5 深探与自测收官
+
+W5（本机 hy3）首派死于主控轮询取消的管道级联（进程树根未幸存，零产出——与 detach 幸存定律相反的案例：这次真死透了），同简报重派一次成型。G1 回合级一段 Esc 取消/G3 Ctrl+F 转录搜索/G4 /diff fail-closed 本地回执/G5 manual 态审批浮层+零写盘全 PASS；G2 双 Esc 退出严格判据 FAIL，根因钉死为探针 50ms 键间下限不可达 ~3ms abort 窗口（agent-tui.ts:757 state 守卫静态核实正确）——产品无缺陷，二段退出补单测的建议入修复参考。**至此自测全域完成：10 域矩阵 × (主控真机 + 5 派工单)，10 项 finding 全部入账。**
+
+### 修复波启动
+
+自测既毕，kimi 错峰解除。三通道并发（文件边界零交集）：FX-A 本机 codebuddy hy3 修 F-ST-03（toolset.ts 唯一文件）；FX-B xhub codebuddy hy3 修 F-ST-01+06（tui mount+bin）；FX-C 本机 kimi 修 F-ST-05+07（headless 注入段+bi query 子命令）。二波 FX-E（F-ST-02/04）/FX-F（F-ST-08）等文件释放接力；F-ST-09/10 为策略问题挂 WAIT-FST10 待用户裁定。
+
+## 二十五、修复波收官：FX-A~F 五单全交付+F-ST-11 冒烟加案 (2026-10-20)
+
+### 交付与验收（四步全过：diff 亲验/门禁复跑/真机冒烟/抽样核实）
+
+| 单 | 通道 | 修的 finding | 交付 | 验收 |
+|---|---|---|---|---|
+| FX-A | 本机 codebuddy hy3 | F-ST-03(P1) | toolset.ts +42/−8：闭包共享 ReadFileStateMap，read_file recordRead、write/edit assertCleanForWrite+noteEdited；新 10 例测试 | 18 个旧测试红=测旧行为，主控 read-first 化修复（77/0+staircase 44/0） |
+| FX-B | xhub codebuddy hy3 | F-ST-01+06 | 8 文件 +307/−49：COMMAND_CATALOG 单一事实源（菜单/未知提示//help 三处渲染）+ /help /exit 回执 + 横幅提示 + F-ST-06 根修（stdin.destroy 排空事件循环，pty 回归：boot 首键 Ctrl+C→exit=0） | diff 拉回本机 apply，tui 687/0+tsc 0+pty 2/0 |
+| FX-C | 本机 kimi | F-ST-05+07 | BI.md+BI.dream.md 双文件注入（去重）+ `bi query` 子命令薄壳（nodeId 重映射语义成文）+README/dispatch 同步 | 主控亲验 diff；query 真机 650 会话索引/1783 条目命中 |
+| FX-E | 本机 kimi | F-ST-02+04 | output_limit_bytes 缺省 0→65536（BI-08 兑现）+ --output-format json 单对象形态；断言同步+新 4 例 | kimi 自测 177/0+3753 全量；主控伪端点复测单行 JSON 含 reply |
+| FX-F | 本机 codebuddy hy3（**429 后 detach 幸存完工**，PROD-1 定律再现；xhub 重派因 nohup 失效未启动，作废） | F-ST-08(P2) | mcp-mount.ts 新模块+[mcp.servers] stdio 装配进 main 工具集（mcp__<id>__<tool> 命名/坏条目结构化警告不阻塞） | 冒烟：echo server 真挂载 mcp__echo__echo+callTool 回环 PASS |
+
+### F-ST-11：真机冒烟加案（主控修）
+
+FX-B 单测过但真机 /exit 落"执行面尚未接线"兜底——根因=候选菜单接受补会缀尾空格，`prompt === "/exit"` 严格等值被 "/exit " 绕过（/help 同病）。主控修：submit 头比对与 isExitCommand 一律 trim+尾随空格回归单测；pty 终验 /exit\r\r → exit=0。教训：菜单补全尾空格是斜杠命令等值匹配的隐形对抗面；**替身绿≠产品对，真机冒烟一步不能省**。
+
+### 终态
+
+- 门禁：**4823 pass / 0 fail（264 文件）**+三包 tsc 0（core/tui/a2a）
+- 冒烟七项全绿：/help 目录渲染、/exit 退出 exit=0、bi query 真机检索、json 形态单行可解析、BI.md 注入抓包、MCP echo 挂载+调用回环、write 门禁（10 例+真实 C3 场景复验）
+- finding 处置：F-ST-01/02/03/04/05/06/07/08/11 → fixed；F-ST-09/10 → open（WAIT-FST10 待用户裁定插件/四大件装配路线）
