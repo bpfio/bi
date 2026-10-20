@@ -561,3 +561,45 @@ P4(xhub hy3)产出:版本三源对齐(core/tui package.json 0.1.0→0.2.0)+**四
 **kimi 通道质量结论:合格。** 简报理解准确、测试设计有自主判断(超出工单的语义测试)、代码风格跟随所在文件(tab/两空格自辨)、零红线违反;缺陷=无超时自管理(需主控兜底)+幸存进程需复核。派工参数:裸 `kimi -p "$(cat 简报)"`,禁与 -y/--auto 组合,杀单后 pgrep 复核。
 
 **入口备注**:仓库版 bi 真机冒烟入口是 `bun bin/bi.ts`(根 bin 层,BI-25.5 起);`bun packages/core/src/cli/main.ts` 无副作用入口,零输出零退出,别误判。
+
+## 二十一、双向虚账审计：170 项逐项核对与清偿第一波 (2026-10-20)
+
+### 缘起与口径
+
+用户关切："开发台账有，但未完成装配，或装配后未实现开发预期"（虚账）。实测台账 **170 项**（非 117）全 closed，清单落盘 `/tmp/bi-ledger-170.md` 作双向派单共同输入。检查定义三维：交付物在仓证据（kimi 主查）/运行时装配面（双向）/行为达预期（真机）。
+
+### 双向检查执行面
+
+| 通道 | 任务 | 结果 |
+|---|---|---|
+| kimi CLI（OpenCode Go minimax-m3.1-flash-free） | 6 批×~28 项逐项核对（verdict: CONFIRMED/PARTIAL/MISSING/UNVERIFIABLE+证据路径） | **170 项全覆盖**：~157 CONFIRMED+14 虚账+3 口径差；批 6 卡报告格式自省循环未落盘，从 688KB stdout 日志提取重组（覆盖缺口 10 卡由批 5 兜住） |
+| bi CLI（longcat，同端点池） | 分片逐项确认 | **网关四连阻**（tools=0 根因→maxRounds 8→断流→限流→再断流），降级为采样形态：真机工具调用 80+ 轮实证+read_media_file 端到端；**opencode Go 免费端点不适合 >10 分钟长 agent 会话**（断连/限流交替），实证入册 |
+| 主控抽样 | 批 1/2 结论抽 4 项亲核 | 4/4 属实（BI-04 缺件/BI-02.1/BI-03.7 交付/BI-11 未挂载） |
+| 双节点 codebuddy hy3（用户指令分流） | 修复 A（本机）+B（xhub）并行 | 见下 |
+
+### 虚账清单定案（14 项+3 口径差）
+
+同一根因占绝对多数：**器官+测试齐全但零生产消费者**（当年"装配归后续卡"的备案欠账）。明细：
+- 缺件类：BI-04 插槽路由器（model-router.ts 全历史从未存在，secondary_model schema 无消费方）
+- 工具面未挂载：BI-07.8 AgentSwarm / BI-07.9 Skill / BI-07.11 Jobs 三件 / BI-08.3 ReadMediaFile / BI-13.1 select_tools / BI-13.2 LSP
+- 管线未接：BI-08.2 image-offload / BI-10 AutoCompactor（headless.ts:508 明示归档）/ BI-13.3 tool-catalog
+- TUI/REPL 面未接：BI-11 TokenHud+/compact /rewind /clear / BI-20 diff 审查门 / BI-20.1 四态切换器 / BI-20.5 令牌轮转
+- 半实现：BI-16.1 CodeMode 仅 JS（卡题 JS/TS 只落地一半）
+- 口径差非虚账：BI-00/00.1/00.2（ops 引擎外置 `~/bi-ledger-ops/` 是备案部署形态，批 6 严格仓内口径误报 PARTIAL，裁决以批 5 为准）
+
+### 清偿第一波（双节点并行，6e8887f）
+
+文件面零交集拆单：本机 hy3=A 工具面挂载包（BI-08.3+BI-07.11），xhub hy3=B TS 转译（BI-16.1）。
+
+- **BI-08.3/BI-07.11**：config `[tools] media / job_tools` 门控挂载（ptc 模式同款：缺省 false=工具面零变动）。media 绑定走 guardReadPath+器官结构化返回透传；jobs 三件以 JOB_*_TOOL_SPEC 为单一事实源，JobKill 为唯一写面（readOnly:false）。
+- **BI-16.1**：Bun.Transpiler 类型擦除补齐 TS 半边。校验在**原始 source**、编译在**转译产物**（顺序防绕过）；**深坑修正：Bun transformSync 把字面 `typeof require` 常量折叠成 `"function"`**，define 重映射保住"guest 不见宿主模块全局"沙箱契约；非法语法走新增 `VmRunError('compile')` 结构化通道。
+- **验收**：合并门禁 4681 pass/0 fail（253 文件，+11 用例）+三包 tsc 0；真机抓包 13 工具挂载实测；read_media_file 端到端——bi(longcat) 真实调用且 **path-escape 守卫拒工作区外路径生效**（模型自行降级 bash 解析 PNG 头成功）。
+- xhub 回收改 scp 单文件（rsync --files-from 对该远端路径解析失败，备案）。
+
+### 剩余虚账处置
+
+12 项入台账 **DEBT-1（父卡）+DEBT-1.1~1.12**（task_query 可查），清偿模式=ptc 门控挂载；BI-04 与 BI-13.1/20.1 涉及供给模式/多模型路由设计裁定，先行备案不盲挂。
+
+### 通道纪要
+
+kimi 6 批均 5-9 分钟/批稳定交付；批 6 长会话格式自省循环（超 20 分钟不落盘）→杀单从日志提取，**报告落盘类工单应禁用长格式自省**（简报加"格式从简,先落盘后润色"）。bi(longcat) 长会话四连阻实证：同端点池下 kimi 短单稳、bi 长会话不稳，**长 agent 任务优先 codebuddy hy3 双节点，opencode Go 只派短单**。
