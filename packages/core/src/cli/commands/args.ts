@@ -62,6 +62,12 @@ export const GLOBAL_ARGS: readonly GlobalArgSpec[] = [
     description: "无头会话模型回合上限（正整数，缺省 8）",
     repeatable: false,
   },
+  {
+    flag: "--resume",
+    valueName: "<sessionId>",
+    description: "无头续会话：在该会话末条目之后接续（配合 --prompt；0.3.0 测试发现补齐）",
+    repeatable: false,
+  },
 ];
 
 /**
@@ -80,6 +86,8 @@ export interface ParsedArgs {
   prompt?: string;
   /** --output-format 的值（已过白名单校验）。 */
   outputFormat?: OutputFormat;
+  /** --resume 的值（无头续会话目标 sessionId）。 */
+  resume?: string;
   /** --max-rounds 的值（已过正整数校验；缺省回合上限由 headless 决定）。 */
   maxRounds?: number;
   /** 位置参数（`--` 后或裸词；子命令派发归属装配方）。 */
@@ -172,6 +180,9 @@ export function parseGlobalArgs(argv: readonly string[]): ParsedArgs {
     else if (spec.flag === "--add-dir") result.addDirs.push(value);
     else if (spec.flag === "--prompt") result.prompt = value;
     else if (spec.flag === "--output-format") result.outputFormat = value as OutputFormat;
+    else if (spec.flag === "--resume") {
+      result.resume = value;
+    }
     else if (spec.flag === "--max-rounds") {
       if (!/^[1-9]\d*$/.test(value)) {
         throw new ArgParseError("invalid-value", `参数 --max-rounds 的值非法: ${value}（需要正整数）`, "--max-rounds");

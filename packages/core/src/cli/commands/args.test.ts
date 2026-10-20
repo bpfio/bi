@@ -135,13 +135,14 @@ describe("BI-20.2 parseGlobalArgs：结构化报错", () => {
 });
 
 describe("BI-20.2 GLOBAL_ARGS：矩阵定义完整性", () => {
-  test("包含五个合约旗标且定义字段齐备", () => {
+  test("包含六个合约旗标且定义字段齐备（--resume 为 0.3.0 测试发现补齐）", () => {
     expect(GLOBAL_ARGS.map((s) => s.flag)).toEqual([
       "--agent-file",
       "--add-dir",
       "--prompt",
       "--output-format",
       "--max-rounds",
+      "--resume",
     ]);
     for (const spec of GLOBAL_ARGS) {
       expect(spec.flag.startsWith("--")).toBe(true);

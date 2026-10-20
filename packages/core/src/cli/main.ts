@@ -291,13 +291,31 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	// → 不传 → headless 沉淀/注入全关（逐字节等价）。仅显式声明才物化，子键按
 	// dream_enabled / inject_enabled 各自下发，未开启的子面不进 option（零行为差）。
 	const memorySection = loadedConfig?.memory;
+	// 0.3.0 测试发现修复：子代理只读子集从**实际工具集**取交——此前传 h.tools ?? []
+	// （测试注入面，生产路径恒空），子代理循环零工具（toolCalls: 0）。基集不含
+	// swarm（AgentSwarm 非只读五件，完整集在 runHeadless 调用处随 swarmRunner 装配）。
+	const subagentBaseTools =
+		h.tools ??
+		(ptcSection?.enabled === true
+			? buildDefaultToolset(h.cwd ?? process.cwd(), {
+					ptcDeps: {
+						timeoutMs: ptcSection.timeout_ms,
+						maxToolCalls: ptcSection.max_tool_calls,
+					},
+					media: loadedConfig?.tools.media === true,
+					jobs: loadedConfig?.tools.job_tools === true,
+					lsp: loadedConfig?.tools.lsp === true,
+					select_tools: loadedConfig?.tools.select_tools === true,
+					skill: true,
+				})
+			: []);
 	const subagentRunner =
 		subagentSection?.enabled === true
 			? createSubagentRunner({
 					// 工单 H：子智能体模型走插槽路由（secondary_model.subagent 装配成功
 					// → 插槽端口；未配置/装配失败 → 回退主端口，永不因插槽缺失失败）。
 					model: modelRouter?.route("subagent") ?? model,
-					tools: h.tools ?? [],
+					tools: subagentBaseTools,
 				sessionsRoot: h.sessionsRoot,
 				maxRounds: subagentSection.max_iterations ?? SUBAGENT_DEFAULT_MAX_ITERATIONS,
 				timeoutMs: subagentSection.timeout_ms ?? SUBAGENT_DEFAULT_TIMEOUT_MS,
@@ -370,6 +388,9 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			...((parsed.maxRounds ?? h.maxRounds) !== undefined
 				? { maxRounds: parsed.maxRounds ?? h.maxRounds }
 				: {}),
+			// 0.3.0 测试发现补齐：--resume <sessionId> → 无头续会话（headless sessionId
+			// 能力面 BI-23 起就有，缺 CLI 入口——用户此前无法从命令行续会话）。
+			...(parsed.resume !== undefined ? { sessionId: parsed.resume } : {}),
 			// BI-07.4：子智能体装配（config [subagent] enabled 才注入 spawn_subagent 工具）。
 			...(subagentRunner !== undefined ? { subagentRunner } : {}),
 			// BI-05.3：上下文引擎装配（config [context] 声明才下发；各开关缺省关，

@@ -302,11 +302,11 @@ export class ToolCallAssembler {
 
 /** 会话级装配错误（main 捕获转退出码）。 */
 export class HeadlessError extends Error {
-	readonly code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed";
+	readonly code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed" | "session-not-found";
 	/** verify-failed 时的结构化自验结果（含 gaps；其余 code 缺省）。 */
 	readonly verification?: VerificationResult;
 	constructor(
-		code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed",
+		code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed" | "session-not-found",
 		message: string,
 		verification?: VerificationResult,
 	) {
@@ -413,13 +413,29 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	});
 
 	// ---- 装配序 ②：会话（BI-03 JSONL）----
+	// 0.3.0 测试发现补齐 --resume 语义：sessionId 传入=打开既有会话接续
+	// （末条目作追加父节点；不存在=结构化退出），未传入=新建。
 	const manager = new SessionManager(options.sessionsRoot !== undefined ? { rootDir: options.sessionsRoot } : {});
-	const session = await manager.createSession({
-		...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-		title: options.prompt.slice(0, 80),
-		cwd: options.cwd,
-	});
-	const sessionId = session.sessionId;
+	let sessionId: string;
+	let resumeTailId: string | null = null;
+	/** --resume 时的既有条目（重放进模型上下文；非 resume 恒空）。 */
+	let resumeEntries: import("../session/types").SessionEntry[] = [];
+	if (options.sessionId !== undefined) {
+		const resumeMeta = await manager.getSessionMeta(options.sessionId);
+		if (resumeMeta === undefined) {
+			emit({ type: "session_done", sessionId: options.sessionId, exit: "session-not-found" });
+			throw failSession("session-not-found", `--resume 会话不存在: ${options.sessionId}`);
+		}
+		sessionId = options.sessionId;
+		resumeEntries = await manager.entries(sessionId);
+		resumeTailId = resumeEntries.length > 0 ? resumeEntries[resumeEntries.length - 1]!.id : null;
+	} else {
+		const session = await manager.createSession({
+			title: options.prompt.slice(0, 80),
+			cwd: options.cwd,
+		});
+		sessionId = session.sessionId;
+	}
 
 	// SessionStart 钩子：block 即拒开会话（fail-closed，结构化退出）。
 	const startOutcome = await hookRunner.run("SessionStart", { ...hookInput("SessionStart"), sessionId, cwd: options.cwd });
@@ -509,8 +525,34 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	if (ctxTime) {
 		systemParts.push(buildTimeContext({ isoNow: new Date(ctxNow()).toISOString(), timezone: ctxTz }));
 	}
+	// --resume 历史重放：user/assistant 的文本轮按序进上下文（assistant 兼容
+	// {text} 与 {content:[{type:"text",text}]} 双形态；tool 轮的配对重放归
+	// BI-10.2 语法树语义，本面备案不重放——续聊文本场景成立）。
+	const resumeHistory: AgentMessage[] = [];
+	for (const entry of resumeEntries) {
+		if (entry.type !== "user" && entry.type !== "assistant") continue;
+		const payload = entry.payload as { text?: unknown; content?: unknown } | null;
+		if (payload === null || typeof payload !== "object") continue;
+		let text: string | undefined;
+		if (typeof payload.text === "string") text = payload.text;
+		else if (Array.isArray(payload.content)) {
+			text = payload.content
+				.filter(
+					(block): block is { type: string; text: string } =>
+						block !== null && typeof block === "object" &&
+						(block as { type?: unknown }).type === "text" &&
+						typeof (block as { text?: unknown }).text === "string",
+				)
+				.map((block) => block.text)
+				.join("");
+		}
+		if (text === undefined || text.length === 0) continue;
+		resumeHistory.push({ role: entry.type, content: text });
+	}
 	const messages: AgentMessage[] = [
 		...(systemParts.length > 0 ? [{ role: "system" as const, content: systemParts.join("\n") }] : []),
+		...resumeHistory,
+
 		{ role: "user", content: options.prompt },
 	];
 	/**
@@ -687,7 +729,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	let rounds = 0;
 
 	let parentId: string | undefined;
-	const rootEntry = await manager.append(sessionId, null, { type: "user", payload: { text: options.prompt } as unknown as JsonValue });
+	const rootEntry = await manager.append(sessionId, resumeTailId, { type: "user", payload: { text: options.prompt } as unknown as JsonValue });
 	parentId = rootEntry.id;
 
 	const appendChained = async (input: AppendEntryInput): Promise<SessionEntry> => {

@@ -66,7 +66,7 @@ export function assembleModelRouter(
 		const entry = config.models.entries[modelId];
 		if (entry === undefined) {
 			log(
-				`bi: 模型插槽 ${slot} 装配失败 [slot-model-missing]: 模型 "${modelId}" 不在 models.entries 中，该插槽回退主端口`,
+				`bi: 模型插槽 ${slot} 装配失败 [slot-model-missing]: 模型 ID "${modelId}" 不在 models.entries 中（secondary_model 值应为 [models.entries] 的键，如 "main"；不是 "provider/model" 直连格式），该插槽回退主端口`,
 			);
 			continue;
 		}
