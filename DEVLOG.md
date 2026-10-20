@@ -488,3 +488,16 @@ W1 收尾全量门禁间歇红(7/8 绿),捕获定性:**BI-26.3 双 manager 同�
 - **教训**:anthropic 协议 system 在请求顶层字段而非 messages 数组——首版冒烟查错位置误报"注入未生效",修正后全绿;真实验收要验到**协议线上字段**,不止函数返回值;
 - **cron 诚实边界复核**:[cron] enabled 但宿主未注入 CronCorePort → 不挂载不假冒,与备案一致;
 - 全部六器官已进"真实可用"态:装 Chromium 后浏览器看 bi vis、配凭据后真 REPL 手感两项环境挂账不变。
+
+## 十九、PROD-READY 生产化战役:四差距清零 (2026-10-20)
+
+用户问"bi 距离能投入生产使用还有多远"。主控实测审计(真入口逐项冒烟,非台账推断)定案:**功能骨架已齐,距生产可用差最后一层"产品化外壳",共四差距**——
+
+1. **文档面塌方(P1)**:README"当前状态"停在装配前(「11 子命令尚未接线 exit 4」「211 个测试文件」「TUI 装配中」全是假陈述);无快速上手/子命令参考/配置参考;`setting.example.json`+`provider.example.json` 是上游 zcode JSON 遗留形状(storage.dir ~/.zcode、providerConfigRules),与 bi TOML 体系完全相悖,新用户照着配必入歧途。
+2. **CLI 帮助面缺失(P2)**:11 个子命令无一有独立 `--help`(实测 `bi config --help`/`bi upgrade --help` 全退回主 help 且 exit 0);裸跑缺 key 报错文案清晰(exit 3)但不指向 `bi doctor`。
+3. **config 键面断层(P3)**:六挂载分区器官(verify/subagent/ptc/cron/context/memory)已装配但不在 `bi config` 键面——实测 `config get ptc` 报「未知配置键」,合法键 42 个全为旧 17 根键展开;装配了却配不了。
+4. **发布面未定型(P4)**:npm 短名 `bi` 属别家(10iii/bi "The 2-letter dev toolkit",v1.0.1);根包 `private:true` 且无 bin 字段;版本三源 0.2.0/0.1.0/0.1.0 不同步;build:bin 单文件二进制通道健在但产物裸跑未纳入常规门。
+
+**审计中实测已达标项**(不再浪费工时):`bi --version` 正常、主 help 正常、`bi doctor` 已实质化(配置装载/凭据门/provider 网络/沙箱探针/工具注册面五项+修复建议+exit 1 语义)、`bi init` 可用(.bi/local.toml+BI.md 草稿+栈检测)、TUI/REPL 已挂载(bin/bi.ts import runRepl 链)、4621 测试全绿+CI 绿。
+
+批次 `BI-PROD-2026-10-20` 立四卡。**首波派发**:P2 帮助面→xhub hy3、P3 config 键面→本机 hy3(429 阵亡,限流 13:08 重置)→按"限流即换节点"改排队 xhub 接力;P1 文档面→本机 step-5-preview 兜底(轻单,双节点保持并发 2)。P4 发布面待首波落定后第二波。工单档案:docs/dispatch/2026-10-20-prod-ready/。
