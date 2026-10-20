@@ -24,6 +24,7 @@ import { ModelPortConfigError, resolveModelPort } from "./model-port";
 import { assembleModelRouter, type ModelRouter } from "./model-router";
 import { buildVerifyContract, runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
 import { buildDefaultToolset } from "./toolset";
+import { mountMcpServers } from "./mcp-mount";
 import {
 	createSubagentRunner,
 	SUBAGENT_DEFAULT_MAX_ITERATIONS,
@@ -284,6 +285,16 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const subagentSection = loadedConfig?.subagent;
 	// BI-16.2：config [ptc] 分区；enabled 缺省 false。
 	const ptcSection = loadedConfig?.ptc;
+	// FX-F：config [mcp.servers] 最小装配（仅 [ptc] enabled 时挂载；[mcp] 为根分区恒存在）。
+	// 客户端实例随会话生命周期，closeAll 在会话结束后尽力关闭（释放子进程）。
+	const mcpMount =
+		ptcSection?.enabled === true
+			? await mountMcpServers(loadedConfig?.mcp ?? { servers: {} }, h.cwd ?? process.cwd(), {
+					warn: (line) => err(line),
+				})
+			: null;
+	// FX-F：解析为普通数组（避免条件展开产生联合元素类型），并入两处工具集构建。
+	const mcpTools = mcpMount?.tools ?? [];
 	// BI-05.3（W3-D7）：config [context] 挂载式分区；任一子键显式声明才物化，
 	// 缺省 config.context === undefined → 不传 → headless 全部开关恒关（逐字节等价）。
 	const contextSection = loadedConfig?.context;
@@ -297,17 +308,21 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const subagentBaseTools =
 		h.tools ??
 		(ptcSection?.enabled === true
-			? buildDefaultToolset(h.cwd ?? process.cwd(), {
-					ptcDeps: {
-						timeoutMs: ptcSection.timeout_ms,
-						maxToolCalls: ptcSection.max_tool_calls,
-					},
-					media: loadedConfig?.tools.media === true,
-					jobs: loadedConfig?.tools.job_tools === true,
-					lsp: loadedConfig?.tools.lsp === true,
-					select_tools: loadedConfig?.tools.select_tools === true,
-					skill: true,
-				})
+			? [
+					...buildDefaultToolset(h.cwd ?? process.cwd(), {
+						ptcDeps: {
+							timeoutMs: ptcSection.timeout_ms,
+							maxToolCalls: ptcSection.max_tool_calls,
+						},
+						media: loadedConfig?.tools.media === true,
+						jobs: loadedConfig?.tools.job_tools === true,
+						lsp: loadedConfig?.tools.lsp === true,
+						select_tools: loadedConfig?.tools.select_tools === true,
+						skill: true,
+					}),
+					// FX-F：MCP stdio 装配结果并入工具集（仅 [ptc] enabled 时非空）。
+					...mcpTools,
+				]
 			: []);
 	const subagentRunner =
 		subagentSection?.enabled === true
@@ -343,7 +358,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			tools:
 				h.tools ??
 				(ptcSection?.enabled === true
-					? buildDefaultToolset(h.cwd ?? process.cwd(), {
+				? [
+						...buildDefaultToolset(h.cwd ?? process.cwd(), {
 							ptcDeps: {
 								timeoutMs: ptcSection.timeout_ms,
 								maxToolCalls: ptcSection.max_tool_calls,
@@ -364,7 +380,10 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 						skill: true,
 						// BI-13.1/BI-13.3：select_tools 挂载门（config [tools] select_tools，缺省 false）。
 						select_tools: loadedConfig?.tools.select_tools === true,
-					})
+					}),
+						// FX-F：MCP stdio 装配结果并入工具集（仅 [ptc] enabled 时非空）。
+						...mcpTools,
+					]
 					: []),
 			...(h.hooks !== undefined ? { hooks: h.hooks } : {}),
 			...(h.sessionsRoot !== undefined ? { sessionsRoot: h.sessionsRoot } : {}),
@@ -422,6 +441,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 				: {}),
 			...(options.out !== undefined ? { out: options.out } : {}),
 		});
+		// FX-F：会话结束尽力关闭 MCP 客户端（释放子进程），失败静默吞。
+		await mcpMount?.closeAll().catch(() => {});
 		return result.exitCode;
 	} catch (cause) {
 		// BI-11.1：会话错误文本输出前按 config [telemetry] sanitize_errors 脱敏
