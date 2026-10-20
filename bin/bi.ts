@@ -42,7 +42,7 @@ import { join } from "node:path";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
-import { builtinSlashCandidates } from "../packages/tui/src/mount/candidate-menu";
+import { builtinSlashCandidates, COMMAND_CATALOG } from "../packages/tui/src/mount/candidate-menu";
 import { createVisTokenAuthority } from "../packages/tui/src/vis/vis-token-authority";
 
 type RawCapableStdin = AsyncIterable<Uint8Array> & { isTTY?: boolean; setRawMode?: (on: boolean) => void };
@@ -152,9 +152,12 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 				return expanded.ok ? { prompt: expanded.text } : expanded.error.message;
 			}
 			const known = menuCandidates.some((c) => `/${c.name}` === head);
-			return known
-				? `斜杠命令 ${head} 的执行面尚未接线(内置候选,执行归后续卡)。`
-				: `未知斜杠命令: ${head}(可用: /permissions)`;
+			if (known) {
+				return `斜杠命令 ${head} 的执行面尚未接线(内置候选,执行归后续卡)。`;
+			}
+			// F-ST-01：未知斜杠命令提示从 COMMAND_CATALOG（单一事实源）渲染完整指令列表。
+			const catalog = COMMAND_CATALOG.map((c) => `/${c.name}`).join(" ");
+			return `未知斜杠命令: ${head}\n可用指令: ${catalog}`;
 		};
 
 		// TUI-ALIGN-4a：键位注册表装配（~/.bi 优先,项目 .bi/ 兜底;文件缺失=纯默认;
@@ -262,6 +265,19 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 					stdin.setRawMode?.(false);
 				} catch {
 					// 忽略
+				}
+			}
+			// F-ST-06 修复：REPL 退出后显式中断 stdin 读取。否则 runRepl 返回后
+			// `for await (stdin)` 仍挂起未结束的读（InputLoop.consume 仅在下一
+			// chunk 抵达才 break），事件循环不排空，进程挂起直至被 SIGKILL（exit -9）。
+			// destroy 令 stdinChunks 生成器 finally 触发 keys.end() 并收束 consume，
+			// 进程得以 exit 0 干净退出（与 Ctrl+C 空稿退出路径同源）。
+			const anyStdin = stdin as unknown as { destroy?: (err?: unknown) => void };
+			if (typeof anyStdin.destroy === "function") {
+				try {
+					anyStdin.destroy();
+				} catch {
+					// 忽略：销毁失败不阻断退出
 				}
 			}
 		}

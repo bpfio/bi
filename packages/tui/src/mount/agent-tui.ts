@@ -80,9 +80,9 @@ import { charWidth, textWidth } from "../components/cjk-width";
 import { TranscriptProjection, type TranscriptKind } from "../transcript-projection";
 import { StyledTranscript } from "../transcript-styled";
 import type { MarkdownRow } from "../render/markdown";
-import { builtinSlashCandidates, CandidateMenu, type CandidatesProvider } from "./candidate-menu";
+import { builtinSlashCandidates, CandidateMenu, COMMAND_CATALOG, type CandidatesProvider } from "./candidate-menu";
 import { TranscriptSearch } from "./transcript-search";
-import { DEFAULT_KEYBINDINGS, actionForKey, type Keybindings } from "./keybindings";
+import { DEFAULT_KEYBINDINGS, actionForKey, type KeybindingAction, type Keybindings } from "./keybindings";
 import { TokenHudTracker } from "./token-hud";
 import {
 	dispatchGateCommand,
@@ -406,6 +406,8 @@ export class AgentTuiSession {
 	#turnController: AbortController | undefined;
 	#turnCancelled = false;
 	#exitRequested = false;
+	/** 经 /exit·/quit 命令退出的标记（与 Esc 二段退出的 state=exited 区分；诊断面）。 */
+	#exitedViaCommand = false;
 	#state: TuiSessionState = "idle";
 	#rounds = 0;
 	#activeOverlay: ApprovalOverlay | undefined;
@@ -798,6 +800,16 @@ export class AgentTuiSession {
 		if (isModeCommandLine(prompt)) {
 			return await this.#handleModeCommand(prompt);
 		}
+		// F-ST-01：/help 本地回执（指令表 + 键位表，不入模型回合、不落 JSONL）。
+		// F-ST-11：候选菜单接受补全会缀尾空格——一律以 trim 后的头比对，防 "/exit " 跌进兜底。
+		const commandHead = prompt.trim();
+		if (commandHead === "/help") {
+			return await this.#handleHelp();
+		}
+		// F-ST-06 工单：/exit（/quit 别名）优雅退出 REPL（同 /mode 本地回执语义，置 exited 态）。
+		if (commandHead === "/exit" || commandHead === "/quit") {
+			return await this.#handleExit();
+		}
 		// 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面）：/ 开头且装配层注入了
 		// handler 时走命令面,返回两形态——
 		// - string = 本地回执:不入模型回合、不落会话 JSONL,输出以 system 行
@@ -1065,6 +1077,73 @@ export class AgentTuiSession {
 		this.#transcribe("system", outcome.text);
 		this.#frame();
 		return this.#result("finish", outcome.text);
+	}
+
+	/**
+	 * /help（F-ST-01）：本地回执——列指令表（COMMAND_CATALOG 单一事实源）
+	 * + 键位表（对齐当前键位注册表；Esc 取消/二段退出为硬编码语义）。
+	 * 不入模型回合、不落会话 JSONL（同 /mode 语义），以 system 行转录上屏。
+	 */
+	async #handleHelp(): Promise<TuiSessionResult> {
+		if (this.#sessionId === undefined) {
+			throw new TuiSessionError("not-started", "会话未初始化：先调用 start()");
+		}
+		const rows: string[] = ["── 指令 ───────────────────────────────"];
+		for (const c of COMMAND_CATALOG) {
+			rows.push(`${c.usage.padEnd(22)} ${c.description}`);
+		}
+		rows.push("── 键位 ───────────────────────────────");
+		rows.push(`${this.#keyLabel("editor.clear-or-exit", "ctrl+c")}  空稿退出 / 非空清空草稿`);
+		rows.push(`${this.#keyLabel("editor.exit", "ctrl+d")}  退出 REPL（弃稿）`);
+		rows.push("Esc               回合中取消 / 二段退出");
+		rows.push(`${this.#keyLabel("search.open", "ctrl+f")}  转录内搜索`);
+		rows.push(`${this.#keyLabel("editor.external-edit", "ctrl+e")}  外部编辑器桥`);
+		this.#transcribe("system", rows.join("\n"));
+		this.#frame();
+		return this.#result("finish", "");
+	}
+
+	/**
+	 * /exit（/quit 别名，F-ST-06 工单）：优雅退出 REPL。
+	 * - idle：置 exited 态（会话按当前持久化状态收束，不落额外条目）；
+	 * - running（防御：当前 REPL 架构下 /exit 不可在回合中经编辑器提交，此处兜底）：
+	 *   先置 exitRequested + abort 在飞回合，再置 exited 态；
+	 * 回执 system 行上屏（同 /mode 语义），返回 endedAs=exit。REPL 主回路据
+	 * 此终场（endedAs=command-exit → 进程 exit 0）。
+	 */
+	async #handleExit(): Promise<TuiSessionResult> {
+		if (this.#sessionId === undefined) {
+			throw new TuiSessionError("not-started", "会话未初始化：先调用 start()");
+		}
+		if (this.#state === "running") {
+			this.#exitRequested = true;
+			this.#turnController?.abort();
+		}
+		this.#exitedViaCommand = true;
+		this.#state = "exited";
+		this.#transcribe("system", "[exit] 已退出 REPL（会话按当前状态收束）");
+		this.#frame();
+		return this.#result("exit", "");
+	}
+
+	/** 键位注册表中的动作映射为展示标签（ctrl+c → Ctrl+C；缺省回退）。 */
+	#keyLabel(action: KeybindingAction, fallback: string): string {
+		const bound = this.#bindings[action] ?? fallback;
+		const label = bound.startsWith("ctrl+") ? `Ctrl+${bound.slice("ctrl+".length).toUpperCase()}` : bound.toUpperCase();
+		return label.length < 6 ? label.padEnd(6) : label;
+	}
+
+	/** 是否为 /exit·/quit 退出命令（REPL 主回路据此立即终场；trim 比对防菜单补全尾空格，F-ST-11）。 */
+	isExitCommand(line: string): boolean {
+		const head = line.trim();
+		return head === "/exit" || head === "/quit";
+	}
+
+	/** 首屏操作提示（F-ST-01 工单）：REPL 启动首帧前调用一次，落 system 行。 */
+	showBanner(): void {
+		if (this.#sessionId === undefined) return;
+		this.#transcribe("system", "？ 指令与键位：输入 /help 查看 · 退出：Ctrl+D 或 /exit");
+		this.#frame();
 	}
 
 	/**

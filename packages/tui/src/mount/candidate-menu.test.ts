@@ -39,10 +39,10 @@ describe("BI-27.4 · builtinSlashCandidates 与过滤", () => {
   });
 
   test("filterSlashCandidates：前缀优先原序；模糊子序列补位；去重", () => {
-    // "re" 前缀命中 reload / reload-tui / rewind（builtin 原序；BI-11 接线起 /rewind 入面）
+    // "re" 前缀命中 rewind（builtin 原序；config/reload/reload-tui 已移出内置目录）
     const re = filterSlashCandidates("/re", builtinSlashCandidates);
-    expect(re.map((c) => c.name)).toEqual(["reload", "reload-tui", "rewind"]);
-    // 模糊命中："cf" 无前缀命中 → 子序列 c…f 命中 config
+    expect(re.map((c) => c.name)).toEqual(["rewind"]);
+    // 模糊命中："cf" 无前缀命中 → 子序列 c…f 命中 compact
     const fuzzy = filterSlashCandidates("/cf", [{ name: "copy", description: "" }, { name: "config", description: "" }]);
     expect(fuzzy.map((c) => c.name)).toEqual(["config"]);
     // 前缀与模糊混合：前缀排前
@@ -67,7 +67,7 @@ describe("BI-27.4 · builtinSlashCandidates 与过滤", () => {
     expect(filterSlashCandidates("/", many)).toHaveLength(CANDIDATE_MENU_MAX_ITEMS);
     // 大小写不敏感前缀
     const folded = filterSlashCandidates("/RE", builtinSlashCandidates);
-    expect(folded.map((c) => c.name)).toEqual(["reload", "reload-tui", "rewind"]);
+    expect(folded.map((c) => c.name)).toEqual(["rewind"]);
   });
 });
 
@@ -81,13 +81,13 @@ describe("BI-27.4 · CandidateMenu 状态机", () => {
     menu.sync("/");
     expect(menu.visible).toBe(true);
     expect(menu.items.length).toBeGreaterThan(0);
-    menu.sync("/rel");
+    menu.sync("/co");
     expect(menu.visible).toBe(true);
-    expect(menu.items.map((c) => c.name)).toEqual(["reload", "reload-tui"]);
+    expect(menu.items.map((c) => c.name)).toEqual(["compact", "copy"]);
     // 含空白（进入参数阶段）：关闭
-    menu.sync("/reload ");
+    menu.sync("/compact ");
     expect(menu.visible).toBe(false);
-    menu.sync("/reload x");
+    menu.sync("/compact x");
     expect(menu.visible).toBe(false);
   });
 
@@ -100,26 +100,26 @@ describe("BI-27.4 · CandidateMenu 状态机", () => {
 
   test("moveUp/moveDown 双端钳制；sync 复位选择", () => {
     const menu = new CandidateMenu();
-    menu.sync("/rel"); // 2 项：reload / reload-tui
+    menu.sync("/co"); // 2 项：compact / copy
     expect(menu.selectedIndex).toBe(0);
     menu.moveDown();
     expect(menu.selectedIndex).toBe(1);
     menu.moveDown(); // 底端钳制
     expect(menu.selectedIndex).toBe(1);
-    expect(menu.selected?.name).toBe("reload-tui");
+    expect(menu.selected?.name).toBe("copy");
     menu.moveUp();
     menu.moveUp(); // 顶端钳制
     expect(menu.selectedIndex).toBe(0);
     // 草稿变化 → 选择复位
-    menu.sync("/rel");
+    menu.sync("/co");
     expect(menu.selectedIndex).toBe(0);
   });
 
   test("accept()：回吐 '/name '（尾随空格）；不可见 undefined", () => {
     const menu = new CandidateMenu();
     menu.sync("/");
-    menu.moveDown();
-    expect(menu.accept()).toBe("/config ");
+    menu.moveDown(); // 首项 btw → 次项 mode
+    expect(menu.accept()).toBe("/mode ");
     menu.dismiss();
     expect(menu.accept()).toBeUndefined();
   });
@@ -169,10 +169,10 @@ describe("BI-27.4 · CandidateMenu 状态机", () => {
 
   test("completeNonSlash：斜杠草稿恒 undefined（归菜单）；前缀延伸补全语义", () => {
     const menu = new CandidateMenu();
-    expect(menu.completeNonSlash("/rel")).toBeUndefined();
-    // 内置名为斜杠命令："rel" 前缀延伸出 ["reload","reload-tui"]，
-    // 第一共同前缀 = "reload"（其一为另一的前缀）→ 补全为最短候选名。
-    expect(menu.completeNonSlash("rel")).toBe("reload");
+    expect(menu.completeNonSlash("/re")).toBeUndefined();
+    // 内置名为斜杠命令："re" 前缀延伸出 ["rewind"]（reload/reload-tui 已移出内置目录），
+    // 唯一候选整稿补全。
+    expect(menu.completeNonSlash("re")).toBe("rewind");
   });
 });
 
@@ -180,18 +180,18 @@ describe("BI-27.4 · CandidateMenu.lines 渲染行", () => {
   test("不可见返回空数组；可见时 `/name  描述` 对齐 + 选中行 ❯ 标记", () => {
     const menu = new CandidateMenu();
     expect(menu.lines(60)).toEqual([]); // 未 sync：不可见
-    menu.sync("/rel");
+    menu.sync("/co");
     const lines = menu.lines(60);
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain("/reload");
-    expect(lines[0]!.startsWith("❯ /reload")).toBe(true); // 选中行标记
-    expect(lines[1]!.startsWith("  /reload-tui")).toBe(true);
+    expect(lines[0]).toContain("/compact");
+    expect(lines[0]!.startsWith("❯ /compact")).toBe(true); // 选中行标记
+    expect(lines[1]!.startsWith("  /copy")).toBe(true);
     // name 列对齐：两行命令名后的描述起始列一致
-    expect(lines[0]!.indexOf("免重启")).toBe(lines[1]!.indexOf("免重启"));
+    expect(lines[0]!.indexOf("紧缩当前上下文")).toBe(lines[1]!.indexOf("复制上一轮回答到系统剪贴板"));
     // 选择移动 → ❯ 标记跟随
     menu.moveDown();
-    expect(menu.lines(60)[0]!.startsWith("  /reload")).toBe(true);
-    expect(menu.lines(60)[1]!.startsWith("❯ /reload-tui")).toBe(true);
+    expect(menu.lines(60)[0]!.startsWith("  /compact")).toBe(true);
+    expect(menu.lines(60)[1]!.startsWith("❯ /copy")).toBe(true);
   });
 
   test("超宽截断：cols 不足时按显示列宽 … 收尾（永不越过 cols）", () => {

@@ -654,8 +654,8 @@ export interface ReplResult {
   readonly sessionId: string | undefined;
   /** 实际提交的输入行数（含后被取消/出错的回合）。 */
   readonly submittedLines: number;
-  /** 退出原因：eof=输入流耗尽；exit-key=Ctrl+C 空/Ctrl+D；session-exited=会话 Esc 二段退出。 */
-  readonly endedAs: "eof" | "exit-key" | "session-exited";
+  /** 退出原因：eof=输入流耗尽；exit-key=Ctrl+C 空/Ctrl+D；session-exited=会话 Esc 二段退出；command-exit=/exit·/quit 命令退出。 */
+  readonly endedAs: "eof" | "exit-key" | "session-exited" | "command-exit";
   /** endedAs === "exit-key" 时记录具体按键。 */
   readonly exitKey: "ctrl-c" | "ctrl-d" | undefined;
   /** 最后一回合的收束结果（无回合则 undefined）。 */
@@ -687,6 +687,7 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   prompt.update(editor.draft, editor.cursor);
   onPrompt(editor.draft);
   session.app.render(); // 首帧：提示行落布（writer 面可见）
+  session.showBanner(); // F-ST-01 工单：首屏操作提示（落 system 行）
 
   let submittedLines = 0;
   let lastResult: TuiSessionResult | undefined;
@@ -870,7 +871,15 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
             prompt.hide(); // 提示行让位，状态行透出
             session.app.render();
             submittedLines += 1;
-            trackTurn(session.submit(action.line));
+            const line = action.line;
+            const turn = session.submit(line);
+            // /exit·/quit 命令本地回执：提交即终场(不等后续输入)，REPL 据此干净退出。
+            if (session.isExitCommand(line)) {
+              lastResult = await turn;
+              endedAs = "command-exit";
+              break;
+            }
+            trackTurn(turn);
           } else if (action.kind === "exit") {
             endedAs = "exit-key";
             exitKey = action.key;

@@ -760,6 +760,99 @@ describe("BI-30.1 · 斜杠命令执行面", () => {
 		}
 	});
 
+	test("F-ST-01 · /help：指令表 + 键位表本地回执，不入模型回合", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]); // 调用即抛 → 断言不入模型回合
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 40,
+				cols: 100,
+				hooks: sink.hooks,
+			});
+			const sessionId = await session.start("help");
+			const result = await session.submit("/help");
+			expect(result.endedAs).toBe("finish");
+			const l3 = session.projection.render();
+			const text = l3.join("\n");
+			// 指令表来自 COMMAND_CATALOG 单一事实源
+			expect(text).toContain("/help");
+			expect(text).toContain("/exit");
+			expect(text).toContain("/btw");
+			// 键位表
+			expect(text).toContain("Ctrl+D");
+			expect(text).toContain("Ctrl+F");
+			expect(text).toContain("Esc");
+			// 本地回执语义：不落会话 JSONL（无 user/assistant 条目）
+			expect(l3.some((l) => l.startsWith("[user]"))).toBe(false);
+			const manager = new SessionManager({ rootDir: join(root, "sessions") });
+			expect(await manager.entries(sessionId)).toHaveLength(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("F-ST-06 · /exit（/quit 别名）：优雅退出，置 exited 态，再提交报错", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session.start("exit");
+			const result = await session.submit("/exit");
+			expect(result.endedAs).toBe("exit");
+			expect(session.state).toBe("exited");
+			// 别名 /quit 同样退出
+			const session2 = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session2.start("quit");
+			const r2 = await session2.submit("/quit");
+			expect(r2.endedAs).toBe("exit");
+			expect(session2.state).toBe("exited");
+			// F-ST-11：候选菜单接受补全会缀尾空格——"/exit " 必须同样命中退出，不得跌进兜底
+			const session3 = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session3.start("exit-trailing-space");
+			const r3 = await session3.submit("/exit ");
+			expect(r3.endedAs).toBe("exit");
+			expect(session3.state).toBe("exited");
+			// 已退出后再提交 → 结构化报错
+			await expect(session.submit("再来一句")).rejects.toThrow(TuiSessionError);
+		} finally {
+			await cleanup();
+		}
+	});
+
 	test("展开失败（!ok）：error.message 本地错误文本上屏，不入模型回合", async () => {
 		const { root, cleanup } = await makeRoot();
 		try {

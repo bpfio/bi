@@ -100,4 +100,63 @@ describe.skipIf(!RUN || !(await hasPython3()))("BI-26.4 pty 真人面回归", ()
 			await rm(home, { recursive: true, force: true });
 		}
 	}, 60_000);
+
+	test("F-ST-06：boot 后首个单键 Ctrl+C 即退出（exit 0，非 -9 挂起）", async () => {
+		const fake = startFakeEndpoint({ echo: true, mode: "anthropic" });
+		const home = await mkdtemp(join(tmpdir(), "bi-pty-"));
+		await mkdir(join(home, ".bi"), { recursive: true });
+		const config = [
+			"[providers.entries.fake]",
+			'api_key_env = "BI_FAKE_KEY"',
+			`base_url = "${fake.url}"`,
+			'kind = "anthropic"',
+			'models = ["fake-echo"]',
+			"",
+			"[providers]",
+			'default = "fake"',
+			"",
+			"[models]",
+			'default = "main"',
+			"",
+			"[models.entries.main]",
+			'provider = "fake"',
+			'model = "fake-echo"',
+			"",
+		].join("\n");
+		await writeFile(join(home, ".bi", "config.toml"), config, { mode: 0o600 });
+		try {
+			// 仅发一个 Ctrl+C（\x03）作首键：空稿 → 应干净退出（exit 0）。
+			// 修复前 InputLoop/KeyStream 在 runRepl 返回后仍挂起 stdin 读，
+			// 事件循环不排空，进程挂起直至被 SIGKILL（---exit=-9）。
+			const { stdout } = await run(
+				"python3",
+				[
+					join(ROOT, "scripts", "pty-probe.py"),
+					"--rows",
+					"40",
+					"--cols",
+					"100",
+					"--boot-wait",
+					"2",
+					"--tail-wait",
+					"5",
+					"--keys",
+					"\\x03",
+					"--",
+					"bun",
+					join(ROOT, "bin", "bi.ts"),
+				],
+				{
+					env: { PATH: process.env.PATH ?? "/usr/bin", HOME: home, BI_FAKE_KEY: "dummy" },
+					timeout: 45_000,
+					maxBuffer: 16 * 1024 * 1024,
+				},
+			);
+			expect(stdout).toContain("---exit=0");
+			expect(stdout).not.toContain("---exit=-9");
+		} finally {
+			fake.close();
+			await rm(home, { recursive: true, force: true });
+		}
+	}, 60_000);
 });

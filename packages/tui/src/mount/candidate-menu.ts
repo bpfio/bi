@@ -31,8 +31,6 @@
 
 import { charWidth, textWidth } from "../components/cjk-width";
 import type { FileCompletionItem } from "./file-completion";
-import { gateCommandCandidates } from "./gate-commands";
-import { modeCommandCandidates } from "./mode-command";
 
 /** 单条候选（与 core SlashCommandSurfaceEntry 字段同构；name 不含前导 "/"）。 */
 export interface Candidate {
@@ -47,22 +45,47 @@ export interface Candidate {
 export type CandidatesProvider = (draft: string) => readonly Candidate[];
 
 /**
- * 内置斜杠命令候选（BI-27.4 缺省面）：仅收录 tui 包内已存在的命令
- * （copy/config/reload/reload-tui，摘要取各自定义原文）。未立项命令不
- * 假冒条目；自定义命令经 CandidatesProvider 注入（bin/** 装配缝）。
- * BI-11 接线：手动门三命令（/compact /rewind /clear，mount/gate-commands.ts）
- * 与 BI-20 接线：diff 审查门入口（/diff，mount/diff-gate.ts）、四态工作模式
- * 入口（/mode，mount/mode-command.ts）一并入面。
+ * 指令目录（F-ST-01 单一事实源）：TUI 内置斜杠指令全集。
+ * 候选菜单、未知命令提示、`/help` 输出三处统一从此渲染。
+ * - name：不含前导 "/"，与 Candidate 同构；
+ * - usage：展示用用法串；
+ * - description：候选菜单 / /help 展示用描述；
+ * - local：true = 本地回执（不入模型回合、不落会话 JSONL，同 /mode 语义）；
+ *   false = 展开为提示词走模型回合（自定义命令的语义）。
+ * 内置全集（BI-27.4 + F-ST-01）：btw / mode / compact / rewind / clear /
+ * diff / copy / permissions / help / exit。config / reload / reload-tui 为未接线
+ * 占位（执行面归后续卡），不列入内置目录（候选菜单与 /help 同源渲染）。
  */
-export const builtinSlashCandidates: readonly Candidate[] = [
-  { name: "copy", description: "复制上一轮回答到系统剪贴板" },
-  { name: "config", description: "打开交互式设置面板（查看 / 修改三级 TOML 配置）" },
-  { name: "reload", description: "免重启热重载全部配置（config.toml / tui.toml / local.toml）" },
-  { name: "reload-tui", description: "免重启热重载终端外观偏好（tui.toml）" },
-  ...gateCommandCandidates,
-  { name: "diff", description: "展示工作区未提交变更并过 diff 审查门" },
-  ...modeCommandCandidates,
+export interface CommandCatalogEntry {
+	readonly name: string;
+	readonly usage: string;
+	readonly description: string;
+	/** true = 本地回执（不入模型回合）；false = 展开提示词入模型回合。 */
+	readonly local: boolean;
+}
+
+export const COMMAND_CATALOG: readonly CommandCatalogEntry[] = [
+	{ name: "btw", usage: "/btw <问题>", description: "旁路问答（不污染主会话历史）", local: true },
+	{ name: "mode", usage: "/mode [plan|edit|build|yolo]", description: "切换工作模式（无参显示当前态）", local: true },
+	{ name: "compact", usage: "/compact [提示词]", description: "紧缩当前上下文", local: true },
+	{ name: "rewind", usage: "/rewind [N]", description: "回退最近 N 轮对话", local: true },
+	{ name: "clear", usage: "/clear", description: "清空当前会话上下文与转录", local: true },
+	{ name: "diff", usage: "/diff", description: "展示工作区未提交变更并过审查门", local: true },
+	{ name: "copy", usage: "/copy", description: "复制上一轮回答到系统剪贴板", local: true },
+	{ name: "permissions", usage: "/permissions", description: "查看 / 修改权限规则（BI-28.3）", local: true },
+	{ name: "help", usage: "/help", description: "显示本帮助（指令表 + 键位表）", local: true },
+	{ name: "exit", usage: "/exit（别名 /quit）", description: "优雅退出 REPL", local: true },
 ];
+
+/**
+ * 内置斜杠命令候选（F-ST-01：与 COMMAND_CATALOG 同源渲染）：由指令目录映射
+ * 而来（同名同描述，命令名不含前导 "/"，与 core SlashCommandSurfaceEntry 同构）。
+ * 自定义命令经 CandidatesProvider（bin/** 装配缝）附加其上。
+ */
+export const builtinSlashCandidates: readonly Candidate[] = COMMAND_CATALOG.map((c) => ({
+	name: c.name,
+	description: c.description,
+}));
 
 /** 缺省候选面：忽略草稿，恒回吐内置列表。 */
 export function builtinCandidatesProvider(): CandidatesProvider {

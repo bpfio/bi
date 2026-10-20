@@ -1299,16 +1299,16 @@ describe("BI-27.4 · runRepl 候选菜单接线", () => {
       await until(() => session.candidateMenu.selectedIndex === 0);
       expect(prompts.at(-1)).toBe("/"); // 草稿未被动过（历史未闯入）
 
-      // Tab 接受选中 → 补全 "/copy "（builtin 首项），菜单随草稿含空白关闭
+      // Tab 接受选中 → 补全 "/btw "（builtin 首项），菜单随草稿含空白关闭
       stream.push(tabKey);
-      await until(() => prompts.at(-1) === "/copy ");
+      await until(() => prompts.at(-1) === "/btw ");
       expect(session.candidateMenu.visible).toBe(false);
 
-      // Ctrl+C 清空已补全草稿，再开菜单：Enter 同样接受（/re → /reload ）
+      // Ctrl+C 清空已补全草稿，再开菜单：Enter 同样接受（/re → /rewind ）
       stream.push(ctrlC);
       await until(() => prompts.at(-1) === "");
       for (const key of [...text("/re"), enter]) stream.push(key);
-      await until(() => prompts.at(-1) === "/reload ");
+      await until(() => prompts.at(-1) === "/rewind ");
       expect(session.candidateMenu.visible).toBe(false);
 
       // Ctrl+C 清空已补全草稿
