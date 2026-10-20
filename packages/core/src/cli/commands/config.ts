@@ -29,7 +29,15 @@ import {
   createDefaultConfig,
   setDottedPath,
   validateConfigLayer,
+  verifySchema,
+  subagentSchema,
+  ptcSchema,
+  cronSchema,
+  contextSchema,
+  memorySchema,
+  type BiConfig,
   type ConfigIssue,
+  type Schema,
 } from "../../config/schema";
 
 /** 子命令用法错误（handleSubcommand 统一归 exit 2）。 */
@@ -63,11 +71,44 @@ export function renderConfigValue(value: unknown): string {
 }
 
 /**
+ * 挂载式分区（不进 DEFAULT_BI_CONFIG 的 17 根键，但可经 `bi config` 配置）。
+ * 单一事实来源 = schema.ts 的分区 schema；本表只做"键面挂载"与"缺省解析"两件事，
+ * 不引入任何硬编码键名，零与 schema 漂移。
+ */
+export const MOUNTED_SECTIONS: Readonly<Record<string, Schema<unknown>>> = {
+  verify: verifySchema,
+  subagent: subagentSchema,
+  ptc: ptcSchema,
+  cron: cronSchema,
+  context: contextSchema,
+  memory: memorySchema,
+};
+
+/**
+ * 把挂载式分区的 schema 缺省回填进配置树：仅当该分区在合并结果中未显式声明时
+ * 才补其 schema 默认（缺省路径零行为差——消费方读到的值与器官装配门读取点一致：
+ * 未声明时恒为分区 schema 缺省）。已声明分区保持合并值不动。
+ * 用于 get/list 读取缺省态、set 选取强类型化样本。绝不改动 schema 的
+ * DEFAULT_BI_CONFIG 根键表（恒 17 根）。
+ */
+export function withMountedDefaults(config: BiConfig): BiConfig {
+  const merged = { ...config } as Record<string, unknown>;
+  for (const name of Object.keys(MOUNTED_SECTIONS)) {
+    if (merged[name] === undefined) {
+      merged[name] = MOUNTED_SECTIONS[name]!.defaultValue();
+    }
+  }
+  return merged as BiConfig;
+}
+
+/**
  * 推导键值面：默认配置树中所有标量叶子（含 string[]），跳过表 / 记录 / 实体 / 实体数组。
  * 由 schema 默认树推导，单一事实来源：
  *   - 原始值（string/number/boolean）= 叶子；
  *   - 数组：空数组或全字符串数组视为可设置 string[] 叶子（实体表默认空，设值会被 schema 校验拒绝）；
  *   - 非字符串非空数组（实体表）跳过；对象（表/记录）递归。
+ * 另挂载六分区（verify/subagent/ptc/cron/context/memory）的 schema 叶子（分区前径），
+ * 其缺省不进 DEFAULT_BI_CONFIG 根键树，故单独从分区 schema 默认推导。
  */
 export function configKeySurface(): string[] {
   const defaults = createDefaultConfig();
@@ -87,6 +128,9 @@ export function configKeySurface(): string[] {
     }
   };
   walk(defaults, []);
+  for (const [name, schema] of Object.entries(MOUNTED_SECTIONS)) {
+    walk(schema.defaultValue(), [name]);
+  }
   return keys.sort();
 }
 
@@ -136,7 +180,7 @@ export async function handleConfig(
     if (action === "list") {
       if (args.length > 0) throw new ConfigUsageError("list 不接受参数");
       const service = new ConfigService({ homeDir: deps.homeDir, workDir: deps.homeDir });
-      const config = await service.load();
+      const config = withMountedDefaults(await service.load());
       for (const key of surface) {
         io.out(`${key} = ${renderConfigValue(navigate(config, key))}`);
       }
@@ -150,7 +194,7 @@ export async function handleConfig(
         throw new UnknownConfigKeyError(key, surface);
       }
       const service = new ConfigService({ homeDir: deps.homeDir, workDir: deps.homeDir });
-      const value = navigate(await service.load(), key);
+      const value = navigate(withMountedDefaults(await service.load()), key);
       io.out(renderConfigValue(value));
       return 0;
     }
@@ -162,7 +206,7 @@ export async function handleConfig(
       if (!surface.includes(key)) {
         throw new UnknownConfigKeyError(key, surface);
       }
-      const sample = navigate(createDefaultConfig(), key);
+      const sample = navigate(withMountedDefaults(createDefaultConfig()), key);
       const coerced = coerceConfigValue(rawValue, sample);
       if (coerced.error !== undefined) {
         io.err(`bi config: ${coerced.error}`);
@@ -195,11 +239,13 @@ export async function handleConfig(
   } catch (cause) {
     if (cause instanceof ConfigUsageError) {
       io.err(`bi config: ${cause.message}`);
+      io.err("运行 bi config --help 查看用法");
       return 2;
     }
     if (cause instanceof UnknownConfigKeyError) {
       io.err(`bi config: 未知配置键 "${cause.key}"。`);
       io.err(`合法键（共 ${cause.legal.length} 个）: ${cause.legal.join(", ")}`);
+      io.err("运行 bi config --help 查看用法");
       return 2;
     }
     const message = cause instanceof Error ? cause.message : String(cause);

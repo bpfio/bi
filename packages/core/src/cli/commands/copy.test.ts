@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "../../session/manager";
 import { type CmdRunner, type ClipboardPlatform, copyToClipboard, detectPlatform, handleCopy } from "./copy";
+import { runBi } from "../main";
 import type { SubcommandDeps } from "./dispatch";
 
 let dirs: string[] = [];
@@ -350,5 +351,32 @@ describe("copyToClipboard 纯函数（不依赖 handleCopy）", () => {
     const r = await copyToClipboard("x", "windows" as ClipboardPlatform, fakeRunner({ available: ["clip"], log }));
     expect(r.written).toBe(true);
     expect(log[0]).toBe("clip");
+  });
+});
+
+describe("PROD-2 copy · help 面与用法提示", () => {
+  test("bi copy --help → exit 0 且含 -f <field>", async () => {
+    const c = collector();
+    const code = await runBi(["copy", "--help"], { ...c.io });
+    expect(code).toBe(0);
+    expect(c.out.join("\n")).toContain("-f <field>");
+    expect(c.out.join("\n")).not.toContain("运行 bi copy --help 查看用法");
+  });
+
+  test("用法错误尾部追加 help 提示（非法字段 → exit 2）", async () => {
+    const mgr = await tmpManager();
+    const c = collector();
+    const code = await handleCopy(["s1", "-f", "bogus"], c.io, deps({ sessionsRoot: mgr.rootDir, cmdRunner: fakeRunner({ available: [] }) }));
+    expect(code).toBe(2);
+    expect(c.err.join("\n")).toContain("运行 bi copy --help 查看用法");
+  });
+
+  test("PROD-2 验收补漏：未知旗标不再静默吞掉 → exit 2 + help 提示", async () => {
+    const mgr = await tmpManager();
+    const c = collector();
+    const code = await handleCopy(["--bogus"], c.io, deps({ sessionsRoot: mgr.rootDir, cmdRunner: fakeRunner({ available: [] }) }));
+    expect(code).toBe(2);
+    expect(c.err.join("\n")).toContain("未知旗标: --bogus");
+    expect(c.err.join("\n")).toContain("运行 bi copy --help 查看用法");
   });
 });

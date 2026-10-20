@@ -179,10 +179,12 @@ export async function handleCopy(
   } catch (cause) {
     if (cause instanceof CopyUsageError) {
       io.err(`bi copy: ${cause.message}`);
+      io.err("运行 bi copy --help 查看用法");
       return 2;
     }
     if (cause instanceof InvalidFieldError) {
       io.err(`bi copy: ${cause.message}`);
+      io.err("运行 bi copy --help 查看用法");
       return 2;
     }
     throw cause;
@@ -285,6 +287,11 @@ function parseCopyArgs(rest: readonly string[]): { sessionId?: string; field: Co
       rest2.splice(i, 1);
       i -= 1;
     }
+  }
+  // 未知旗标：PROD-2 验收补漏——此前 --bogus 之类被静默吞掉（违反「未知用法 exit 2」）
+  const unknownFlags = rest2.filter((t) => t.startsWith("-"));
+  if (unknownFlags.length > 0) {
+    throw new CopyUsageError(`未知旗标: ${unknownFlags.join(" ")}`);
   }
   // 剩余裸词：至多一个位置参数 = sessionId
   const positionals = rest2.filter((t) => !t.startsWith("-"));

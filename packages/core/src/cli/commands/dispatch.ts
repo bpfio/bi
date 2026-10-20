@@ -85,6 +85,162 @@ export const SUBCOMMANDS: readonly string[] = [
   "copy",
 ];
 
+/**
+ * 子命令一句话摘要（主 help 对齐列表 + 各子命令 help 头部复用）。
+ * 文案与 dispatch 内各 handler 的真实参数面一致（先读 handler 再写，不臆造）。
+ */
+export const SUBCOMMAND_SUMMARIES: Readonly<Record<string, string>> = {
+  init: "脚手架工作区配置（.bi/local.toml）与 BI.md 草稿",
+  session: "列出会话元数据（JSON 行，最新在前）",
+  fork: "从指定节点分叉新会话",
+  export: "导出会话为 markdown / json / html",
+  transfer: "脱敏归档导出 / 归档导入",
+  acp: "stdio 会话桥接（JSON-RPC 帧）",
+  upgrade: "自升级：manifest → sha256 门 → 原子换装",
+  doctor: "全链路配置 / 凭据 / 网络体检",
+  vis: "本地 Web 会话可视化（Bun.serve）",
+  config: "全局配置键值读写（get / set / list）",
+  copy: "复制会话字段到剪贴板（或 stdout 降级）",
+};
+
+/**
+ * 各子命令完整 usage 文案（help 面）。严格对应 dispatch/各 command handler 的真实
+ * 参数解析面：位置参数、旗标、合法值范围、真实示例，均从源码实测，不臆造选项。
+ * help 优先于用法校验——仅在 handleSubcommand 入口按 --help/-h 短路，不经过各 handler
+ * 的 parse 步骤，故不影响任何既有行为语义与退出码。
+ */
+export const SUBCOMMAND_HELP: Readonly<Record<string, string>> = {
+  init: `bi init [--dir <目录>]
+
+  脚手架当前工作区的 .bi/local.toml 模板与 BI.md 草稿。
+  已存在则不覆盖（幂等成功）。
+
+参数:
+  --dir <目录>   目标工作目录（缺省当前目录）
+
+示例:
+  bi init
+  bi init --dir ./packages/core`,
+  session: `bi session [--limit <n>]
+
+  列出会话元数据（JSON 行，最新在前），汇总条数走 stderr。
+
+参数:
+  --limit <n>   最多输出 n 个会话（非负整数；缺省全部）
+
+示例:
+  bi session
+  bi session --limit 10`,
+  fork: `bi fork <sessionId> <nodeId> [--title <标题>]
+
+  从源会话的指定节点分叉出新会话。目标缺失 → 结构化 exit 1。
+
+参数:
+  sessionId       源会话 ID（必填）
+  nodeId          分叉点节点 ID（必填）
+  --title <标题>   新会话标题（可选）
+
+示例:
+  bi fork abc123 node456
+  bi fork abc123 node456 --title 实验分支`,
+  export: `bi export <sessionId> [--format markdown|json|html] [--theme dark|light] [--out <path>]
+
+  导出会话为 markdown / json / html；无 --out 时内容直出 stdout。
+
+参数:
+  sessionId          目标会话 ID（必填）
+  --format <fmt>     渲染格式：markdown | json | html（缺省 markdown）
+  --theme <t>        html 主题：dark | light（仅 --format html 生效）
+  --out <path>       落盘路径（缺省直出 stdout）
+
+示例:
+  bi export abc123
+  bi export abc123 --format html --theme dark --out conv.html
+  bi export abc123 --format json`,
+  transfer: `bi transfer export --sanitize <sessionId> [--out <path>]
+bi transfer import <archive.json>
+
+  脱敏归档导出 / 归档导入（零外呼，脱敏通道）。
+
+子命令:
+  export --sanitize <sessionId> [--out <path>]   脱敏导出会话为归档 JSON
+  import <archive.json>                           从归档 JSON 重建会话
+
+示例:
+  bi transfer export --sanitize abc123
+  bi transfer export --sanitize abc123 --out archive.json
+  bi transfer import archive.json`,
+  acp: `bi acp
+
+  stdio 会话桥接面（JSON-RPC 帧）：v1 握手 + session/new +
+  session/prompt + session/end。不吃任何命令行参数，只吃 stdio 帧。
+
+示例:
+  bi acp < framed-requests.json`,
+  upgrade: `bi upgrade [--check] [--manifest-url <url>]
+
+  自升级真链：manifest 源解析 → sha256 门 → 原子换装。
+  无 manifest 源 → 结构化 exit 4（不假冒检查成功）。
+
+参数:
+  --check               只比对版本，不换装
+  --manifest-url <url>   指定 manifest 源（覆盖 BI_UPGRADE_MANIFEST_URL 环境变量）
+
+示例:
+  bi upgrade --check
+  bi upgrade --manifest-url https://example.com/manifest.json`,
+  doctor: `bi doctor
+
+  全链路体检：配置装载 / 凭据门 / 所配 provider 网络 / 沙箱探针 / 工具注册面。
+  exit 按发现项（全部 ok → 0，存在异常 → 1）。
+
+示例:
+  bi doctor`,
+  vis: `bi vis [sessionId] [--port N] [--host H]
+
+  本地 Web 会话可视化（Bun.serve）。缺省绑 127.0.0.1 + 随机端口。
+  非回环绑定强制 BI_VIS_AUTH_TOKEN，缺失则拒绝启动（exit 1）。
+
+参数:
+  sessionId        可选，启动后直链到该会话
+  --port N         监听端口（0-65535，缺省 0 = 内核随机选空闲）
+  --host H         监听地址（缺省 127.0.0.1）
+
+示例:
+  bi vis
+  bi vis abc123 --port 8080
+  bi vis --host 127.0.0.1 --port 5173`,
+  config: `bi config get <key> | bi config set <key> <value> | bi config list
+
+  全局 ~/.bi/config.toml 键值面（低频清账）。键面由 schema 默认树推导。
+
+子命令:
+  get <key>           读生效值（合并后）
+  set <key> <value>   写回全局配置（注释保留引擎；非法值结构化报错）
+  list                列出全部合法键 + 当前生效值
+
+示例:
+  bi config list
+  bi config get identity.name
+  bi config set telemetry.enabled true`,
+  copy: `bi copy [sessionId] [-f field]
+
+  复制会话字段到剪贴板（或 stdout 降级）。缺省复制「最近会话」的 id。
+  三平台剪贴板全缺失 → 降级 stdout（exit 0，不假冒）。
+
+参数:
+  sessionId      目标会话 ID（缺省最近会话）
+  -f <field>     字段：id | title | last-reply（缺省 id）
+
+示例:
+  bi copy
+  bi copy abc123 -f title
+  bi copy abc123 -f last-reply`,
+};
+
+/** help 旗标（短/长）。handleSubcommand 入口短路，帮助优先于用法校验。 */
+const SUBCOMMAND_HELP_FLAGS = new Set(["--help", "-h"]);
+
 /** 子命令输出汇（与 main 的 out/err 同形）。 */
 export interface SubcommandIo {
   out: (line: string) => void;
@@ -581,11 +737,24 @@ export async function handleSubcommand(
     io.err(`bi: 未知子命令 "${name}"`);
     return 2;
   }
+  // 帮助面：帮助优先于用法校验——入口按 --help/-h 短路，不经 handler 的 parse 步骤，
+  // 不影响任何既有行为语义与退出码（约束 #1：只加帮助面）。
+  if (restArgs.some((token) => SUBCOMMAND_HELP_FLAGS.has(token))) {
+    io.out(SUBCOMMAND_HELP[name] ?? `bi ${name}: 暂无用法说明。`);
+    return 0;
+  }
   try {
     return await handler(restArgs, io, deps);
   } catch (cause) {
-    if (cause instanceof SubUsageError) {
-      io.err(`bi ${name}: ${cause.message}`);
+    // 用法错误：本层 SubUsageError（init/session/fork/export/acp/upgrade/doctor）
+    // 与 vis.ts 自带同名 SubUsageError 共用类名——按名兜底捕获，避免跨模块循环依赖；
+    // 统一归 exit 2 并追加 help 提示。
+    const isUsageError =
+      cause instanceof SubUsageError ||
+      (cause instanceof Error && cause.name === "SubUsageError");
+    if (isUsageError) {
+      io.err(`bi ${name}: ${(cause as Error).message}`);
+      io.err(`运行 bi ${name} --help 查看用法`);
       return 2;
     }
     const message = cause instanceof Error ? cause.message : String(cause);

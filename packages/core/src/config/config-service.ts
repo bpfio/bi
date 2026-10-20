@@ -206,7 +206,8 @@ export class ConfigService {
       throw new ConfigError(
         `环境变量 ${envName} 未设置：provider "${providerName}" 通过 api_key_env 间接引用 API 密钥` +
           `（配置文件中不落明文）。请在 shell 配置（如 ~/.bashrc、~/.zshrc）或运行环境中设置 ` +
-          `${envName} 后重试；若该 provider 无需静态密钥（如 OAuth、本地推理），请在配置中清空 api_key_env。`,
+          `${envName} 后重试；若该 provider 无需静态密钥（如 OAuth、本地推理），请在配置中清空 api_key_env。` +
+          `\n运行 bi doctor 可体检定位配置问题`,
       );
     }
     return value;
@@ -334,7 +335,7 @@ export class ConfigService {
     try {
       parsed = tomlParse(text);
     } catch (error) {
-      throw new ConfigError(`${label} 解析失败（${filePath}）: ${errorText(error)}`);
+      throw new ConfigError(`${label} 解析失败（${filePath}）: ${errorText(error)}` + `\n运行 bi doctor 可体检定位配置问题`);
     }
     const layerIssues: ConfigIssue[] = [];
     let layer: BiConfigLayer | undefined;

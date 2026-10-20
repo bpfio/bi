@@ -514,3 +514,65 @@ describe("BI-24.1 doctor（体检器官接线，注入检查项零外呼）", ()
     expect(text).toContain("检查本机网络");
   });
 });
+
+// ---------------------------------------------------------------------------
+// PROD-2：每子命令独立 help 面（--help / -h → exit 0 + 真实用法关键词）
+// ---------------------------------------------------------------------------
+
+interface HelpProbe {
+  sub: string;
+  /** 该子命令 help 文案中必含的真实参数面关键词（从 handler 实测，不臆造）。 */
+  keyword: string;
+}
+
+const HELP_PROBES: HelpProbe[] = [
+  { sub: "init", keyword: "--dir" },
+  { sub: "session", keyword: "--limit" },
+  { sub: "fork", keyword: "fork <sessionId>" },
+  { sub: "export", keyword: "--format" },
+  { sub: "transfer", keyword: "transfer export --sanitize" },
+  { sub: "acp", keyword: "stdio 会话桥接" },
+  { sub: "upgrade", keyword: "--manifest-url" },
+  { sub: "doctor", keyword: "全链路体检" },
+  { sub: "vis", keyword: "--port" },
+];
+
+describe("PROD-2 子命令 help 面（dispatch 接管，exit 0）", () => {
+  for (const { sub, keyword } of HELP_PROBES) {
+    test(`bi ${sub} --help → exit 0 且含用法关键词 "${keyword}"`, async () => {
+      const { io, outs } = collect();
+      const code = await runBi([sub, "--help"], { ...io });
+      expect(code).toBe(0);
+      expect(outs.join("\n")).toContain(keyword);
+      // 帮助优先于用法校验：即便参数残缺也不报错，直接给 help。
+      const broken = collect();
+      expect(await runBi([sub, "--help", "--bogus-flag"], { ...broken.io })).toBe(0);
+    });
+
+    test(`bi ${sub} -h 短旗标等价 → exit 0`, async () => {
+      const { io, outs } = collect();
+      expect(await runBi([sub, "-h"], { ...io })).toBe(0);
+      expect(outs.join("\n")).toContain(keyword);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PROD-2：主 help 增强（对齐子命令清单 + 摘要）
+// ---------------------------------------------------------------------------
+
+describe("PROD-2 主 help 增强（对齐子命令清单）", () => {
+  test("bi --help → exit 0 且含对齐的子命令 + 摘要", async () => {
+    const { io, errs } = collect();
+    expect(await runBi(["--help"], { ...io })).toBe(0);
+    const text = errs.join("\n");
+    // 子命令与其摘要对齐出现（从 SUBCOMMAND_SUMMARIES 取真实摘要句首）。
+    expect(text).toContain("init");
+    expect(text).toContain("列出会话元数据");
+    expect(text).toContain("全链路配置");
+    // 各子命令用法提示
+    expect(text).toContain("运行 bi <subcommand> --help 查看各子命令完整用法");
+    // 不再是旧的单行名单形态（子命令清单区含换行对齐，而非 " / " 单行）。
+    expect(text).not.toContain("init / session / fork");
+  });
+});

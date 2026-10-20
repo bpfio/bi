@@ -186,3 +186,164 @@ describe("BI-24.x config · 子命令（临时目录注入）", () => {
     expect(errs.join("\n")).toContain("未知配置键");
   });
 });
+
+describe("PROD-2 config · help 面", () => {
+  test("bi config --help → exit 0 且含用法关键词", async () => {
+    const home = await tmpHome();
+    const { io, outs } = collect();
+    expect(await runBi(["config", "--help"], { ...io, deps: { homeDir: home } })).toBe(0);
+    expect(outs.join("\n")).toContain("get <key>");
+    // 帮助本身不应附带"运行 bi config --help 查看用法"提示（提示只挂在用法错误上）。
+    expect(outs.join("\n")).not.toContain("运行 bi config --help 查看用法");
+  });
+
+  test("用法错误尾部追加 help 提示（未知动作 → exit 2）", async () => {
+    const home = await tmpHome();
+    const { io, errs } = collect();
+    expect(await runBi(["config", "frobnicate"], { ...io, deps: { homeDir: home } })).toBe(2);
+    expect(errs.join("\n")).toContain("运行 bi config --help 查看用法");
+  });
+});
+
+describe("PROD-3 config · 六挂载分区键面（verify/subagent/ptc/cron/context/memory）", () => {
+  // —— 缺省态 get：分区缺省不在 DEFAULT_BI_CONFIG，须从分区 schema 缺省解析 ——
+  test("get 缺省态：六分区标量键读分区 schema 缺省", async () => {
+    const home = await tmpHome();
+    const cases: Array<[string, string]> = [
+      ["ptc.enabled", "false"],
+      ["ptc.timeout_ms", "30000"],
+      ["ptc.max_tool_calls", "64"],
+      ["cron.enabled", "false"],
+      ["subagent.enabled", "false"],
+      ["subagent.default_profile", "explore"],
+      ["subagent.max_iterations", "8"],
+      ["context.time_context", "false"],
+      ["context.max_history_entries", "0"],
+      ["context.timezone", "Asia/Shanghai"],
+      ["memory.dream_enabled", "false"],
+      ["memory.inject_enabled", "false"],
+      ["verify.on_completion", "false"],
+      ["verify.objective", ""],
+    ];
+    for (const [key, expected] of cases) {
+      const { io, outs } = collect();
+      expect(await runBi(["config", "get", key], { ...io, deps: { homeDir: home } })).toBe(0);
+      expect(outs.join("\n"), `缺省态 ${key}`).toContain(expected);
+    }
+  });
+
+  // —— list：输出含六分区新键 ——
+  test("list：含六分区挂载键", async () => {
+    const home = await tmpHome();
+    const { io, outs } = collect();
+    expect(await runBi(["config", "list"], { ...io, deps: { homeDir: home } })).toBe(0);
+    const text = outs.join("\n");
+    for (const key of [
+      "ptc.enabled",
+      "ptc.timeout_ms",
+      "ptc.max_tool_calls",
+      "cron.enabled",
+      "subagent.enabled",
+      "subagent.default_profile",
+      "context.time_context",
+      "context.timezone",
+      "memory.dream_enabled",
+      "memory.inject_enabled",
+      "verify.on_completion",
+    ]) {
+      expect(text, `list 含 ${key}`).toContain(`${key} =`);
+    }
+  });
+
+  // —— set/get 往返：bool / int / string / enum 四类 ——
+  test("set/get 往返：ptc.enabled(bool) / context.max_history_entries(int) / context.timezone(str) / subagent.default_profile(enum)", async () => {
+    const home = await tmpHome();
+
+    const s1 = collect();
+    expect(await runBi(["config", "set", "ptc.enabled", "true"], { ...s1.io, deps: { homeDir: home } })).toBe(0);
+    expect(s1.outs.join("\n")).toContain("已写入 ptc.enabled = true");
+
+    const s2 = collect();
+    expect(await runBi(["config", "set", "context.max_history_entries", "50"], { ...s2.io, deps: { homeDir: home } })).toBe(0);
+    expect(s2.outs.join("\n")).toContain("已写入 context.max_history_entries = 50");
+
+    const s3 = collect();
+    expect(await runBi(["config", "set", "context.timezone", "UTC"], { ...s3.io, deps: { homeDir: home } })).toBe(0);
+    expect(s3.outs.join("\n")).toContain("已写入 context.timezone = UTC");
+
+    const s4 = collect();
+    expect(await runBi(["config", "set", "subagent.default_profile", "coder"], { ...s4.io, deps: { homeDir: home } })).toBe(0);
+    expect(s4.outs.join("\n")).toContain("已写入 subagent.default_profile = coder");
+
+    // 回读
+    const g1 = collect();
+    expect(await runBi(["config", "get", "ptc.enabled"], { ...g1.io, deps: { homeDir: home } })).toBe(0);
+    expect(g1.outs.join("\n")).toContain("true");
+    const g2 = collect();
+    expect(await runBi(["config", "get", "context.max_history_entries"], { ...g2.io, deps: { homeDir: home } })).toBe(0);
+    expect(g2.outs.join("\n")).toContain("50");
+    const g3 = collect();
+    expect(await runBi(["config", "get", "context.timezone"], { ...g3.io, deps: { homeDir: home } })).toBe(0);
+    expect(g3.outs.join("\n")).toContain("UTC");
+    const g4 = collect();
+    expect(await runBi(["config", "get", "subagent.default_profile"], { ...g4.io, deps: { homeDir: home } })).toBe(0);
+    expect(g4.outs.join("\n")).toContain("coder");
+  });
+
+  // —— 写回真实落盘：config.toml 含挂载分区表 ——
+  test("写回落盘：config.toml 含 [ptc] 表与设置项", async () => {
+    const home = await tmpHome();
+    const io = collect();
+    await runBi(["config", "set", "ptc.enabled", "true"], { ...io.io, deps: { homeDir: home } });
+    const cfg = await import("node:fs/promises").then((m) => m.readFile(join(home, ".bi", "config.toml"), "utf8"));
+    expect(cfg).toContain("[ptc]");
+    expect(cfg).toContain("enabled = true");
+  });
+
+  // —— 非法值：跟随分区 schema 类型，结构化报错 exit 2 ——
+  test("非法值：ptc.enabled(bool 越界) / context.max_history_entries(非数字) / subagent.default_profile(枚举越界) / ptc.timeout_ms(非数字)", async () => {
+    const home = await tmpHome();
+
+    const b = collect();
+    expect(await runBi(["config", "set", "ptc.enabled", "yes"], { ...b.io, deps: { homeDir: home } })).toBe(2);
+    expect(b.errs.join("\n")).toContain("非法布尔值");
+
+    const n = collect();
+    expect(await runBi(["config", "set", "context.max_history_entries", "huge"], { ...n.io, deps: { homeDir: home } })).toBe(2);
+    expect(n.errs.join("\n")).toContain("非法数字");
+
+    const e = collect();
+    expect(await runBi(["config", "set", "subagent.default_profile", "wizard"], { ...e.io, deps: { homeDir: home } })).toBe(2);
+    expect(e.errs.join("\n")).toContain("期望枚举");
+
+    const t = collect();
+    expect(await runBi(["config", "set", "ptc.timeout_ms", "soon"], { ...t.io, deps: { homeDir: home } })).toBe(2);
+    expect(t.errs.join("\n")).toContain("非法数字");
+  });
+
+  // —— 实体数组叶子（verify.deliverables / verify.checks）注册为键但不可单值 set（schema 校验拦截）——
+  test("verify 实体数组叶子：list 含键、get 读缺省空数组、单值 set 被 schema 校验拦截 exit 2", async () => {
+    const home = await tmpHome();
+    const l = collect();
+    expect(await runBi(["config", "list"], { ...l.io, deps: { homeDir: home } })).toBe(0);
+    expect(l.outs.join("\n")).toContain("verify.deliverables =");
+    expect(l.outs.join("\n")).toContain("verify.checks =");
+
+    const g = collect();
+    expect(await runBi(["config", "get", "verify.deliverables"], { ...g.io, deps: { homeDir: home } })).toBe(0);
+    expect(g.outs.join("\n")).toContain("[  ]");
+
+    const s = collect();
+    expect(await runBi(["config", "set", "verify.deliverables", "foo"], { ...s.io, deps: { homeDir: home } })).toBe(2);
+    expect(s.errs.join("\n")).toContain("非法值");
+  });
+
+  // —— 未知键仍报 exit 2（六分区键已识别，但虚构子键仍非法）——
+  test("未知键（虚构挂载子键） → exit 2", async () => {
+    const home = await tmpHome();
+    const u = collect();
+    expect(await runBi(["config", "get", "ptc.nope"], { ...u.io, deps: { homeDir: home } })).toBe(2);
+    expect(u.errs.join("\n")).toContain("未知配置键");
+    expect(u.errs.join("\n")).toContain("ptc.enabled"); // 合法键清单含新键
+  });
+});

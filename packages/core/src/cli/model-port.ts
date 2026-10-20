@@ -69,7 +69,8 @@ function resolveApiKeyFromEnv(
 	if (key === undefined || key === "") {
 		throw new ModelPortConfigError(
 			`环境变量 ${envName} 未设置：provider "${providerName}" 通过 api_key_env 间接引用 API 密钥。` +
-				`请导出 ${envName} 后重试；配置文件中永不落明文密钥。`,
+				`请导出 ${envName} 后重试；配置文件中永不落明文密钥。` +
+				`\n运行 bi doctor 可体检定位配置问题`,
 		);
 	}
 	return key;

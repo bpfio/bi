@@ -17,6 +17,7 @@ import {
 	findSubcommandIndex,
 	handleSubcommand,
 	SUBCOMMANDS,
+	SUBCOMMAND_SUMMARIES,
 	type SubcommandDeps,
 } from "./commands/dispatch";
 import { ModelPortConfigError, resolveModelPort } from "./model-port";
@@ -53,14 +54,24 @@ export interface RunBiOptions {
 	config?: BiConfig;
 }
 
+/** 渲染对齐的子命令清单（子命令 + 一句话摘要，纯文本对齐，kimi/zcode 风格）。 */
+function renderSubcommandList(): string {
+	const width = SUBCOMMANDS.reduce((max, s) => Math.max(max, s.length), 0);
+	return SUBCOMMANDS.map((s) => `  ${s.padEnd(width)}  ${SUBCOMMAND_SUMMARIES[s] ?? ""}`).join("\n");
+}
+
 const USAGE = `bi — CLI Agent（行走骨架）
 
 用法:
   bi --prompt "<text>" [--output-format stream-json]   无头会话（骨架真实路径）
   bi <subcommand> [args]                               子命令（见下）
   bi --version                                         版本
+  bi --help                                            本帮助
 
-子命令: ${SUBCOMMANDS.join(" / ")}
+子命令:
+${renderSubcommandList()}
+
+运行 bi <subcommand> --help 查看各子命令完整用法。
 `;
 
 /** bi 主入口：argv 分发，返回进程退出码。 */
@@ -73,18 +84,31 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 		out(`bi ${VERSION}`);
 		return 0;
 	}
-	if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
+	if (argv.length === 0) {
 		err(USAGE);
-		return argv.length === 0 ? 2 : 0;
+		return 2;
 	}
 
 	// BI-24.1：子命令 argv 切分——首个子命令裸词之后的 token 不进全局参数矩阵，
 	// 原样交给子命令自持旗标面（--limit / --format / --no-net 等不由全局解析报错）。
 	const subIndex = findSubcommandIndex(argv);
+	const hasSubcommand = subIndex !== -1;
+
+	// 顶层 help 仅当"无子命令"时显示主 help；带子命令的 --help/-h 由其自身
+	// handleSubcommand 拦截（帮助优先于用法校验），不在此短路。
+	if (!hasSubcommand && (argv.includes("--help") || argv.includes("-h"))) {
+		err(USAGE);
+		return 0;
+	}
 
 	let parsed;
 	try {
-		parsed = parseGlobalArgs(subIndex === -1 ? argv : argv.slice(0, subIndex));
+		// 仅解析子命令之前的全局 token；剥离顶层 --help/-h（子命令级 --help 由
+		// handleSubcommand 处理），避免 unknown-flag。
+		const globalArgv = (hasSubcommand ? argv.slice(0, subIndex) : argv).filter(
+			(t) => t !== "--help" && t !== "-h",
+		);
+		parsed = parseGlobalArgs(globalArgv);
 	} catch (cause) {
 		if (cause instanceof ArgParseError) {
 			err(`bi: 参数错误 [${cause.code}]: ${cause.message}`);

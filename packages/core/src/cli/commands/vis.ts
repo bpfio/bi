@@ -408,6 +408,7 @@ export async function handleVis(
   const port = portRaw !== undefined ? Number.parseInt(portRaw as string, 10) : DEFAULT_PORT;
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     io.err(`bi vis: --port 非法: ${String(portRaw)}（需 0-65535）`);
+    io.err("运行 bi vis --help 查看用法");
     return 2;
   }
 
