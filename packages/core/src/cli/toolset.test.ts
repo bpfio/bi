@@ -470,7 +470,9 @@ describe("BI-28.2 · edit（唯一性替换 + 原子写）", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await writeFile(join(root, "doc.txt"), "hello world\n", "utf8");
-			const edit = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			await byName(ts, "read_file").execute({ path: "doc.txt" }, SIGNAL); // FX-A：写前先读建立基线
+			const edit = byName(ts, "edit");
 			const raw = (await edit.execute({ path: "doc.txt", old_string: "world", new_string: "there" }, SIGNAL)) as string;
 			expect(JSON.parse(raw)).toMatchObject({ ok: true, path: "doc.txt", matches: 1 });
 			expect(await readFile(join(root, "doc.txt"), "utf8")).toBe("hello there\n");
@@ -485,7 +487,9 @@ describe("BI-28.2 · edit（唯一性替换 + 原子写）", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await writeFile(join(root, "doc.txt"), "abc", "utf8");
-			const edit = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			await byName(ts, "read_file").execute({ path: "doc.txt" }, SIGNAL); // FX-A：写前先读建立基线
+			const edit = byName(ts, "edit");
 			try {
 				await edit.execute({ path: "doc.txt", old_string: "zzz", new_string: "y" }, SIGNAL);
 				expect.unreachable();
@@ -502,7 +506,9 @@ describe("BI-28.2 · edit（唯一性替换 + 原子写）", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await writeFile(join(root, "doc.txt"), "aXbXc", "utf8");
-			const edit = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			await byName(ts, "read_file").execute({ path: "doc.txt" }, SIGNAL); // FX-A：写前先读建立基线
+			const edit = byName(ts, "edit");
 			try {
 				await edit.execute({ path: "doc.txt", old_string: "X", new_string: "Y" }, SIGNAL);
 				expect.unreachable();
@@ -522,7 +528,9 @@ describe("BI-28.2 · edit（唯一性替换 + 原子写）", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await writeFile(join(root, "doc.txt"), "abc", "utf8");
-			const edit = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			await byName(ts, "read_file").execute({ path: "doc.txt" }, SIGNAL); // FX-A：写前先读建立基线
+			const edit = byName(ts, "edit");
 			await edit.execute({ path: "doc.txt", old_string: "b", new_string: "" }, SIGNAL);
 			expect(await readFile(join(root, "doc.txt"), "utf8")).toBe("ac");
 			await edit.execute({ path: "doc.txt", old_string: "a", new_string: "$&" }, SIGNAL);
@@ -607,11 +615,13 @@ describe("BI-28.2 · write（整文件原子写）", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await mkdir(join(root, "sub"), { recursive: true });
-			const write = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "write");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			const write = byName(ts, "write");
 			const content = "第一行\n第二行\n";
 			const raw = (await write.execute({ path: "sub/new.txt", content }, SIGNAL)) as string;
 			expect(JSON.parse(raw)).toMatchObject({ ok: true, path: "sub/new.txt", bytes: new TextEncoder().encode(content).byteLength });
 			expect(await readFile(join(root, "sub/new.txt"), "utf8")).toBe(content);
+			await byName(ts, "read_file").execute({ path: "note.txt" }, SIGNAL); // FX-A：makeWorkspace 预置文件，覆盖前先读
 			await write.execute({ path: "note.txt", content: "覆盖后的内容" }, SIGNAL);
 			expect(await readFile(join(root, "note.txt"), "utf8")).toBe("覆盖后的内容");
 			// 原子写不残留临时文件
@@ -643,7 +653,9 @@ describe("BI-28.2 · write（整文件原子写）", () => {
 			const sibling = `${root}-sib`;
 			await mkdir(sibling, { recursive: true });
 			await writeFile(join(sibling, "outside.txt"), "界外", "utf8");
-			const write = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "write");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			const write = byName(ts, "write");
+			await byName(ts, "read_file").execute({ path: "note.txt" }, SIGNAL); // FX-A：makeWorkspace 预置文件，覆盖前先读
 			await write.execute({ path: "note.txt", content: "" }, SIGNAL);
 			expect(await readFile(join(root, "note.txt"), "utf8")).toBe("");
 			await expectPathEscape((path) => write.execute({ path, content: "x" }, SIGNAL), basename(sibling));

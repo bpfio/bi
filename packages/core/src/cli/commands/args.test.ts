@@ -95,14 +95,16 @@ describe("BI-20.2 parseGlobalArgs：结构化报错", () => {
   });
 
   test("--output-format 非法值 → invalid-value", () => {
-    const { code, flag } = catchCode(() => parseGlobalArgs(["--output-format", "json"]));
+    const { code, flag } = catchCode(() => parseGlobalArgs(["--output-format", "yaml"]));
     expect(code).toBe("invalid-value");
     expect(flag).toBe("--output-format");
   });
 
-  test("--output-format 合法值 stream-json / text 通过（BI-30.3 白名单）", () => {
+  test("--output-format 合法值 stream-json / text / json 通过（BI-30.3 白名单 + F-ST-02 json）", () => {
     expect(parseGlobalArgs(["--output-format=stream-json"]).outputFormat).toBe("stream-json");
     expect(parseGlobalArgs(["--output-format", "text"]).outputFormat).toBe("text");
+    expect(parseGlobalArgs(["--output-format", "json"]).outputFormat).toBe("json");
+    expect(parseGlobalArgs(["--output-format=json"]).outputFormat).toBe("json");
   });
 
   test("单值 flag 重复出现 → duplicate-flag", () => {
@@ -157,7 +159,7 @@ describe("BI-20.2 GLOBAL_ARGS：矩阵定义完整性", () => {
     expect(byFlag.get("--add-dir")?.repeatable).toBe(true);
     expect(byFlag.get("--agent-file")?.repeatable).toBe(false);
     expect(byFlag.get("--prompt")?.repeatable).toBe(false);
-    expect(byFlag.get("--output-format")?.allowedValues).toEqual(["stream-json", "text"]);
+    expect(byFlag.get("--output-format")?.allowedValues).toEqual(["stream-json", "text", "json"]);
     expect(byFlag.get("--agent-file")?.valueName).toBe("<path.md>");
   });
 });

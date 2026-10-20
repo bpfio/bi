@@ -10,6 +10,7 @@
  * 既有 edit 成功路径（toolset.test.ts）零改动前提下，本文件仅新增覆盖，不改既有用例。
  */
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
@@ -42,7 +43,13 @@ async function edit(
 	root: string,
 	args: Record<string, unknown>,
 ): Promise<{ ok: boolean; matches?: number; matchLevel?: MatchLevel; path?: string }> {
-	const editTool = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+	const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+	// FX-A Read-Before-Write：已存在目标先经同实例 read_file 建立基线（新文件/缺文件交给 edit 自身语义）。
+	const rel = typeof args.path === "string" ? args.path : "";
+	if (rel !== "" && existsSync(join(root, rel))) {
+		await byName(ts, "read_file").execute({ path: rel }, SIGNAL);
+	}
+	const editTool = byName(ts, "edit");
 	const raw = (await editTool.execute(args, SIGNAL)) as string;
 	return JSON.parse(raw);
 }
@@ -193,7 +200,9 @@ describe("BI-07.1 · 全不命中 + 降级歧义", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await writeFile(join(root, "doc.txt"), "abc", "utf8");
-			const editTool = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			await byName(ts, "read_file").execute({ path: "doc.txt" }, SIGNAL); // FX-A：写前先读建立基线
+			const editTool = byName(ts, "edit");
 			try {
 				await editTool.execute({ path: "doc.txt", old_string: "zzz", new_string: "y" }, SIGNAL);
 				expect.unreachable();
@@ -209,7 +218,9 @@ describe("BI-07.1 · 全不命中 + 降级歧义", () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
 			await writeFile(join(root, "doc.txt"), 'a "x" b "x" c', "utf8");
-			const editTool = byName(buildDefaultToolset(root, { spawnImpl: explodingSpawn() }), "edit");
+			const ts = buildDefaultToolset(root, { spawnImpl: explodingSpawn() });
+			await byName(ts, "read_file").execute({ path: "doc.txt" }, SIGNAL); // FX-A：写前先读建立基线
+			const editTool = byName(ts, "edit");
 			try {
 				// 弯引号归一后 "x" 出现两处 → 歧义。
 				await editTool.execute({ path: "doc.txt", old_string: "“x”", new_string: "y" }, SIGNAL);

@@ -86,10 +86,34 @@ describe("W1-D3 main: [tools] output_limit_bytes → runHeadless", () => {
 		}
 	});
 
-	test("缺省（0 / 未声明）：超大输出原样回填（现状逐字节等价）", async () => {
+	test("缺省 64KiB（F-ST-04）：config 未声明时超限输出经 boundToolText 截断", async () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
-			const raw = "x".repeat(5_000);
+			const raw = "x".repeat(100_000); // > 64KiB 缺省上限
+			const { port, received } = scriptedModel(toolThenFinal());
+			const code = await runBi(["--prompt", "输出"], {
+				model: port,
+				out: () => {},
+				err: () => {},
+				config: configWith(() => {
+					// 缺省态：config [tools] output_limit_bytes = 65536（64KiB 有界截断）
+				}),
+				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [fixedOutputTool(raw)] },
+			});
+			expect(code).toBe(0);
+			const lastMessage = received[1]!.messages.at(-1);
+			const content = JSON.stringify(lastMessage?.content);
+			expect(content).toContain("[... output truncated:");
+			expect(content).not.toContain(raw); // 超限原文不整穿
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("显式 0 = off：超大输出原样回填（关闭截断，与缺省 64KiB 区分）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const raw = "x".repeat(100_000);
 			const { port, received } = scriptedModel(toolThenFinal());
 			const code = await runBi(["--prompt", "输出"], {
 				model: port,
@@ -110,7 +134,7 @@ describe("W1-D3 main: [tools] output_limit_bytes → runHeadless", () => {
 	test("注入 model 而未注 config：跳过配置装载，输出不截（现状路径）", async () => {
 		const { root, cleanup } = await makeWorkspace();
 		try {
-			const raw = "x".repeat(5_000);
+			const raw = "x".repeat(100_000);
 			const { port, received } = scriptedModel(toolThenFinal());
 			const code = await runBi(["--prompt", "输出"], {
 				model: port,

@@ -432,17 +432,24 @@ export const loopControlSchema = sObj({
 });
 export type LoopControlSection = InferSchema<typeof loopControlSchema>;
 
+/**
+ * BI-08.1 有界截断的缺省上限（Unicode 码点）= 64KiB。
+ * 单一事实来源：config 缺省值、文档与装配层共用此常量（0 = 关闭，见
+ * tools.output_limit_bytes 注释）。
+ */
+export const DEFAULT_OUTPUT_LIMIT_BYTES = 65_536;
+
 /** 工具白/黑名单。allow 为空 = 不限制；deny 优先级高于 allow。数组整体替换。 */
 export const toolsSchema = sObj({
   allow: sStrList([]),
   deny: sStrList([]),
   /**
    * BI-08.1：单次工具输出有界截断上限（Unicode 码点）。
-   * 0（缺省）= 关闭；>0 时无头工具成功输出超限经 boundToolText 两级预算
-   * 截断（附结构化标记行）。≤0 一律按关闭处理——配置错误恒降级为现状，
-   * 不放大故障面。
+   * 缺省 64KiB（65536 码点）= BI-08 承诺的有界截断默认生效（装配层经本键
+   * 下发给 headless，超限输出走 boundToolText 两级预算截断，附结构化标记行）；
+   * 0 = 关闭截断（显式声明即生效，配置错误恒降级为现状，不放大故障面）。
    */
-  output_limit_bytes: sInt(0),
+  output_limit_bytes: sInt(DEFAULT_OUTPUT_LIMIT_BYTES),
   /**
    * BI-08.3：read_media_file 挂载门控。true = 注册 read_media_file 工具；缺省
    * false 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
@@ -794,13 +801,15 @@ export type ContextSection = InferSchema<typeof contextSchema>;
  * 接入面（最小诚实装配，W4-D9）：
  * - dream_enabled：无头会话收尾（finalText 落定/正常退出）时调 dream 器官做
  *   沉淀（空闲阈值用器官既有常量、锁文件防并发）；缺省 false = 不沉淀。
- * - inject_enabled：无头会话启动读 <cwd>/BI.dream.md，存在则内容经 systemInstruction
- *   前缀注入（与 --agent-file 共存时 agent-file 优先，dream 追加其后）；缺省 false = 不注入。
+ * - inject_enabled：无头会话启动依次读 <cwd>/BI.md（项目记忆，init 脚手架产出）
+ *   与 <cwd>/BI.dream.md（dream 沉淀），各自存在且非空才经 systemInstruction 前缀
+ *   注入（BI.md 段在前；两文件内容相同只注一次）。与 --agent-file 共存时
+ *   agent-file 优先，记忆追加其后；缺省 false = 不注入。
  */
 export const memorySchema = sObj({
   /** true = 无头会话收尾调 dream 器官沉淀到 <cwd>/BI.dream.md；缺省 false = 不沉淀（缺省路径零变化）。 */
   dream_enabled: sBool(false),
-  /** true = 无头会话启动注入 <cwd>/BI.dream.md 内容到 system 面；缺省 false = 不注入。 */
+  /** true = 无头会话启动注入 <cwd>/BI.md + <cwd>/BI.dream.md 内容到 system 面；缺省 false = 不注入。 */
   inject_enabled: sBool(false),
 });
 export type MemorySection = InferSchema<typeof memorySchema>;

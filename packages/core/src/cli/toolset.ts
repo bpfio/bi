@@ -69,6 +69,7 @@ import { DeepSeekSearchProvider } from "../tools/search-providers/deepseek-searc
 import { scanShell } from "../sandbox/shell-scan";
 import { PathJail } from "../sandbox/path-jail";
 import { atomicWriteFile } from "../utils/atomic-write";
+import { ReadFileStateMap } from "../tool/read-file-state";
 import { matchOldText } from "../tool/edit-matchers";
 import { UserQuestionService } from "../interaction/user-questions";
 import { AskUserTool, ASK_USER_QUESTION_TOOL_SPEC } from "../interaction/ask-user-tool";
@@ -267,18 +268,22 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 	const spawnImpl: SpawnImpl = options.spawnImpl ?? defaultSpawnImpl;
 	// PathJail 裁决（edit/write 第二层写策略；glob/grep 读策略；home 取真实用户家目录）。
 	const pathJail = new PathJail({ home: homedir(), workspaceRoot: root });
+	// FX-A / F-ST-03 · Read-Before-Write 门禁状态机（binding 级生产装配）：
+	// read_file 写入/刷新基线，write/edit 写前断言，落盘后 noteEdited 刷新基线。
+	// 闭包内单一实例共享——同一次工具集会话里的读取认知贯通到写守门。
+	const readFileState = new ReadFileStateMap();
 	// 会话级缓存/限速：随工具集实例隔离（默认全局单例会跨测试与跨会话串味）。
 	const searchCache = new TtlResultCache();
 	const searchLimiter = new TokenBucketRateLimiter(DEFAULT_SEARCH_RPS);
 	const tools: ToolBinding[] = [
-		readFileBinding(root),
+		readFileBinding(root, readFileState),
 		webFetchBinding(fetchImpl),
 		webSearchBinding({ fetchImpl, env, apiKeyEnv, cache: searchCache, limiter: searchLimiter }),
 		globBinding(root, pathJail),
 		grepBinding(root, pathJail),
 		bashBinding({ root, spawnImpl }),
-		editBinding(root, pathJail),
-		writeBinding(root, pathJail),
+		editBinding(root, pathJail, readFileState),
+		writeBinding(root, pathJail, readFileState),
 	];
 	// ask_user_question：仅当 host 注入 UserQuestionService 才注册（保持缺省 8 件不变）。
 	if (options.userQuestionService !== undefined) {
@@ -369,7 +374,7 @@ function guardWritePath(root: string, jail: PathJail, rawPath: string): string {
 	return abs;
 }
 
-function readFileBinding(root: string): ToolBinding {
+function readFileBinding(root: string, state: ReadFileStateMap): ToolBinding {
 	return {
 		definition: {
 			name: "read_file",
@@ -386,7 +391,13 @@ function readFileBinding(root: string): ToolBinding {
 			const path = takeStringArg(args, "path");
 			const abs = resolve(root, path);
 			assertInsideRoot(root, abs);
-			return await withSignal(signal, () => Bun.file(abs).text());
+			return await withSignal(signal, async () => {
+				// 读成功后才落基线（FX-A Read-Before-Write：读即认知）。
+				const text = await Bun.file(abs).text();
+				const st = statSync(abs);
+				state.recordRead(abs, { mtimeMs: st.mtimeMs, size: st.size });
+				return text;
+			});
 		},
 	};
 }
@@ -757,7 +768,7 @@ function formatBashResult(exitCode: number, output: string, timedOut: boolean): 
 // edit / write —— 工作区原子写（BI-28.2；唯一性替换 + PathJail 写裁决）
 // ---------------------------------------------------------------------------
 
-function editBinding(root: string, jail: PathJail): ToolBinding {
+function editBinding(root: string, jail: PathJail, state: ReadFileStateMap): ToolBinding {
 	return {
 		definition: {
 			name: "edit",
@@ -785,6 +796,11 @@ function editBinding(root: string, jail: PathJail): ToolBinding {
 				// 守卫先于读写（较工单顺序更紧：根外路径绝不读入内容）。
 				const abs = guardWritePath(root, jail, path);
 				if (!(await Bun.file(abs).exists())) throw new Error("file-not-found");
+				// FX-A Read-Before-Write：edit 自身读内容不算认知，须先经 read_file 建立基线。
+				const preGate = state.assertCleanForWrite(abs, statSync(abs));
+				if (!preGate.allowed) {
+					throw new Error(`${preGate.reason}: ${abs} (先用 read_file 读取后再写)`);
+				}
 				const content = await Bun.file(abs).text();
 
 				// 第 1 级（精确）优先：走既有逐字节不变路径（split/join + 精确计数 + replace_all 语义）。
@@ -796,6 +812,7 @@ function editBinding(root: string, jail: PathJail): ToolBinding {
 					// split/join 字面替换：绕开 String.replace 的 $ 模式展开语义。
 					const next = content.split(oldString).join(newString);
 					await atomicWriteFile(abs, next);
+					state.noteEdited(abs, statSync(abs));
 					return JSON.stringify({ ok: true, path, matches: exactCount });
 				}
 
@@ -810,13 +827,14 @@ function editBinding(root: string, jail: PathJail): ToolBinding {
 				const next =
 					content.slice(0, match.index) + newString + content.slice(match.index + match.matched.length);
 				await atomicWriteFile(abs, next);
+				state.noteEdited(abs, statSync(abs));
 				return JSON.stringify({ ok: true, path, matches: 1, matchLevel: match.level });
 			});
 		},
 	};
 }
 
-function writeBinding(root: string, jail: PathJail): ToolBinding {
+function writeBinding(root: string, jail: PathJail, state: ReadFileStateMap): ToolBinding {
 	return {
 		definition: {
 			name: "write",
@@ -845,7 +863,15 @@ function writeBinding(root: string, jail: PathJail): ToolBinding {
 					parentIsDir = false;
 				}
 				if (!parentIsDir) throw new Error("parent-dir-not-found");
+				// FX-A Read-Before-Write：已存在文件必须先经 read_file 认知；新文件直接放行。
+				if (await Bun.file(abs).exists()) {
+					const preGate = state.assertCleanForWrite(abs, statSync(abs));
+					if (!preGate.allowed) {
+						throw new Error(`${preGate.reason}: ${abs} (先用 read_file 读取后再写)`);
+					}
+				}
 				await atomicWriteFile(abs, content);
+				state.noteEdited(abs, statSync(abs));
 				return JSON.stringify({ ok: true, path, bytes: byteLengthOf(content) });
 			});
 		},
@@ -1123,7 +1149,7 @@ function runPtcScriptBinding(
 	// 依白名单自建 5 件只读绑定（与缺省注册表同款实例，但只暴露只读面）。
 	const byName = new Map<string, ToolBinding>(
 		[
-			readFileBinding(root),
+			readFileBinding(root, new ReadFileStateMap()),
 			grepBinding(root, jail),
 			globBinding(root, jail),
 			webFetchBinding(webSearchDeps.fetchImpl),

@@ -480,3 +480,155 @@ describe("BI-30.3 main 接线：CLI --output-format → runHeadless", () => {
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// F-ST-02 --output-format 第三形态：json（全程不落事件流，结束只落一个 JSON 对象）
+// ---------------------------------------------------------------------------
+
+describe("F-ST-02 headless outputFormat：json 形态", () => {
+	test("json 形态：全程不落事件流，结束只落一个 JSON 对象（含 reply）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				TOOL_ROUND,
+				[
+					{ type: "content_delta", delta: "文件内容是：勾稽差额为零。" },
+					{ type: "usage", usage: { inputTokens: 30, outputTokens: 9 } },
+					{ type: "done", stopReason: "stop" },
+				],
+			]);
+			const lines: string[] = [];
+			const result = await runHeadless({
+				prompt: "读取 note.txt 并总结",
+				cwd: root,
+				model: port,
+				tools: [readFileSyncBinding(root)],
+				sessionsRoot: join(root, "sessions"),
+				outputFormat: "json",
+				out: (line) => lines.push(line),
+			} as Parameters<typeof runHeadless>[0]);
+
+			expect(result.exitCode).toBe(0);
+			// 输出面：恰一行（事件流与 session_done meta 全程不落 out）
+			expect(lines).toHaveLength(1);
+			const payload = JSON.parse(lines[0]!) as {
+				sessionId: string;
+				title: string;
+				rounds: number;
+				usage: { inputTokens: number; outputTokens: number };
+				reply: string;
+				exit: string;
+			};
+			expect(payload.sessionId).toBe(result.sessionId);
+			expect(payload.title).toBe("读取 note.txt 并总结");
+			expect(payload.rounds).toBe(2);
+			expect(payload.reply).toBe(result.finalText);
+			expect(payload.reply).toContain("勾稽差额为零");
+			expect(payload.exit).toBe("ok");
+			// 用量汇总：逐轮取本轮最大值后累加（12+30 / 8+9）
+			expect(payload.usage.inputTokens).toBe(42);
+			expect(payload.usage.outputTokens).toBe(17);
+			// 事件流未落 out：单行里既无事件类型也无 session_done
+			expect(lines[0]).not.toContain("content_delta");
+			expect(lines[0]).not.toContain("session_done");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("main 接线：--output-format json → stdout 单个 JSON 对象，可 parse 且含 reply", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				[
+					{ type: "content_delta", delta: "骨架在线。" },
+					{ type: "usage", usage: { inputTokens: 7, outputTokens: 3 } },
+					{ type: "done", stopReason: "stop" },
+				],
+			]);
+			const outs: string[] = [];
+			const errs: string[] = [];
+			const code = await runBi(["--prompt", "你好", "--output-format", "json"], {
+				model: port,
+				out: (line) => outs.push(line),
+				err: (line) => errs.push(line),
+				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [] },
+			});
+			expect(code).toBe(0);
+			expect(outs).toHaveLength(1);
+			const payload = JSON.parse(outs[0]!) as {
+				sessionId: string;
+				title: string;
+				rounds: number;
+				usage: { inputTokens: number; outputTokens: number };
+				reply: string;
+				exit: string;
+			};
+			expect(payload.reply).toBe("骨架在线。");
+			expect(payload.title).toBe("你好");
+			expect(payload.rounds).toBe(1);
+			expect(payload.exit).toBe("ok");
+			expect(payload.usage.inputTokens).toBe(7);
+			expect(payload.usage.outputTokens).toBe(3);
+			expect(payload.sessionId.length).toBeGreaterThan(0);
+			expect(errs.join("\n")).not.toContain("骨架在线。");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("json 形态失败路径：stdout 不出残缺 JSON，错误经 err 报出（退出码 1）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const { port } = scriptedModel([
+				[{ type: "error", error: { code: "server", message: "上游 500" } }],
+			]);
+			const outs: string[] = [];
+			const errs: string[] = [];
+			const code = await runBi(["--prompt", "你好", "--output-format", "json"], {
+				model: port,
+				out: (line) => outs.push(line),
+				err: (line) => errs.push(line),
+				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [] },
+			});
+			expect(code).toBe(1);
+			expect(outs).toEqual([]); // stdout 无残缺 JSON
+			expect(errs.join("\n")).toContain("会话失败");
+			expect(errs.join("\n")).toContain("server");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("json 形态续会话（--resume）：title 取既有会话标题", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const sessionsRoot = join(root, "sessions");
+			const manager = new SessionManager({ rootDir: sessionsRoot });
+			const existing = await manager.createSession({ title: "既有会话", cwd: root });
+			const { port } = scriptedModel([
+				[{ type: "content_delta", delta: "接着说。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const lines: string[] = [];
+			const result = await runHeadless({
+				prompt: "继续",
+				cwd: root,
+				model: port,
+				tools: [],
+				sessionsRoot,
+				sessionId: existing.sessionId,
+				outputFormat: "json",
+				out: (line) => lines.push(line),
+			} as Parameters<typeof runHeadless>[0]);
+
+			expect(result.exitCode).toBe(0);
+			expect(lines).toHaveLength(1);
+			const payload = JSON.parse(lines[0]!) as { sessionId: string; title: string; reply: string };
+			expect(payload.sessionId).toBe(existing.sessionId);
+			expect(payload.title).toBe("既有会话");
+			expect(payload.reply).toBe("接着说。");
+		} finally {
+			await cleanup();
+		}
+	});
+});

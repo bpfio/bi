@@ -43,6 +43,8 @@ bun bin/bi.ts init
 - `.bi/local.toml` —— 工作区私有配置模板（`.bi/` 已列入 `.gitignore`，不入版本库）；
 - `BI.md` —— 项目长期记忆草稿（`detectStack` 探测技术栈自动填写，**待人工审查后生效**；
   未检测到受支持栈清单时出具「未检测到」草稿并结构化提示，不假冒检测结果）。
+  开启 `[memory] inject_enabled` 后，`BI.md` 与 `BI.dream.md` 会在会话启动时一并注入
+  system 面（`BI.md` 段在前，两文件内容相同时只注一次）。
 
 ### 3. 配置 provider（`~/.bi/config.toml`）
 
@@ -108,7 +110,7 @@ bun bin/bi.ts
 
 ## 子命令一览
 
-与 `bun bin/bi.ts --help` 的真实文本一致（11 个，按 help 输出顺序）：
+与 `bun bin/bi.ts --help` 的真实文本一致（12 个，按 help 输出顺序）：
 
 | 子命令 | 职责 |
 | --- | --- |
@@ -123,6 +125,7 @@ bun bin/bi.ts
 | `vis` | 本地 Web 会话可视化（缺省绑 `127.0.0.1` + 随机端口，只读 API；非回环强制 `BI_VIS_AUTH_TOKEN`） |
 | `config` | 全局配置键值面（`get` / `set` / `list`，键面由 schema 默认树推导） |
 | `copy` | 复制会话字段到剪贴板（`id` / `title` / `last-reply`；剪贴板工具缺失降级 stdout） |
+| `query` | 检索本地会话语料（`bi query "type=user"`，重建索引后按过滤表达式输出 JSON 行） |
 
 统一退出码语义：`0` 成功 / `1` 运行期失败 / `2` 用法错误 / `3` 装配凭据类（无头与
 REPL 同一面）/ `4` 已识别但能力未配置（如 `upgrade` 无 manifest 源）。
@@ -172,7 +175,7 @@ get/set 键面，直接写 TOML）：
 | `[ptc]` | `enabled` = 注册 PTC 脚本工具 `run_ptc_script`（`timeout_ms` / `max_tool_calls` 为执行边界） |
 | `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`） |
 | `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
-| `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入） |
+| `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
 
 ### 环境变量覆盖
 

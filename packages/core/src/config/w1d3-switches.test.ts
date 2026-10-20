@@ -2,8 +2,8 @@
  * W1-D3（BI-08.1 + BI-11.1 + BI-21.1）· config 面验收。
  *
  * 三开关的 schema 语义、缺省值与合并行为，以及 [verify] 挂载式拓扑：
- * - [tools] output_limit_bytes（缺省 0=off）/ [telemetry] sanitize_errors（缺省 false）
- *   为既有分区的追加键（最小扩展）；
+ * - [tools] output_limit_bytes（缺省 64KiB=有界截断生效 / 0=关闭）/ [telemetry]
+ *   sanitize_errors（缺省 false）为既有分区的追加键（最小扩展）；
  * - [verify] 为挂载式分区：DEFAULT_BI_CONFIG 恒 17 个根键（既有钉死断言不红），
  *   仅配置层显式声明时物化进合并结果（缺省 config.verify === undefined，
  *   缺省路径逐字节等价于现状）。
@@ -32,8 +32,8 @@ function validate(raw: unknown): { layer: BiConfigLayer | undefined; issues: Con
 }
 
 describe("W1-D3 config: 缺省值与 17 根键拓扑（回归）", () => {
-  test("三开关缺省键值：output_limit_bytes=0 / sanitize_errors=false / verify 缺省", () => {
-    expect(DEFAULT_BI_CONFIG.tools.output_limit_bytes).toBe(0);
+  test("三开关缺省键值：output_limit_bytes=65536（缺省 64KiB 有界截断）/ sanitize_errors=false", () => {
+    expect(DEFAULT_BI_CONFIG.tools.output_limit_bytes).toBe(65_536);
     expect(DEFAULT_BI_CONFIG.telemetry.sanitize_errors).toBe(false);
   });
 
@@ -70,7 +70,7 @@ describe("W1-D3 config: 缺省值与 17 根键拓扑（回归）", () => {
     const b = createDefaultConfig();
     a.tools.output_limit_bytes = 4096;
     a.telemetry.sanitize_errors = true;
-    expect(b.tools.output_limit_bytes).toBe(0);
+    expect(b.tools.output_limit_bytes).toBe(65_536);
     expect(b.telemetry.sanitize_errors).toBe(false);
   });
 });
@@ -94,6 +94,13 @@ describe("W1-D3 config: 单层校验（[tools] / [telemetry] 追加键）", () =
     const { layer, issues } = validate({ tools: { output_limit_bytes: -1 } });
     expect(issues).toEqual([]);
     expect(layer).toEqual({ tools: { output_limit_bytes: -1 } });
+  });
+
+  test("output_limit_bytes：显式 0 保持 0（=关闭截断），缺省 64KiB（F-ST-04）", () => {
+    expect(DEFAULT_BI_CONFIG.tools.output_limit_bytes).toBe(65_536);
+    const { layer, issues } = validate({ tools: { output_limit_bytes: 0 } });
+    expect(issues).toEqual([]);
+    expect(layer).toEqual({ tools: { output_limit_bytes: 0 } });
   });
 
   test("sanitize_errors：布尔校验 + 类型不符诊断", () => {

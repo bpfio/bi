@@ -37,6 +37,8 @@
  *   vis      = commands/vis.ts handleVis（BI-20.5b 本地 Web 会话可视化：
  *              Bun.serve 拉起，缺省 127.0.0.1 + 随机端口；非回环强制
  *              BI_VIS_AUTH_TOKEN；只读 API 暴露会话列表 / 消息流 / 分支树 / 工具配对）。
+ *   query    = commands/query.ts handleQuery（F-ST-07 会话语料检索薄壳：
+ *              重建索引 → 过滤表达式执行 → 命中逐行 JSON；表达式非法 exit 2）。
  *
  * 注入面（SubcommandDeps）：会话根目录 / cwd / homeDir / ACP IO 通道 /
  * acp 模型端口工厂（buildModelPort，生产路径由 main/bin 传入）/
@@ -69,6 +71,7 @@ import {
 } from "../update/upgrade-subcommand";
 import { handleConfig } from "./config";
 import { handleCopy } from "./copy";
+import { handleQuery } from "./query";
 
 /** 已接线的子命令全集（main 用法文本与子命令定位共用）。 */
 export const SUBCOMMANDS: readonly string[] = [
@@ -83,6 +86,7 @@ export const SUBCOMMANDS: readonly string[] = [
   "vis",
   "config",
   "copy",
+  "query",
 ];
 
 /**
@@ -101,6 +105,7 @@ export const SUBCOMMAND_SUMMARIES: Readonly<Record<string, string>> = {
   vis: "本地 Web 会话可视化（Bun.serve）",
   config: "全局配置键值读写（get / set / list）",
   copy: "复制会话字段到剪贴板（或 stdout 降级）",
+  query: "检索会话语料（过滤表达式 → JSON 行命中）",
 };
 
 /**
@@ -236,6 +241,26 @@ bi transfer import <archive.json>
   bi copy
   bi copy abc123 -f title
   bi copy abc123 -f last-reply`,
+  query: `bi query "<表达式>" [--limit <n>]
+
+  检索本地会话语料：重建索引后按过滤表达式检索，命中逐行 JSON 写 stdout，
+  汇总计数写 stderr。表达式非法 → exit 2（结构化 code）。
+
+参数:
+  "<表达式>"     过滤表达式（必填；含空格需加引号）
+  --limit <n>    最多输出 n 条命中（非负整数；缺省全部）
+
+表达式语法:
+  type=<值>        条目类型（user / assistant / tool_call / tool_result / system）
+  tool=<值>        工具名
+  contains:<文本>  正文包含
+  after:<ISO 时间>  晚于该时间
+  and / or         连接词（and 优先级更高）
+
+示例:
+  bi query "type=user"
+  bi query "type=user and contains:修复"
+  bi query "contains:部署" --limit 20`,
 };
 
 /** help 旗标（短/长）。handleSubcommand 入口短路，帮助优先于用法校验。 */
@@ -729,6 +754,7 @@ const DISPATCH: Readonly<Record<string, SubcommandHandler>> = {
   vis: handleVisCommand,
   config: handleConfig,
   copy: handleCopy,
+  query: handleQuery,
 };
 
 /**

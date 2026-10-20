@@ -54,7 +54,7 @@ export const GLOBAL_ARGS: readonly GlobalArgSpec[] = [
     valueName: "<format>",
     description: "输出格式",
     repeatable: false,
-    allowedValues: ["stream-json", "text"],
+    allowedValues: ["stream-json", "text", "json"],
   },
   {
     flag: "--max-rounds",
@@ -71,11 +71,14 @@ export const GLOBAL_ARGS: readonly GlobalArgSpec[] = [
 ];
 
 /**
- * 输出形态（BI-30.3 真消费）：
+ * 输出形态（BI-30.3 真消费，F-ST-02 补 json）：
  * - stream-json（缺省）：逐行透传 StreamEvent + 末行 session_done 汇总；
- * - text：仅落最终 finalText 一段（meta/事件不落 out，错误诊断走 err）。
+ * - text：仅落最终 finalText 一段（meta/事件不落 out，错误诊断走 err）；
+ * - json：全程不落事件流，结束时 stdout 只落一个 JSON 对象
+ *   （sessionId/title/rounds/usage/reply/exit）；失败时 stdout 不出残缺 JSON，
+ *   错误诊断走 err + 非零退出码。
  */
-export type OutputFormat = "stream-json" | "text";
+export type OutputFormat = "stream-json" | "text" | "json";
 
 export interface ParsedArgs {
   /** --agent-file 的值。 */

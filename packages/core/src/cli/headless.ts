@@ -17,6 +17,9 @@
  *   JSON），末行追加会话级 { type:"session_done", ... } 汇总；
  * - text：输出面收敛为最终 finalText 一段（事件内部流转照旧，仅不落 out；
  *   session_done 等 meta 不落 out；错误/诊断仍由装配方经 err 报出）。
+ * - json（F-ST-02）：全程不落事件流，结束时 stdout 只落一个 JSON 对象
+ *   （sessionId/title/rounds/usage/reply/exit，字段对齐 session_done 汇总）；
+ *   失败路径不落任何 stdout 内容（绝不输出残缺 JSON），诊断仍由装配方经 err 报出。
  */
 import {
 	AgentLoop,
@@ -122,7 +125,9 @@ export interface HeadlessOptions {
 	readonly out?: (line: string) => void;
 	/**
 	 * 输出形态（BI-30.3）：缺省 "stream-json" = 逐行透传 StreamEvent + 末行
-	 * session_done（现状行为，契约不变）；"text" = 仅落最终 finalText 一段。
+	 * session_done（现状行为，契约不变）；"text" = 仅落最终 finalText 一段；
+	 * "json"（F-ST-02）= 全程不落事件流，结束时 stdout 只落一个 JSON 对象
+	 * （sessionId/title/rounds/usage/reply/exit）。
 	 */
 	readonly outputFormat?: OutputFormat;
 	/** 模型回合上限（防失控，缺省 8）。 */
@@ -141,8 +146,10 @@ export interface HeadlessOptions {
 	readonly additionalDirs?: readonly string[];
 	/**
 	 * BI-08.1 有界截断上限（Unicode 码点；对应 config [tools] output_limit_bytes）。
-	 * 缺省 / ≤0 = 不截断（与现状逐字节等价）；>0 时工具**成功输出**超限经
-	 * boundToolText 两级预算截断，替换为带结构化标记行的有界文本；未超限不截。
+	 * 本面缺省 / ≤0 = 不截断（直连调用方现状路径逐字节等价）；>0 时工具**成功
+	 * 输出**超限经 boundToolText 两级预算截断，替换为带结构化标记行的有界文本；
+	 * 未超限不截。CLI 装配层经 config 下发缺省 64KiB（F-ST-04），
+	 * config 显式 0 = 关闭（装配层不下发，本面即按不截断处理）。
 	 */
 	readonly outputLimitBytes?: number;
 	/**
@@ -193,12 +200,17 @@ export interface HeadlessMemoryOptions {
 	 */
 	readonly dream?: HeadlessMemoryDreamOptions;
 	/**
-	 * 会话启动注入（对应 config [memory] inject_enabled）。启动读 <dir>/BI.dream.md，
-	 * 存在则内容经 systemInstruction 前缀注入（与 --agent-file 共存时 agent-file
-	 * 优先，dream 追加其后）。缺省不提供 = 不注入。
+	 * 会话启动注入（对应 config [memory] inject_enabled）。启动依次读
+	 * <dir>/BI.md（项目记忆，init 脚手架产出）与 <dir>/BI.dream.md（dream 沉淀），
+	 * 各自存在且非空才经 systemInstruction 前缀注入（BI.md 段在前；两文件内容
+	 * 相同则只注一次）。与 --agent-file 共存时 agent-file 优先，记忆追加其后。
+	 * 缺省不提供 = 不注入。
 	 */
 	readonly inject?: HeadlessMemoryInjectOptions;
 }
+
+/** F-ST-05：项目记忆文件名（init 脚手架产出；启动注入时与 BI.dream.md 一并读）。 */
+export const PROJECT_MEMORY_FILENAME = "BI.md";
 
 /** BI-05.1 会话收尾沉淀选项（dream 器官消费面；全部可注入以支持确定性测试）。 */
 export interface HeadlessMemoryDreamOptions {
@@ -349,12 +361,15 @@ export function buildVerifyContract(section: VerifySection): TargetContract {
 export async function runHeadless(options: HeadlessOptions): Promise<HeadlessResult> {
 	const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`));
 	const outputFormat: OutputFormat = options.outputFormat ?? "stream-json";
-	// text 形态：输出面收敛——事件仍内部流转（缓冲/回喂不变），仅不落 out；
-	// 最终只落 finalText 一段（见下方终局分支）。stream-json 保持逐行透传。
+	// text / json 形态：输出面收敛——事件仍内部流转（缓冲/回喂不变），仅不落 out；
+	// text 最终只落 finalText 一段，json 最终只落一个 JSON 对象（见下方终局分支）。
+	// stream-json 保持逐行透传。
 	const emit = (event: unknown): void => {
 		if (outputFormat === "stream-json") out(JSON.stringify(event));
 	};
-	// BI-08.1：输出上限（码点）；缺省 / ≤0 = 关闭（现状路径逐字节等价）。
+	// BI-08.1：输出上限（码点）；本面缺省 / ≤0 = 关闭（直连调用方现状路径逐字节
+	// 等价）。CLI 装配层经 config [tools] output_limit_bytes 下发缺省 64KiB
+	// （F-ST-04），config 显式 0 = 关闭（装配层不下发 → 此处即关闭）。
 	const outputLimitBytes = options.outputLimitBytes ?? 0;
 	// BI-05.3（W3-D7）：上下文引擎开关解析（全部缺省关；context 未提供 = 恒关）。
 	const ctx = options.context ?? {};
@@ -388,6 +403,11 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	let verificationResult: VerificationResult | undefined;
 	/** 最近一次真实 usage 读数（BI-10 用量优先级：事件读数 > 字符估算）。 */
 	let lastUsageInputTokens: number | undefined;
+	/**
+	 * 会话级用量汇总（json 输出面字段；逐轮取本轮最大值后累加——同轮多次上报
+	 * 取最大值，防累计式重复计数；跨轮累加 = 会话总用量）。
+	 */
+	const usageTotals = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 };
 
 	// ---- 装配序 ①：钩子（config [[hooks]] → BI-01.1 适配器 → BI-06.4 runner）----
 	const loadedHooks = loadHooksConfig(options.hooks ?? { enabled: true, entries: [] });
@@ -417,6 +437,8 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	// （末条目作追加父节点；不存在=结构化退出），未传入=新建。
 	const manager = new SessionManager(options.sessionsRoot !== undefined ? { rootDir: options.sessionsRoot } : {});
 	let sessionId: string;
+	/** 会话标题（json 输出面字段；新建 = prompt 前 80 字，续会话 = 既有会话标题）。 */
+	let sessionTitle = "";
 	let resumeTailId: string | null = null;
 	/** --resume 时的既有条目（重放进模型上下文；非 resume 恒空）。 */
 	let resumeEntries: import("../session/types").SessionEntry[] = [];
@@ -427,6 +449,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			throw failSession("session-not-found", `--resume 会话不存在: ${options.sessionId}`);
 		}
 		sessionId = options.sessionId;
+		sessionTitle = resumeMeta.title;
 		resumeEntries = await manager.entries(sessionId);
 		resumeTailId = resumeEntries.length > 0 ? resumeEntries[resumeEntries.length - 1]!.id : null;
 	} else {
@@ -435,6 +458,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			cwd: options.cwd,
 		});
 		sessionId = session.sessionId;
+		sessionTitle = session.title;
 	}
 
 	// SessionStart 钩子：block 即拒开会话（fail-closed，结构化退出）。
@@ -510,16 +534,26 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	// BI-05.1（W4-D9）：[memory] inject_enabled → 启动读 <cwd>/BI.dream.md，存在则
 	// 内容经 system 面前缀注入。与 --agent-file 共存时 agent-file 优先（已先 push），
 	// dream 追加其后；文件不存在/空 = 不注入（缺省态，零行为差）。
+	//
+	// F-ST-05：注入链补 BI.md——init 脚手架产出的项目记忆（BI.md）此前永不被消费。
+	// 改为依次读 BI.md（项目记忆）与 BI.dream.md（dream 沉淀）两文件：各自存在且
+	// 非空才注入，BI.md 段在前（项目规则先于沉淀记忆）；两文件内容相同时只注一次
+	// （去重，防同一段文本重复进 system 面）。
 	if (options.memory?.inject !== undefined) {
 		const inj = options.memory.inject;
 		const injFs = inj.fs ?? nodeFs;
 		const injDir = inj.dir ?? options.cwd;
-		const dreamPath = join(injDir, DREAM_FILE_FILENAME);
-		try {
-			const content = injFs.readFileSync(dreamPath, "utf8").trim();
-			if (content.length > 0) systemParts.push(content);
-		} catch {
-			// 文件不存在/不可读：视为缺省态，skip（绝不假冒成功）。
+		const injected = new Set<string>();
+		for (const fileName of [PROJECT_MEMORY_FILENAME, DREAM_FILE_FILENAME]) {
+			try {
+				const content = injFs.readFileSync(join(injDir, fileName), "utf8").trim();
+				if (content.length === 0) continue;
+				if (injected.has(content)) continue; // 两文件内容相同 → 只注一次
+				injected.add(content);
+				systemParts.push(content);
+			} catch {
+				// 文件不存在/不可读：视为缺省态，skip（绝不假冒成功）。
+			}
 		}
 	}
 	if (ctxTime) {
@@ -752,6 +786,8 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		const blocks: ContentBlock[] = [];
 		const assembler = new ToolCallAssembler();
 		let stop: StopReason = null;
+		/** 本轮用量读数（同轮多次上报取最大值，轮末并入会话级汇总）。 */
+		const roundUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 };
 
 		for await (const event of options.model.stream({ messages, tools: tools.map((t) => t.definition) })) {
 			if (event.type === "content_delta") {
@@ -765,9 +801,28 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			} else if (event.type === "usage") {
 				// BI-10：真实用量读数留痕（紧缩水位判定优先消费，估算仅兜底）。
 				if (typeof event.usage.inputTokens === "number") lastUsageInputTokens = event.usage.inputTokens;
+				// json 输出面：本轮用量取最大值（同轮多次上报不重复计数）。
+				if (typeof event.usage.inputTokens === "number") {
+					roundUsage.inputTokens = Math.max(roundUsage.inputTokens, event.usage.inputTokens);
+				}
+				if (typeof event.usage.outputTokens === "number") {
+					roundUsage.outputTokens = Math.max(roundUsage.outputTokens, event.usage.outputTokens);
+				}
+				if (typeof event.usage.cachedInputTokens === "number") {
+					roundUsage.cachedInputTokens = Math.max(roundUsage.cachedInputTokens, event.usage.cachedInputTokens);
+				}
+				if (typeof event.usage.reasoningTokens === "number") {
+					roundUsage.reasoningTokens = Math.max(roundUsage.reasoningTokens, event.usage.reasoningTokens);
+				}
 			}
 			emit(event);
 		}
+
+		// 轮末并入会话级用量汇总（json 输出面）。
+		usageTotals.inputTokens += roundUsage.inputTokens;
+		usageTotals.outputTokens += roundUsage.outputTokens;
+		usageTotals.cachedInputTokens += roundUsage.cachedInputTokens;
+		usageTotals.reasoningTokens += roundUsage.reasoningTokens;
 
 		if (stop === "stop" || stop === null) {
 			if (text !== "") {
@@ -831,6 +886,26 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			if (outputFormat === "text") {
 				// text 形态：meta（session_done 等）不落 out，只落最终文本一段。
 				out(finalText);
+			} else if (outputFormat === "json") {
+				// json 形态（F-ST-02）：全程不落事件流，结束时 stdout 只落这一个
+				// JSON 对象（字段对齐 session_done 汇总：sessionId/title/rounds/
+				// usage/reply=最终 finalText/exit）。失败路径不走到这里——stdout
+				// 绝不输出残缺 JSON，诊断由装配方经 err 报出。
+				out(
+					JSON.stringify({
+						sessionId,
+						title: sessionTitle,
+						rounds,
+						usage: {
+							inputTokens: usageTotals.inputTokens,
+							outputTokens: usageTotals.outputTokens,
+							...(usageTotals.cachedInputTokens > 0 ? { cachedInputTokens: usageTotals.cachedInputTokens } : {}),
+							...(usageTotals.reasoningTokens > 0 ? { reasoningTokens: usageTotals.reasoningTokens } : {}),
+						},
+						reply: finalText,
+						exit: "ok",
+					}),
+				);
 			} else {
 				emit({ type: "session_done", sessionId, exit: "ok", rounds, finalText });
 			}

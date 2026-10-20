@@ -7,6 +7,8 @@
  * - 锁文件防并发：他人持锁未过期 → 沉淀静默跳过不写盘；
  * - 会话启动注入：memory.inject 开 + <dir>/BI.dream.md 存在 → 内容进 system 面；
  *   缺失 → 不注入（零行为差）；
+ * - F-ST-05 注入链补 BI.md：BI.md（项目记忆）+ BI.dream.md（dream 沉淀）双文件
+ *   各自存在且非空才注入，BI.md 段在前；两文件内容相同只注一次；
  * - 与 --agent-file（systemInstruction）共存顺序：agent-file 优先，dream 追加其后；
  * - 缺省（memory 未提供）：沉淀/注入全关，行为与既有路径逐字节等价。
  */
@@ -272,6 +274,127 @@ describe("W4-D9 headless: 会话启动注入（BI-05.1 inject）", () => {
 			const content = fs.peek(`/proj/${DREAM_FILE_FILENAME}`) ?? "";
 			expect(content).toContain("既有沉淀");
 			expect(content).toContain("收尾结论。");
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// F-ST-05：注入链补 BI.md（项目记忆 + dream 沉淀双文件）
+// ---------------------------------------------------------------------------
+
+describe("F-ST-05 headless: 记忆注入双文件（BI.md + BI.dream.md）", () => {
+	test("仅 BI.md 存在：内容进 system 面（init 产出的项目记忆被消费）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const fs = makeMemFs({ files: { "/proj/BI.md": "# 项目记忆\n- 技术栈：Bun + TypeScript" } });
+			const { port, received } = scriptedModel([FINAL_ROUND]);
+			await runHeadless({
+				prompt: "hi",
+				cwd: root,
+				model: port,
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				memory: { inject: { dir: "/proj", fs } },
+				out: () => {},
+			} as HeadlessOptions);
+			const sys = systemTextOf(received[0]!.messages);
+			expect(sys).toContain("项目记忆");
+			expect(sys).toContain("技术栈：Bun + TypeScript");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("两文件都在：各自注入，BI.md 段在前（项目规则先于沉淀记忆）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const fs = makeMemFs({
+				files: { "/proj/BI.md": "项目记忆正文", "/proj/BI.dream.md": "沉淀记忆正文" },
+			});
+			const { port, received } = scriptedModel([FINAL_ROUND]);
+			await runHeadless({
+				prompt: "hi",
+				cwd: root,
+				model: port,
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				memory: { inject: { dir: "/proj", fs } },
+				out: () => {},
+			} as HeadlessOptions);
+			const sys = systemTextOf(received[0]!.messages);
+			expect(sys).toContain("项目记忆正文");
+			expect(sys).toContain("沉淀记忆正文");
+			expect(sys.indexOf("项目记忆正文")).toBeLessThan(sys.indexOf("沉淀记忆正文"));
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("两文件内容相同：只注一次（去重，不重复进 system 面）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const fs = makeMemFs({
+				files: { "/proj/BI.md": "同一段记忆", "/proj/BI.dream.md": "同一段记忆" },
+			});
+			const { port, received } = scriptedModel([FINAL_ROUND]);
+			await runHeadless({
+				prompt: "hi",
+				cwd: root,
+				model: port,
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				memory: { inject: { dir: "/proj", fs } },
+				out: () => {},
+			} as HeadlessOptions);
+			const sys = systemTextOf(received[0]!.messages);
+			expect(sys).toContain("同一段记忆");
+			expect(sys.split("同一段记忆").length - 1).toBe(1);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("BI.md 为空（纯空白）：不注入该段（其余文件照常）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const fs = makeMemFs({
+				files: { "/proj/BI.md": "   \n\t ", "/proj/BI.dream.md": "沉淀记忆正文" },
+			});
+			const { port, received } = scriptedModel([FINAL_ROUND]);
+			await runHeadless({
+				prompt: "hi",
+				cwd: root,
+				model: port,
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				memory: { inject: { dir: "/proj", fs } },
+				out: () => {},
+			} as HeadlessOptions);
+			const sys = systemTextOf(received[0]!.messages);
+			expect(sys).toContain("沉淀记忆正文");
+			expect(sys.trim().length).toBe("沉淀记忆正文".length);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("两文件都缺失：不注入（零行为差）", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			const fs = makeMemFs();
+			const { port, received } = scriptedModel([FINAL_ROUND]);
+			await runHeadless({
+				prompt: "hi",
+				cwd: root,
+				model: port,
+				tools: [],
+				sessionsRoot: join(root, "sessions"),
+				memory: { inject: { dir: "/proj", fs } },
+				out: () => {},
+			} as HeadlessOptions);
+			expect(systemTextOf(received[0]!.messages)).toBe("");
 		} finally {
 			await cleanup();
 		}
