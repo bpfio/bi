@@ -443,6 +443,16 @@ export const toolsSchema = sObj({
    * 不放大故障面。
    */
   output_limit_bytes: sInt(0),
+  /**
+   * BI-08.3：read_media_file 挂载门控。true = 注册 read_media_file 工具；缺省
+   * false 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
+   */
+  media: sBool(false),
+  /**
+   * BI-07.11：JobList/JobOutput/JobKill 三件挂载门控。true = 注册三件；缺省
+   * false 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
+   */
+  job_tools: sBool(false),
 });
 export type ToolsSection = InferSchema<typeof toolsSchema>;
 

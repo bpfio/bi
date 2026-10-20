@@ -280,6 +280,10 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 								timeoutMs: ptcSection.timeout_ms,
 								maxToolCalls: ptcSection.max_tool_calls,
 							},
+							// BI-08.3 / BI-07.11：无头路径 tools 整体仍受 [ptc] enabled 门控（现状不动），
+							// 仅在其内传递两开关（config [tools] media / job_tools 显式开启才挂载）。
+							media: loadedConfig?.tools.media === true,
+							jobs: loadedConfig?.tools.job_tools === true,
 						})
 					: []),
 			...(h.hooks !== undefined ? { hooks: h.hooks } : {}),

@@ -42,6 +42,7 @@ import {
 } from "./toolset";
 import type { ToolBinding } from "./headless";
 import type { FetchExecutor } from "../tools/web-fetch";
+import { pngBytes } from "../tool/handlers/read-media-file.test";
 
 // ---------------------------------------------------------------------------
 // 底座：tmp 工作区 / fetch 与 spawn 替身 / AbortSignal
@@ -894,6 +895,75 @@ describe("BI-28.5 · grep（递归正则扫描）", () => {
 			"pattern=TODO path=src include=*.ts",
 		);
 		expect(grep.argSummary?.({ pattern: "TODO" })).toBe("pattern=TODO path=.");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-08.3 / BI-07.11 · 挂载式门控（缺省零变动；显式开启才挂）
+// ---------------------------------------------------------------------------
+
+describe("BI-08.3 / BI-07.11 · 挂载式门控", () => {
+	test("缺省（不传开关）：工具名集合不含 read_media_file / JobList / JobOutput / JobKill（现状回归）", () => {
+		const names = new Set(namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() })));
+		expect(names.has("read_media_file")).toBe(false);
+		expect(names.has("JobList")).toBe(false);
+		expect(names.has("JobOutput")).toBe(false);
+		expect(names.has("JobKill")).toBe(false);
+	});
+
+	test("media:true → 含 read_media_file；execute 对临时目录最小合法 PNG 返回结构化元数据 + base64", async () => {
+		const { root, cleanup } = await makeWorkspace();
+		try {
+			// 复用 read-media-file.test.ts 现有 PNG 字节 fixture（3x2，33 字节）。
+			await writeFile(join(root, "pic.png"), pngBytes(3, 2));
+			const media = byName(
+				buildDefaultToolset(root, { spawnImpl: explodingSpawn(), media: true }),
+				"read_media_file",
+			);
+			const result = (await media.execute({ path: "pic.png" }, SIGNAL)) as {
+				ok: boolean;
+				metadata: { mimeType: string; bytes: number; width: number; height: number; delivery: string };
+				base64: string;
+			};
+			expect(result.ok).toBe(true);
+			expect(result.metadata.mimeType).toBe("image/png");
+			expect(result.metadata.bytes).toBe(33);
+			expect(result.metadata.width).toBe(3);
+			expect(result.metadata.height).toBe(2);
+			expect(result.metadata.delivery).toBe("inline-base64");
+			// base64 往返：解码后与原字节逐位一致（验证 fs 端口真实读入）。
+			expect(Buffer.from(result.base64, "base64").equals(Buffer.from(pngBytes(3, 2)))).toBe(true);
+			expect(media.readOnly).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("jobs:true → 含 JobList/JobOutput/JobKill；JobList execute 返回 {ok:true, jobs:[]}", async () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), jobs: true });
+		const names = namesOf(tools);
+		expect(names).toContain("JobList");
+		expect(names).toContain("JobOutput");
+		expect(names).toContain("JobKill");
+		const jobList = byName(tools, "JobList");
+		expect(jobList.readOnly).toBe(true);
+		const jobOutput = byName(tools, "JobOutput");
+		expect(jobOutput.readOnly).toBe(true);
+		const jobKill = byName(tools, "JobKill");
+		expect(jobKill.readOnly).toBe(false);
+		const listed = (await jobList.execute({}, SIGNAL)) as { ok: true; jobs: unknown[] };
+		expect(listed.ok).toBe(true);
+		expect(listed.jobs).toEqual([]);
+	});
+
+	test("定义面以 JOB_*_TOOL_SPEC 为单一事实源（name/description 与器官一致，inputSchema 为对象）", () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), jobs: true });
+		const listDef = byName(tools, "JobList").definition;
+		expect(listDef.name).toBe("JobList");
+		expect(typeof listDef.description).toBe("string");
+		expect(listDef.inputSchema).toHaveProperty("type", "object");
+		const killDef = byName(tools, "JobKill").definition;
+		expect(killDef.name).toBe("JobKill");
 	});
 });
 

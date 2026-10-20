@@ -56,7 +56,7 @@
 import { readFileSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import type { ToolBinding } from "./headless";
 import { fetchWebPage, type FetchExecutor } from "../tools/web-fetch";
 import {
@@ -77,6 +77,9 @@ import { spawnSubagentBinding } from "./subagent-adapter";
 import { runPtcScript, type PtcRunResult } from "../ptc/ptc-runner";
 import { CronService, type CronEntry } from "../cron/cron-service";
 import { CronTools } from "../cron/cron-tools";
+import { readMediaFile, type ReadMediaFileArgs, type ReadMediaFileDeps, type ReadMediaFileResult } from "../tool/handlers/read-media-file";
+import { JobRegistry, type JobId } from "../jobs/job-registry";
+import { JobTools, JOB_LIST_TOOL_SPEC, JOB_OUTPUT_TOOL_SPEC, JOB_KILL_TOOL_SPEC } from "../jobs/job-tools";
 
 // ---------------------------------------------------------------------------
 // 公共面
@@ -180,6 +183,16 @@ export interface BuildDefaultToolsetOptions {
 	 * 的注册，定时触发归 host 运行环 tick，绝不假冒"已可定时执行"。
 	 */
 	readonly cronService?: CronService;
+	/**
+	 * BI-08.3 read_media_file 挂载门：true 才注册 read_media_file 工具（缺省不挂，
+	 * 维持既有工具面零变动）。host 按 config [tools] media 实例化并注入；本卡仅做绑定装配。
+	 */
+	readonly media?: boolean;
+	/**
+	 * BI-07.11 JobList/JobOutput/JobKill 三件挂载门：true 才注册三件（缺省不挂，
+	 * 维持既有工具面零变动）。host 按 config [tools] job_tools 实例化并注入；本卡仅做绑定装配。
+	 */
+	readonly jobs?: boolean;
 }
 
 /**
@@ -234,6 +247,20 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 	// BI-07.7：cron_schedule/cron_list/cron_remove —— 仅当 host 注入 cronService 才注册（缺省不挂）。
 	if (options.cronService !== undefined) {
 		tools.push(...cronBindings(options.cronService));
+	}
+	// BI-08.3：read_media_file —— 仅当 host 显式开启 media 门控才注册（缺省不挂，工具面零变动）。
+	if (options.media === true) {
+		tools.push(mediaInspectBinding(root, pathJail));
+	}
+	// BI-07.11：JobList/JobOutput/JobKill —— 仅当 host 显式开启 jobs 门控才注册（缺省不挂，工具面零变动）。
+	if (options.jobs === true) {
+		const registry = new JobRegistry();
+		const jobTools = new JobTools(registry);
+		tools.push(
+			jobListBinding(jobTools),
+			jobOutputBinding(jobTools),
+			jobKillBinding(jobTools),
+		);
 	}
 	return tools;
 }
@@ -1130,4 +1157,112 @@ export function cronBindings(service: CronService): ToolBinding[] {
 /** 仅供测试/装配层取白名单面（依赖注入校验用）。 */
 export function ptcReadonlyBindings(): readonly string[] {
 	return [...PTC_READONLY_WHITELIST];
+}
+
+// ---------------------------------------------------------------------------
+// BI-08.3 · read_media_file —— 媒体文件结构化检视（委托 ReadMediaFile 器官）
+// ---------------------------------------------------------------------------
+
+interface MediaInspectDeps {
+	readonly root: string;
+	readonly jail: PathJail;
+}
+
+/**
+ * read_media_file 绑定：喂模型定义 + 安全执行（路径守卫 + fs 注入）。
+ * path 为工作区内相对路径 → guardReadPath 裁决（段级前缀逃逸 + PathJail read）→
+ * 调 readMediaFile 器官（fs 用 node:fs readFile 包成端口；Buffer 是 Uint8Array
+ * 子类，直接满足 ReadMediaFileDeps fs 端口的 Uint8Array 返回面）。器官结构化
+ * 返回面原样透传（保持结构化返回面，不 JSON.stringify）。
+ */
+function mediaInspectBinding(root: string, jail: PathJail): ToolBinding {
+	const deps: MediaInspectDeps = { root, jail };
+	const fsPort = { readFile: (p: string) => readFile(p) };
+	return {
+		definition: {
+			name: "read_media_file",
+			description:
+				"读取工作区内 PNG/JPEG 媒体文件，返回结构化元数据（MIME 类型 / 字节数 / 固有宽高像素）+ base64 数据。" +
+				"支持 region 四元组 [x1, y1, x2, y2]（原始像素坐标）局部高精检视，与 fullResolution 全分辨率直出开关。" +
+				"超出工作区根的路径一律拒绝。",
+			inputSchema: {
+				type: "object",
+				properties: {
+					path: { type: "string", description: "工作区内媒体文件的相对路径" },
+					region: {
+						type: "array",
+						description: "局部高精检视区域 [x1, y1, x2, y2] 原始像素坐标（可选）",
+						items: { type: "integer" },
+					},
+					fullResolution: { type: "boolean", description: "全分辨率直出开关（可选，缺省 false）" },
+				},
+				required: ["path"],
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeArg(args, "path"),
+		execute: async (args, signal) => {
+			const path = takeStringArg(args, "path");
+			const abs = guardReadPath(deps.root, deps.jail, path);
+			const mediaArgs: ReadMediaFileArgs = { path: abs };
+			const region = (args !== null && typeof args === "object" ? (args as Record<string, unknown>)["region"] : undefined) as
+				| ReadMediaFileArgs["region"]
+				| undefined;
+			if (region !== undefined) mediaArgs.region = region;
+			const fullResolution = (args !== null && typeof args === "object" ? (args as Record<string, unknown>)["fullResolution"] : undefined);
+			if (fullResolution !== undefined) mediaArgs.fullResolution = fullResolution === true;
+			const rhDeps: ReadMediaFileDeps = { fs: fsPort };
+			return await withSignal(signal, async () => {
+				const result: ReadMediaFileResult = await readMediaFile(mediaArgs, rhDeps);
+				// 器官结构化返回面原样透传（保持结构化返回面，不 JSON.stringify）。
+				return result;
+			});
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// BI-07.11 · JobList / JobOutput / JobKill —— 后台任务模型工具三件套
+// ---------------------------------------------------------------------------
+
+/**
+ * 三件 jobs 工具绑定（委托既有 JobTools，零新造轮子）。
+ * name/description/inputSchema 以 job-tools.ts 的 JOB_*_TOOL_SPEC 为单一事实源
+ * （直接引用 spec 常量，勿手抄二次维护）。JobList/JobOutput 为只读面
+ * （readOnly:true）；JobKill 改写任务状态（readOnly:false）。
+ */
+function jobListBinding(jobTools: JobTools): ToolBinding {
+	return {
+		definition: {
+			...JOB_LIST_TOOL_SPEC,
+			inputSchema: JOB_LIST_TOOL_SPEC.inputSchema as Record<string, unknown>,
+		},
+		readOnly: true,
+		argSummary: () => "JobList",
+		execute: () => jobTools.runList(),
+	};
+}
+
+function jobOutputBinding(jobTools: JobTools): ToolBinding {
+	return {
+		definition: {
+			...JOB_OUTPUT_TOOL_SPEC,
+			inputSchema: JOB_OUTPUT_TOOL_SPEC.inputSchema as Record<string, unknown>,
+		},
+		readOnly: true,
+		argSummary: (args) => `id=${optionalStringArg(args, "id")}`,
+		execute: async (args) => jobTools.runOutput(args),
+	};
+}
+
+function jobKillBinding(jobTools: JobTools): ToolBinding {
+	return {
+		definition: {
+			...JOB_KILL_TOOL_SPEC,
+			inputSchema: JOB_KILL_TOOL_SPEC.inputSchema as Record<string, unknown>,
+		},
+		readOnly: false,
+		argSummary: (args) => `id=${optionalStringArg(args, "id")}`,
+		execute: async (args) => jobTools.runKill(args),
+	};
 }

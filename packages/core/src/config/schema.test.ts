@@ -48,6 +48,9 @@ describe("schema: 分区与默认值", () => {
     expect(DEFAULT_BI_CONFIG.thinking.effort).toBe("medium");
     expect(DEFAULT_BI_CONFIG.thinking.enabled).toBe(true);
     expect(DEFAULT_BI_CONFIG.tools.allow).toEqual([]);
+    // BI-08.3 / BI-07.11：挂载式门控缺省 false（工具面零变动）。
+    expect(DEFAULT_BI_CONFIG.tools.media).toBe(false);
+    expect(DEFAULT_BI_CONFIG.tools.job_tools).toBe(false);
     expect(DEFAULT_BI_CONFIG.providers.entries).toEqual({});
     expect(DEFAULT_BI_CONFIG.tui.theme).toBe("dark");
     expect(DEFAULT_BI_CONFIG.read.max_file_size_kb).toBe(512);
@@ -276,5 +279,33 @@ describe("schema: provider extra_headers", () => {
     const entries = (layer?.providers as { entries?: Record<string, unknown> } | undefined)?.entries;
     expect(entries?.["p1"]).toBeUndefined();
     expect(issues.some((i) => i.path === "providers.entries.p1.extra_headers.x-bad")).toBe(true);
+  });
+});
+
+describe("schema: BI-08.3 / BI-07.11 挂载式门控键", () => {
+  /** 装载路径（对齐 ConfigService.compose）：校验 → 合并到默认底 → backfill 回填叶子默认。 */
+  function load(raw: unknown): { config: BiConfig; issues: ConfigIssue[] } {
+    const { layer, issues } = validate(raw);
+    const base = createDefaultConfig();
+    deepMergeLayer(base, layer);
+    BI_CONFIG_SCHEMA.backfill?.(base);
+    return { config: base, issues };
+  }
+
+  test("未声明 [tools] media / job_tools → 缺省 false（工具面零变动）", () => {
+    const { config, issues } = load({});
+    expect(issues).toEqual([]);
+    expect(config.tools.media).toBe(false);
+    expect(config.tools.job_tools).toBe(false);
+  });
+
+  test("显式声明 true/false → 原样透传；类型不符的键丢弃并诊断", () => {
+    const { config, issues } = load({ tools: { media: true, job_tools: false } });
+    expect(issues).toEqual([]);
+    expect(config.tools.media).toBe(true);
+    expect(config.tools.job_tools).toBe(false);
+    const bad = load({ tools: { media: "yes" } });
+    expect(bad.config.tools.media).toBe(false);
+    expect(bad.issues.some((i) => i.path === "tools.media")).toBe(true);
   });
 });

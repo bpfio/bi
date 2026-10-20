@@ -18,8 +18,8 @@ import {
 } from "./read-media-file";
 import { REGION_CROP_NOTE } from "../../media/region-cropper";
 
-/** 手造 PNG：签名 + IHDR（3x2）。 */
-function pngBytes(width = 3, height = 2): Uint8Array {
+/** 手造 PNG：签名 + IHDR（3x2）。导出供装配层测试复用（勿自造第二份 PNG fixture）。 */
+export function pngBytes(width = 3, height = 2): Uint8Array {
   const out = new Uint8Array(33);
   out.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
   const dv = new DataView(out.buffer);

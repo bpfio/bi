@@ -135,6 +135,9 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 				...(config.ptc?.enabled === true
 					? { ptcDeps: { timeoutMs: config.ptc.timeout_ms, maxToolCalls: config.ptc.max_tool_calls } }
 					: {}),
+				// BI-08.3 / BI-07.11：挂载式门控（config [tools] media / job_tools 显式开启才挂载）。
+				media: config.tools?.media === true,
+				jobs: config.tools?.job_tools === true,
 			}),
 			cwd: process.cwd(),
 			gate,

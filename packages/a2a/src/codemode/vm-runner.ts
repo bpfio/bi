@@ -22,9 +22,27 @@
  */
 
 import vm from "node:vm";
+import { Transpiler } from "bun";
 
-/** VmRunError 分类：timeout=脚本超时被中断；runtime=执行期异常；too-long=超出代码长度上限。 */
-export type VmErrorCode = "timeout" | "runtime" | "too-long";
+// BI-16.1 补齐 TS 半边：Bun 内置转译器做类型擦除（TS→JS）。模块级单例——无状态、
+// 可安全复用，勿每次调用新建。对纯 JS 幂等（仅做等价转译，不改变执行语义）。
+//
+// `define` 修正 Bun 转译器的 CJS interop 副作用：Bun 会把字面 `typeof require`
+// 常量折叠成 `"function"`，使 guest 误以为 `require` 可用，破坏"guest 不見宿主
+// 模块全局"的沙箱契约（见上方白名单语义与测试用例）。将其重映射到沙箱 globalThis
+// 上不存在的标记，使 `typeof require` 在 guest realm 仍求值为 `"undefined"`，
+// 且对真正用到 `require` 的纯计算脚本无影响（沙箱本就不提供 require）。
+const tsTranspiler = new Transpiler({
+  loader: "ts",
+  define: {
+    require: "globalThis.__codemode_require",
+    module: "globalThis.__codemode_module",
+    exports: "globalThis.__codemode_exports",
+  },
+});
+
+/** VmRunError 分类：timeout=脚本超时被中断；runtime=执行期异常；too-long=超出代码长度上限；compile=源码 TS/JS 转译（编译）失败。 */
+export type VmErrorCode = "timeout" | "runtime" | "too-long" | "compile";
 
 /** 沙箱执行异常（结构化，不裸抛宿主原始错误）。 */
 export class VmRunError extends Error {
@@ -63,12 +81,16 @@ export const DEFAULT_VM_MAX_CODE_LENGTH = 64 * 1024;
 export const DEFAULT_VM_MAX_CONSOLE_ENTRIES = 10_000;
 
 /**
- * 在零依赖内存沙箱中运行一段纯计算 JS 代码。
+ * 在零依赖内存沙箱中运行一段纯计算 JS/TS 代码（BI-16.1 补齐 TS 半边）。
  *
+ * - 进入 `vm.Script` 编译前，先用 Bun 内置转译器做 **TS 类型擦除**（仅擦除类型，
+ *   不改任何执行语义；对纯 JS 幂等）。校验（长度上限等）在原始 source 上完成，
+ *   转译产物才进编译器；
  * - 上下文白名单：`console`（捕获版，不写宿主 stdout）、`JSON`、`Math`
  *   （guest realm 内建）、`data`（opts.data，可选）；
  * - 超时（默认 100ms）由 vm.Script timeout 选项硬中断，抛 `VmRunError('timeout')`；
  * - 执行期异常（TypeError/RangeError/用户 throw）统一包装为 `VmRunError('runtime')`；
+ * - 转译（编译）失败（非法 TS/JS 语法）抛 `VmRunError('compile')`；
  * - 代码长度超限在执行前拒绝，抛 `VmRunError('too-long')`；
  * - 不注入任何工具/IO 能力——接缝③，工具绑定归 BI-16.2。
  */
@@ -115,7 +137,18 @@ export function runInVm(code: string, opts?: VmRunOptions): VmRunResult {
   }
   const context = vm.createContext(sandbox);
 
-  const script = new vm.Script(code, { filename: opts?.filename ?? "codemode-sandbox.js" });
+  // TS→JS 类型擦除（BI-16.1 补齐 TS 半边）。校验已在上方对**原始 source** 完成
+  // （长度上限等），此处只对转译产物编译——顺序不能反，否则绕不过原始源码约束。
+  // 转译失败（非法 TS/JS 语法）→ 走结构化错误通道，不裸抛 Bun 内部错误栈。
+  let jsSource: string;
+  try {
+    jsSource = tsTranspiler.transformSync(code);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new VmRunError("compile", `code transpile failed: ${message}`, { cause: err });
+  }
+
+  const script = new vm.Script(jsSource, { filename: opts?.filename ?? "codemode-sandbox.js" });
   const t0 = performance.now();
   let result: unknown;
   try {

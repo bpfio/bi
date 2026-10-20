@@ -155,3 +155,48 @@ describe("runInVm · 白名单外 global 受限语义（node:vm 默认，断言�
     expect((globalThis as Record<string, unknown>)["leakedAttempt"]).toBeUndefined();
   });
 });
+
+describe("runInVm · TypeScript 类型擦除（BI-16.1 补齐 TS 半边）", () => {
+  test("TS 类型注解 + 算术：const x: number = 1 可执行", () => {
+    const r = runInVm(`const x: number = 1;
+const y: number = 2;
+x * y + 10`);
+    expect(r.result).toBe(12);
+  });
+
+  test("interface 声明被擦除 + 带类型参数的函数精算", () => {
+    const r = runInVm(`interface Pt { x: number; y: number }
+function len(p: Pt): number {
+  return Math.sqrt(p.x * p.x + p.y * p.y);
+}
+len({ x: 3, y: 4 })`);
+    expect(r.result).toBe(5);
+    // interface 自身不应作为值泄漏进运行时
+    const e = catchVmError(() => runInVm(`interface Pt { x: number } Pt.x = 1; Pt`));
+    expect(e.code).toBe("runtime");
+  });
+
+  test("泛型函数调用：identity<T> 类型参数被擦除，执行语义不变", () => {
+    const r = runInVm(`function identity<T>(v: T): T { return v; }
+identity<number>(42) + identity<number>(8)`);
+    expect(r.result).toBe(50);
+  });
+
+  test("JS 经转译后幂等：原始 JS 用例语义不变（类型擦除零行为变化）", () => {
+    expect(runInVm("1 + 2 * 3").result).toBe(7);
+    expect(runInVm(`const parts = ["bi", "codemode"]; parts.join("-").toUpperCase()`).result).toBe("BI-CODEMODE");
+    expect(runInVm("Math.floor(3.7) + Math.max(1, 9) * Math.PI ** 0").result).toBe(12);
+    expect(runInVm(`const x = 1;`).result).toBeUndefined();
+  });
+});
+
+describe("runInVm · 转译（编译）失败结构化", () => {
+  test("非法 TS 语法 → VmRunError('compile')，message 含 Bun 报错要点且非裸抛", () => {
+    const e = catchVmError(() => runInVm(`const x: : 1`));
+    expect(e.code).toBe("compile");
+    expect(e.message).toContain("transpile failed");
+    // Bun 原始报错要点随 message 透传，并通过 cause 保留
+    expect(e.message.length).toBeGreaterThan("code transpile failed: ".length);
+    expect(e.cause).toBeDefined();
+  });
+});
