@@ -760,3 +760,7 @@ FX-B 单测过但真机 /exit 落"执行面尚未接线"兜底——根因=候�
 ### 备案翻转
 
 README"库态能力面"节改写为接线面一览（X5）；F-ST-09/10 由 wontfix 翻转为 fixed（接线完成）；config list 实测 69 键。至此 BI-12/14/15/16/17 五族全部有生产消费者，"器官在装配无"清零。
+
+### 会话终态（封存）
+
+origin=**cc7eb08**（bpfio/bi，树净零差）；提交链 8152de1→4b43ba3→3fe64e9→cc7eb08。台账：WIRE-X1~X5 五卡全闭（commit/proof 四全）、批次 BI-WIRE-2026-10-20 completed、F-ST-01~11 十一项全 fixed 零 open、planned/running/blocked 归零。门禁 4858 pass/0 fail（270 文件，BI_PTY_E2E=1）+三包 tsc 0；bi 狗粮（longcat 真会话调 run_js）与四子命令真机验证全绿。bi 现状：16 子命令全接线、五大库态器官全部有生产消费者、README/配置参考与实际面一致（config list 69 键）。本会话至此无任何挂起事项。
