@@ -31,6 +31,8 @@
 
 import { charWidth, textWidth } from "../components/cjk-width";
 import type { FileCompletionItem } from "./file-completion";
+import { gateCommandCandidates } from "./gate-commands";
+import { modeCommandCandidates } from "./mode-command";
 
 /** 单条候选（与 core SlashCommandSurfaceEntry 字段同构；name 不含前导 "/"）。 */
 export interface Candidate {
@@ -48,12 +50,18 @@ export type CandidatesProvider = (draft: string) => readonly Candidate[];
  * 内置斜杠命令候选（BI-27.4 缺省面）：仅收录 tui 包内已存在的命令
  * （copy/config/reload/reload-tui，摘要取各自定义原文）。未立项命令不
  * 假冒条目；自定义命令经 CandidatesProvider 注入（bin/** 装配缝）。
+ * BI-11 接线：手动门三命令（/compact /rewind /clear，mount/gate-commands.ts）
+ * 与 BI-20 接线：diff 审查门入口（/diff，mount/diff-gate.ts）、四态工作模式
+ * 入口（/mode，mount/mode-command.ts）一并入面。
  */
 export const builtinSlashCandidates: readonly Candidate[] = [
   { name: "copy", description: "复制上一轮回答到系统剪贴板" },
   { name: "config", description: "打开交互式设置面板（查看 / 修改三级 TOML 配置）" },
   { name: "reload", description: "免重启热重载全部配置（config.toml / tui.toml / local.toml）" },
   { name: "reload-tui", description: "免重启热重载终端外观偏好（tui.toml）" },
+  ...gateCommandCandidates,
+  { name: "diff", description: "展示工作区未提交变更并过 diff 审查门" },
+  ...modeCommandCandidates,
 ];
 
 /** 缺省候选面：忽略草稿，恒回吐内置列表。 */

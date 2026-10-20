@@ -453,6 +453,16 @@ export const toolsSchema = sObj({
    * false 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
    */
   job_tools: sBool(false),
+  /**
+   * BI-13.2：lsp_navigate 挂载门控。true = 注册 lsp_navigate 工具；缺省 false
+   * 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
+   */
+  lsp: sBool(false),
+  /**
+   * BI-13.1：select_tools 挂载门控。true = 注册 select_tools 工具；缺省 false
+   * 工具面零变动（同款门控模式：config 显式开启才挂载，否则维持既有注册面）。
+   */
+  select_tools: sBool(false),
 });
 export type ToolsSection = InferSchema<typeof toolsSchema>;
 
@@ -752,6 +762,16 @@ export const contextSchema = sObj({
   max_history_entries: sInt(0),
   /** IANA 时区（time_context / date_change_sensor 共用）。缺省 Asia/Shanghai。 */
   timezone: sStr("Asia/Shanghai"),
+  /**
+   * BI-08.2：image-offload 渐进图像卸载管线门控。true = 接入 image-offload
+   * 管线（渐进图像卸载）；缺省 false 行为零变动（逐字节等价于现状）。
+   */
+  image_offload: sBool(false),
+  /**
+   * BI-10：AutoCompactor token 水位紧缩门控。true = 接入 AutoCompactor
+   * token 水位紧缩；缺省 false 走既有条目数门禁裁剪（逐字节等价于现状）。
+   */
+  auto_compactor: sBool(false),
 });
 export type ContextSection = InferSchema<typeof contextSchema>;
 

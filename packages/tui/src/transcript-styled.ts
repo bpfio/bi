@@ -86,6 +86,15 @@ export class StyledTranscript {
     this.#rowsPerEntry.push(renderEntry(entry, this.#width));
   }
 
+  /**
+   * 清空富文本视图（BI-11 接线：/clear 执行体）——丢弃全部条目与派生行，
+   * 宽度保持不变；清空后视图等价于新建空视图。
+   */
+  clear(): void {
+    this.#entries.length = 0;
+    this.#rowsPerEntry = [];
+  }
+
   /** 视口行宽变更（BI-27.5）：全量重算视图行；宽度等值 no-op。 */
   resize(width: number): void {
     if (!Number.isInteger(width) || width < 1) {

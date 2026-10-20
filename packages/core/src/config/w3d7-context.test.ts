@@ -66,6 +66,8 @@ describe("W3-D7 config: 缺省值与 17 根键拓扑（回归）", () => {
 			tool_result_prune: false,
 			max_history_entries: 0,
 			timezone: "Asia/Shanghai",
+			image_offload: false,
+			auto_compactor: false,
 		});
 	});
 
@@ -128,6 +130,8 @@ describe("W3-D7 config: 单层校验（[context] 挂载分区）", () => {
 			tool_result_prune: false,
 			max_history_entries: 0,
 			timezone: "Asia/Shanghai",
+			image_offload: false,
+			auto_compactor: false,
 		});
 	});
 
@@ -171,6 +175,8 @@ timezone = "UTC"
 				tool_result_prune: false,
 				max_history_entries: 30,
 				timezone: "UTC",
+				image_offload: false,
+				auto_compactor: false,
 			});
 		} finally {
 			await cleanup();

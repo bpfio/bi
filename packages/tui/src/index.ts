@@ -121,3 +121,59 @@ export {
   commonPrefix,
 } from "./mount/repl";
 export type { LineEditAction, ReplOptions, ReplResult, CompletionsFn } from "./mount/repl";
+
+// —— BI-11 接线：TokenHud 状态跟踪（usage 读数 → 状态行 HUD 段）——
+export { TokenHudTracker, DEFAULT_CONTEXT_TOKENS } from "./mount/token-hud";
+
+// —— BI-11 接线：手动门三命令（/compact /rewind /clear）候选面与分发面——
+export {
+  GATE_COMMAND_NAMES,
+  gateCommandCandidates,
+  gateCommandName,
+  isGateCommandLine,
+  dispatchGateCommand,
+} from "./mount/gate-commands";
+export type { GateDispatchResult, GateCommandOverrides } from "./mount/gate-commands";
+
+// —— BI-20 接线：diff 审查门器官（parseDiff/renderDiff/presentDiff）——
+export {
+  ANSI,
+  buildDiffFromFiles,
+  formatHunkHeader,
+  parseDiff,
+  presentDiff,
+  renderDiff,
+} from "./diff-view";
+export type {
+  DiffFile,
+  DiffFileStatus,
+  DiffGateDecision,
+  DiffGateOptions,
+  DiffGateSummary,
+  DiffHunk,
+  DiffLine,
+  DiffLineKind,
+  DiffModel,
+} from "./diff-view";
+
+// —— BI-20 接线：diff 审查门入口（/diff 命令面）——
+export { defaultGitRunner, parseDiffArgs, runDiffGate, stripAnsi } from "./mount/diff-gate";
+export type { DiffCommandResult, DiffGatePorts, GitRunner } from "./mount/diff-gate";
+
+// —— BI-20.1 接线：四态工作模式命令面（/mode）+ 模式徽标 ——
+export {
+	DEFAULT_WORK_MODE,
+	MODE_COMMAND_NAME,
+	dispatchModeCommand,
+	isModeCommandLine,
+	isModeId,
+	modeCommandCandidates,
+	modeCommandName,
+} from "./mount/mode-command";
+export type { ModeCommandError, ModeCommandErrorCode, ModeCommandResult } from "./mount/mode-command";
+export { renderModeIndicator } from "./components/mode-indicator";
+export type { IndicatorMode } from "./components/mode-indicator";
+
+// —— BI-20.5 接线：vis 令牌轮转权威（tui 侧装配；core 侧只认端口）——
+export { createVisTokenAuthority } from "./vis/vis-token-authority";
+export type { VisTokenAuthority, VisTokenAuthorityOptions } from "./vis/vis-token-authority";

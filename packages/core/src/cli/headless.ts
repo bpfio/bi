@@ -42,6 +42,13 @@ import { buildTimeContext, DEFAULT_TIMEZONE } from "../context/time-context";
 import { DateChangeSensor } from "../context/date-change-sensor";
 import { pruneToolResult } from "../context/tool-result-pruner";
 import { WindowManager } from "../context/window-manager";
+import { offloadOldestImages } from "../context/image-offload";
+import {
+	AutoCompactor,
+	CompactionCircuitOpenError,
+	type Summarizer,
+} from "../context/compactor";
+import type { Msg } from "../context/tool-pairing";
 import { sanitizeErrorPayload } from "../observability/endpoint-sanitizer";
 import { join } from "node:path";
 import * as nodeFs from "node:fs";
@@ -225,6 +232,23 @@ export interface HeadlessContextOptions {
 	readonly toolResultPrune?: boolean;
 	/** window-manager：历史条目上限裁剪（>0 生效，0 = off）。 */
 	readonly maxHistoryEntries?: number;
+	/**
+	 * BI-08.2：image-offload 渐进图像卸载（对应 config [context] image_offload）。
+	 * true = 每回合构造请求消息前对历史跑一次 offloadOldestImages（超限策略以
+	 * 器官自带参数为准）；缺省 false = off（零开销零行为差）。
+	 */
+	readonly imageOffload?: boolean;
+	/**
+	 * BI-10：AutoCompactor 80% 高水位静默紧缩（对应 config [context] auto_compactor）。
+	 * true = 每回合构造请求消息前按水位判定静默紧缩（summarizer 复用当前 model
+	 * 端口）；缺省 false = off（现状条目数门禁裁剪路径，完全不进）。
+	 */
+	readonly autoCompactor?: boolean;
+	/**
+	 * BI-10 紧缩视窗分母（token 读数；测试确定性注入，仿 now 注入先例）。
+	 * 缺省 128_000。仅 autoCompactor 开启时消费。
+	 */
+	readonly autoCompactorWindowTokens?: number;
 	/** 共用 IANA 时区（time_context / date_change_sensor）。缺省 Asia/Shanghai。 */
 	readonly timezone?: string;
 	/** 注入时钟（测试确定性）。缺省 Date.now。 */
@@ -338,6 +362,10 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	const ctxDate = ctx.dateChangeSensor === true;
 	const ctxPrune = ctx.toolResultPrune === true;
 	const ctxMaxHist = ctx.maxHistoryEntries ?? 0;
+	// 虚账清偿波次 1：BI-08.2 / BI-10 两开关解析（缺省关 = 现状路径逐字节等价）。
+	const ctxImageOffload = ctx.imageOffload === true;
+	const ctxAutoCompact = ctx.autoCompactor === true;
+	const ctxCompactWindowTokens = ctx.autoCompactorWindowTokens ?? 128_000;
 	const ctxTz = ctx.timezone ?? DEFAULT_TIMEZONE;
 	const ctxNow = ctx.now ?? Date.now;
 	// 跨日感知器（内部态持久跨轮；discloseDateChange 每轮调用推进基线）。
@@ -358,6 +386,8 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	const permissionDecisions: Array<{ tool: string; decision: string }> = [];
 	/** 收尾自验回执（BI-21.1；仅 verify 开关生效时赋值）。 */
 	let verificationResult: VerificationResult | undefined;
+	/** 最近一次真实 usage 读数（BI-10 用量优先级：事件读数 > 字符估算）。 */
+	let lastUsageInputTokens: number | undefined;
 
 	// ---- 装配序 ①：钩子（config [[hooks]] → BI-01.1 适配器 → BI-06.4 runner）----
 	const loadedHooks = loadHooksConfig(options.hooks ?? { enabled: true, entries: [] });
@@ -505,18 +535,22 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	 * 时每轮保留最近 N 条历史（头部 system 消息恒保留，避免系统指令/时钟块被裁掉）；
 	 * 0/缺省 = 不裁（现状逐字节等价）。WindowManager 实例被真实喂入每轮估算 token 数
 	 * 作遥测（snapshot 可查），但裁剪动作由条目数门禁驱动——其完整 token 水位紧缩
-	 * 需配合 AutoCompactor（本批归档，不接）。
+	 * 由 BI-10 AutoCompactor 承接（见下方 applyAutoCompact 接线）。
 	 */
 	const windowManager = ctxMaxHist > 0 ? new WindowManager() : undefined;
-	const applyHistoryCap = (): void => {
-		if (windowManager === undefined) return;
-		// 估算 prompt token（字符/4）喂遥测；截断发生时记一击。
+	/** prompt token 估算（字符/4，与 applyHistoryCap 既有口径一致；BI-10 缺位读数回退共用）。 */
+	const estimatePromptTokens = (): number => {
 		let estTokens = 0;
 		for (const m of messages) {
 			const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
 			estTokens += Math.ceil(c.length / 4);
 		}
-		windowManager.updateUsage(estTokens, Math.max(1, ctxMaxHist * 600));
+		return estTokens;
+	};
+	const applyHistoryCap = (): void => {
+		if (windowManager === undefined) return;
+		// 估算 prompt token（字符/4）喂遥测；截断发生时记一击。
+		windowManager.updateUsage(estimatePromptTokens(), Math.max(1, ctxMaxHist * 600));
 		if (messages.length <= ctxMaxHist) return;
 		const head = messages.filter((m) => m.role === "system");
 		const tail = messages.slice(-ctxMaxHist);
@@ -528,6 +562,125 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			messages.push(...head, ...tail);
 		}
 		windowManager.recordCompaction();
+	};
+	// ---- BI-08.2：image-offload 渐进卸载接线（每回合发送前跑一次；缺省关 = 零变动）----
+	const applyImageOffload = (): void => {
+		if (!ctxImageOffload) return;
+		// 超限策略以器官自带参数为准（keepRecentN 缺省 0 = 全部可卸载）。器官就地
+		// 变换且幂等：卸载槽位替换为文本块（非 image 块），二次调用自动跳过。
+		offloadOldestImages(messages);
+	};
+	// ---- BI-10：AutoCompactor 80% 水位静默紧缩接线（缺省关 = 走既有条目数门禁裁剪）----
+	/**
+	 * summarizer 端口（BI-10）：用 runHeadless 已装配的 model 端口最小包装——
+	 * 截断历史（Msg 视图渲染为文本）→ 单轮总结 prompt → 收集 content_delta 文本
+	 * 返回摘要。失败（模型 error 事件 / 空响应 / 流抛错）直接抛出，交器官 catch
+	 * （lastFailure 结构化留痕、返回 null、不炸会话、熔断器不计数）。
+	 */
+	const buildSummarizer = (port: ModelPort): Summarizer => {
+		return async (msgs: Msg[]) => {
+			const rendered = msgs
+				.map((m) => `${m.role}: ${typeof m.content === "string" ? m.content : safeStringify(m.content)}`)
+				.join("\n");
+			const prompt = [
+				"Summarize the following conversation history for context preservation.",
+				"Keep key decisions, file paths, open tasks, and unresolved questions. Respond with the summary only.",
+				"",
+				rendered,
+			].join("\n");
+			let text = "";
+			for await (const event of port.stream({ messages: [{ role: "user", content: prompt }], tools: [] })) {
+				if (event.type === "content_delta") text += event.delta;
+				else if (event.type === "error") throw new Error(`${event.error.code}: ${event.error.message}`);
+			}
+			const trimmed = text.trim();
+			if (trimmed === "") throw new Error("summarizer: 模型返回空摘要");
+			return trimmed;
+		};
+	};
+	/**
+	 * AgentMessage[] → 轻量 Msg 视图（AutoCompactor / findSafeCut 消费形态）：
+	 * tool_use / tool_result 块逐块拆为带 toolCallId 的 Msg（配对计数正确性），
+	 * 其余块映射为同角色 Msg；每个 Msg 经 sourceOf 回指原 AgentMessage，写回时
+	 * 原引用保留（会话事件序与 JSONL 落盘形态不被紧缩重排破坏）。
+	 */
+	const buildMsgView = (
+		msgs: readonly AgentMessage[],
+	): { view: Msg[]; sourceOf: Map<Msg, AgentMessage> } => {
+		const view: Msg[] = [];
+		const sourceOf = new Map<Msg, AgentMessage>();
+		for (const m of msgs) {
+			if (typeof m.content === "string") {
+				const v: Msg = { role: m.role, content: m.content };
+				view.push(v);
+				sourceOf.set(v, m);
+				continue;
+			}
+			let sawBlock = false;
+			for (const block of m.content) {
+				sawBlock = true;
+				const v: Msg =
+					block.type === "tool_use"
+						? { role: "assistant", toolCallId: block.id, toolName: block.name, content: block }
+						: block.type === "tool_result"
+							? { role: "tool", toolCallId: block.toolUseId, content: block.content }
+							: { role: m.role, content: block };
+				view.push(v);
+				sourceOf.set(v, m);
+			}
+			if (!sawBlock) {
+				const v: Msg = { role: m.role, content: [] };
+				view.push(v);
+				sourceOf.set(v, m);
+			}
+		}
+		return { view, sourceOf };
+	};
+	/**
+	 * 紧缩序列写回：来源 Msg 还原为原 AgentMessage 引用（同源多 Msg 连续去重，
+	 * 多 tool_use 拆分形态）；唯一非来源 Msg 是 [compacted] 摘要占位（user 形态），
+	 * 直接构造。边界语义：安全切点若落在同源 text/tool_use Msg 之间，保留侧还原
+	 * 整条原消息（文本块已随 older 段进入摘要，保留侧出现属良性重复，API 序仍合法）。
+	 */
+	const writeBackCompacted = (compacted: readonly Msg[], sourceOf: Map<Msg, AgentMessage>): AgentMessage[] => {
+		const out: AgentMessage[] = [];
+		let lastSource: AgentMessage | undefined;
+		for (const m of compacted) {
+			const src = sourceOf.get(m);
+			if (src !== undefined) {
+				if (src === lastSource) continue;
+				out.push(src);
+				lastSource = src;
+			} else {
+				out.push({ role: "user", content: typeof m.content === "string" ? m.content : safeStringify(m.content) });
+				lastSource = undefined;
+			}
+		}
+		return out;
+	};
+	const compactorWindow = ctxAutoCompact ? new WindowManager() : undefined;
+	const autoCompactor = ctxAutoCompact && compactorWindow !== undefined
+		? new AutoCompactor({ summarizer: buildSummarizer(options.model), window: compactorWindow })
+		: undefined;
+	const applyAutoCompact = async (): Promise<void> => {
+		if (autoCompactor === undefined || compactorWindow === undefined) return;
+		// 用量读数：真实 usage 事件（inputTokens）优先，缺位回退字符/4 估算（与
+		// applyHistoryCap 同口径）；视窗分母为装配面注入值（缺省 128_000）。
+		compactorWindow.updateUsage(lastUsageInputTokens ?? estimatePromptTokens(), ctxCompactWindowTokens);
+		const { view, sourceOf } = buildMsgView(messages);
+		let result: Awaited<ReturnType<AutoCompactor["maybeCompact"]>> = null;
+		try {
+			result = await autoCompactor.maybeCompact(view);
+		} catch (err) {
+			// 熔断告警（连续 3 击水位仍超）：静默降级为不紧缩——不炸会话，紧缩面
+			// 自行停摆，其余管线照常。
+			if (err instanceof CompactionCircuitOpenError) return;
+			throw err;
+		}
+		if (result === null) return;
+		const next = writeBackCompacted(result.messages, sourceOf);
+		messages.length = 0;
+		messages.push(...next);
 	};
 	const maxRounds = options.maxRounds ?? 8;
 	let finalText = "";
@@ -548,8 +701,10 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		// 状态机契约：beginTurn 只走 idle→thinking；工具回合落定后已在 thinking，
 		// 直接进入下一轮 executeTools（thinking→tool-executing）。
 		if (agentLoop.state === "idle") agentLoop.beginTurn();
-		// BI-05.3：每轮开始前先跑上下文面两项注入（缺省关 → 零开销零行为差）。
+		// BI-05.3：每轮开始前先跑上下文面各项注入（缺省关 → 零开销零行为差）。
 		discloseDateChange(); // 跨日翻转披露
+		applyImageOffload(); // BI-08.2 渐进图像卸载（缺省关 = 零变动）
+		await applyAutoCompact(); // BI-10 AutoCompactor 水位紧缩（缺省关 = 走既有条目数门禁）
 		applyHistoryCap(); // window-manager 历史条目上限裁剪
 		let text = "";
 		const blocks: ContentBlock[] = [];
@@ -565,6 +720,9 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 				stop = event.stopReason;
 			} else if (event.type === "error") {
 				throw failSession("adapter-error", `${event.error.code}: ${event.error.message}`);
+			} else if (event.type === "usage") {
+				// BI-10：真实用量读数留痕（紧缩水位判定优先消费，估算仅兜底）。
+				if (typeof event.usage.inputTokens === "number") lastUsageInputTokens = event.usage.inputTokens;
 			}
 			emit(event);
 		}

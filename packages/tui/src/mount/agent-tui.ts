@@ -60,7 +60,7 @@ import {
 import { ToolCallAssembler, type ModelPort, type ToolBinding } from "../../../core/src/cli/headless";
 import { PermissionGate } from "../../../core/src/guard/permission-gate";
 import type { Clock } from "../../../core/src/guard/deadline";
-import type { PermissionRequest } from "../../../core/src/guard/types";
+import type { PermissionRequest, PermissionMode } from "../../../core/src/guard/types";
 import { SessionManager } from "../../../core/src/session/manager";
 import { type BtwService, type BtwAnswer } from "../../../core/src/subagent/btw-service";
 import type { AppendEntryInput, JsonValue } from "../../../core/src/session/types";
@@ -83,6 +83,17 @@ import type { MarkdownRow } from "../render/markdown";
 import { builtinSlashCandidates, CandidateMenu, type CandidatesProvider } from "./candidate-menu";
 import { TranscriptSearch } from "./transcript-search";
 import { DEFAULT_KEYBINDINGS, actionForKey, type Keybindings } from "./keybindings";
+import { TokenHudTracker } from "./token-hud";
+import {
+	dispatchGateCommand,
+	isGateCommandLine,
+	type GateCommandOverrides,
+	type GateDispatchResult,
+} from "./gate-commands";
+import { DEFAULT_WORK_MODE, dispatchModeCommand, isModeCommandLine } from "./mode-command";
+import { renderModeIndicator } from "../components/mode-indicator";
+import { ModeSelector, type ModeId } from "../../../core/src/modes/mode-selector";
+import type { CommandContext } from "../../../core/src/commands/compact";
 
 /** SGR 鼠标上报开关序列（BI-27.5 滚轮历史）：1000=按键上报，1006=SGR 编码。 */
 export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
@@ -199,6 +210,22 @@ export interface TuiSessionOptions {
 	 * 实例化并注入；本卡仅消费此装配面。
 	 */
 	readonly btwService?: BtwService;
+	/**
+	 * 上下文窗口上限（BI-11 接线：TokenHud 分母；缺省 128000）。
+	 * 宿主按模型 context_limit 注入；HUD 百分比与 k 缩写由 TokenHud 契约承担。
+	 */
+	readonly contextTokens?: number;
+	/**
+	 * 手动门三命令执行体替身注入（BI-11 接线）：逐项覆盖 /compact /rewind /
+	 * /clear 的执行体；缺省项走会话内建执行体（上下文摘要紧缩 / 回退最近 N 轮
+	 * 用户输入 / 清空上下文与转录）。返回 Promise 的执行体由会话等待落定。
+	 */
+	readonly gateCommands?: GateCommandOverrides;
+	/**
+	 * 工作模式初值（BI-20.1 接线）：四态 plan/edit/build/yolo；缺省 build
+	 * （plan 为只读态，会拦写——不作为缺省，避免开箱即拒写）。
+	 */
+	readonly workMode?: ModeId;
 }
 
 export interface TuiSessionResult {
@@ -406,6 +433,20 @@ export class AgentTuiSession {
 	readonly #btwService: BtwService | undefined;
 	/** 键位注册表（TUI-ALIGN-4a；缺省 DEFAULT_KEYBINDINGS）。 */
 	readonly #bindings: Keybindings;
+	/** BI-11 接线：TokenHud 读数跟踪（适配器 usage 事件 → 状态行 HUD 段）。 */
+	readonly #hud: TokenHudTracker;
+	/** BI-11 接线：三命令执行体替身（缺省项走内建执行体）。 */
+	readonly #gateOverrides: GateCommandOverrides | undefined;
+	/** BI-11 接线：本次三命令分发的回执文本（执行体写入；缺省走兜底文案）。 */
+	#gateReport: string | undefined;
+	/** BI-11 接线：本次三命令分发的异步执行体（分发后等待落定）。 */
+	#gateWork: Promise<void> | undefined;
+	/** BI-11 接线：会话根条目是否已落盘（/clear 后不再建第二个根）。 */
+	#rootCreated = false;
+	/** BI-20.1 接线：四态工作模式状态机（plan 只读 / edit / build / yolo）。 */
+	readonly #modeSelector: ModeSelector;
+	/** BI-20.1 接线：进入 plan 前权限面模式（离 plan 时复原）。 */
+	#gateModeBeforePlan: PermissionMode | undefined;
 
 	constructor(options: TuiSessionOptions) {
 		this.#rows = options.rows ?? 24;
@@ -428,8 +469,31 @@ export class AgentTuiSession {
 		this.#slashCommand = options.slashCommand;
 		this.#btwService = options.btwService;
 		this.#bindings = options.keybindings ?? DEFAULT_KEYBINDINGS;
+		this.#hud = new TokenHudTracker(options.contextTokens);
+		this.#gateOverrides = options.gateCommands;
 		for (const binding of options.tools) this.#registry.set(binding.definition.name, binding);
 		const readOnlyTools = new Set(options.tools.filter((t) => t.readOnly).map((t) => t.definition.name));
+		// BI-20.1 接线：工作模式状态机。只读端口取工具注册表的 readOnly 标记
+		//（与 AgentLoop 的只读排重集同源）；plan 态据此拦写。
+		this.#modeSelector = new ModeSelector(
+			{ isReadOnly: (tool: string, _args: string): boolean => this.#registry.get(tool)?.readOnly === true },
+			options.workMode ?? DEFAULT_WORK_MODE,
+		);
+		// plan 态激活 → 权限面切 manual（只读期的写操作逐条问）；离 plan 复原。
+		// 两套模式并存不合并：工作模式管只读语义，权限面管三态授权。
+		this.#modeSelector.onChange(({ from, to }) => {
+			if (to === "plan") {
+				if (this.#gateModeBeforePlan === undefined) {
+					this.#gateModeBeforePlan = this.#gate.mode;
+				}
+				this.#gate.setMode("manual");
+				return;
+			}
+			if (from === "plan" && this.#gateModeBeforePlan !== undefined) {
+				this.#gate.setMode(this.#gateModeBeforePlan);
+				this.#gateModeBeforePlan = undefined;
+			}
+		});
 		this.#manager = new SessionManager(options.sessionsRoot !== undefined ? { rootDir: options.sessionsRoot } : {});
 		const executor: ToolExecutor = async (call: ToolCall, signal: AbortSignal): Promise<unknown> =>
 			this.#execute(call, signal);
@@ -493,6 +557,11 @@ export class AgentTuiSession {
 		this.#frame();
 	}
 
+	/** 当前工作模式（BI-20.1 接线；宿主/测试观察面）。 */
+	get workMode(): ModeId {
+		return this.#modeSelector.getMode();
+	}
+
 	/** AgentLoop 内态诊断面（thinking/paused/exit/...；测试与状态条用）。 */
 	get agentState(): string {
 		return this.#agentLoop.state;
@@ -500,6 +569,16 @@ export class AgentTuiSession {
 
 	statusText(): string {
 		const mode = this.#gate.mode;
+		const base = this.#statusBase(mode);
+		// BI-20.1 接线：工作模式徽标置于状态行首位（工作模式在前、权限三态在后，
+		// 两套模式并存不合并）；HUD 段挂尾部（无 usage 读数则整段缺席）。
+		const withMode = `${renderModeIndicator(this.#modeSelector.getMode())} ${base}`;
+		const hud = this.#hud.line;
+		return hud === "" ? withMode : `${withMode} | ${hud}`;
+	}
+
+	/** 状态行主文案（各状态分支；HUD 段由 statusText 追加）。 */
+	#statusBase(mode: string): string {
 		switch (this.#state) {
 			case "running": {
 				// BI-27.2：运行态追加已用秒数（turnStartedAt 起算；随每帧自然刷新）。
@@ -708,6 +787,17 @@ export class AgentTuiSession {
 		if (prompt.startsWith("/btw")) {
 			return await this.#handleBtw(prompt.slice("/btw".length).trim());
 		}
+		// BI-11 接线：手动门三命令（/compact /rewind /clear）在模型回合前分流——
+		// 命令对象走 core 注册表（mount/gate-commands.ts），执行体经端口注入；
+		// 本地回执上屏（不入模型回合、主会话 JSONL 零追加，同 /btw 语义）。
+		if (isGateCommandLine(prompt)) {
+			return await this.#handleGateCommand(prompt);
+		}
+		// BI-20.1 接线：四态工作模式命令（/mode）在模型回合前分流——本地回执
+		// 上屏（不入模型回合、主会话 JSONL 零追加，同 /btw 与手动门语义）。
+		if (isModeCommandLine(prompt)) {
+			return await this.#handleModeCommand(prompt);
+		}
 		// 斜杠命令拦截（BI-28.3 接线 / BI-30.1 执行面）：/ 开头且装配层注入了
 		// handler 时走命令面,返回两形态——
 		// - string = 本地回执:不入模型回合、不落会话 JSONL,输出以 system 行
@@ -742,12 +832,16 @@ export class AgentTuiSession {
 
 		// 会话持久化：根条目（仅首个 submit 建立）与链式追加（{ prompt } 形态
 		// 落展开后的用户提示词,BI-30.1）。
-		if (this.#messages.length === 0) {
+		// BI-11 接线：根条目只建一次——/clear 清空上下文后消息表为空，若按
+		// 「消息表为空」判定会撞 SessionManager 的「同会话不允许第二个根」；
+		// 故改用独立的根条目标志位，清面后提交一律挂链。
+		if (!this.#rootCreated) {
 			const rootEntry = await this.#manager.append(this.#sessionId, null, {
 				type: "user",
 				payload: { text: turnPrompt } as unknown as JsonValue,
 			});
 			this.#parentId = rootEntry.id;
+			this.#rootCreated = true;
 		} else {
 			await this.#appendChained({ type: "user", payload: { text: turnPrompt } as unknown as JsonValue });
 		}
@@ -777,6 +871,11 @@ export class AgentTuiSession {
 						this.#maybeStreamFrame();
 					}
 					else if (event.type === "tool_call_delta") assembler.push(event);
+					else if (event.type === "usage") {
+						// BI-11 接线：usage 读数喂 TokenHud（状态行 HUD 段随帧刷新）。
+						this.#hud.update(event.usage);
+						this.#frame();
+					}
 					else if (event.type === "done") stop = event.stopReason;
 					else if (event.type === "error") {
 						if (this.#turnCancelled || this.#exitRequested) break; // abort 的优雅收束
@@ -900,11 +999,189 @@ export class AgentTuiSession {
 		this.#parentId = entry.id;
 	}
 
+	// ------------------------------------------------------------------
+	// BI-11 接线：手动门三命令（/compact /rewind /clear）
+	// ------------------------------------------------------------------
+
+	/**
+	 * 三命令分发（BI-11 接线）：命令对象走 core 注册表（mount/gate-commands.ts
+	 * → core/commands/compact.ts），执行体经 CommandContext 端口注入。
+	 * - 参数非法 → 结构化错误文本本地回执上屏（不入模型回合）；
+	 * - 执行体可异步（端口返回 Promise）——分发后等待落定再回执；
+	 * - 回执以 system 行上屏（主会话 JSONL 零追加，同 /btw 语义）。
+	 */
+	async #handleGateCommand(line: string): Promise<TuiSessionResult> {
+		if (this.#sessionId === undefined) {
+			throw new TuiSessionError("not-started", "会话未初始化：先调用 start()");
+		}
+		this.#gateReport = undefined;
+		this.#gateWork = undefined;
+		let outcome: GateDispatchResult;
+		try {
+			outcome = dispatchGateCommand(line, this.#gateContext());
+		} catch (error) {
+			// 执行体抛错 → 结构化本地回执（不炸会话、不入模型回合）。
+			const detail = error instanceof Error ? error.message : String(error);
+			const message = `命令执行失败: ${detail}`;
+			this.#transcribe("system", message);
+			this.#frame();
+			return this.#result("finish", message);
+		}
+		if (!outcome.ok) {
+			this.#transcribe("system", outcome.error.message);
+			this.#frame();
+			return this.#result("finish", outcome.error.message);
+		}
+		if (this.#gateWork !== undefined) {
+			try {
+				await this.#gateWork;
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				this.#gateReport = `[${outcome.command}] 执行失败: ${detail}`;
+			}
+		}
+		const report = this.#gateReport ?? `[${outcome.command}] 已执行`;
+		this.#transcribe("system", report);
+		this.#frame();
+		return this.#result("finish", report);
+	}
+
+	/**
+	 * /mode 分发（BI-20.1 接线）：状态机走 core 器官（mount/mode-command.ts →
+	 * core/modes/mode-selector.ts）；plan 态的权限面联动（切 manual）与只读
+	 * 拦截在器官事件回调与工具执行面生效（见构造器与 #execute）。
+	 * 回执以 system 行上屏（主会话 JSONL 零追加，同 /btw 与手动门语义）。
+	 */
+	async #handleModeCommand(line: string): Promise<TuiSessionResult> {
+		if (this.#sessionId === undefined) {
+			throw new TuiSessionError("not-started", "会话未初始化：先调用 start()");
+		}
+		const outcome = dispatchModeCommand(line, this.#modeSelector);
+		if (!outcome.ok) {
+			this.#transcribe("system", outcome.error.message);
+			this.#frame();
+			return this.#result("finish", outcome.error.message);
+		}
+		this.#transcribe("system", outcome.text);
+		this.#frame();
+		return this.#result("finish", outcome.text);
+	}
+
+	/**
+	 * 三命令执行体端口（CommandContext）：宿主替身（options.gateCommands）优先，
+	 * 缺省项走会话内建执行体。端口为 void 契约，异步执行体经 #gateWork 承接。
+	 */
+	#gateContext(): CommandContext {
+		const overrides = this.#gateOverrides;
+		return {
+			compact: {
+				compact: (prompt?: string) => {
+					const work = overrides?.compact !== undefined ? overrides.compact(prompt) : this.#compactContext(prompt);
+					this.#gateWork = Promise.resolve(work).then(() => undefined);
+				},
+			},
+			rewind: {
+				rewind: (steps: number) => {
+					const work = overrides?.rewind !== undefined ? overrides.rewind(steps) : this.#rewindContext(steps);
+					this.#gateWork = Promise.resolve(work).then(() => undefined);
+				},
+			},
+			clear: {
+				clear: () => {
+					const work = overrides?.clear !== undefined ? overrides.clear() : this.#clearContext();
+					this.#gateWork = Promise.resolve(work).then(() => undefined);
+				},
+			},
+		};
+	}
+
+	/**
+	 * /compact 内建执行体：把当前模型侧上下文摘要成一条 [compacted] 消息
+	 * （摘要经模型调用生成，提示词可选附加关注点）。
+	 * - 失败（模型报错/摘要为空）→ 上下文原样保留，回执如实报失败；
+	 * - 成功后 JSONL 追加 compaction 条目（摘要落盘，供 BI-10.1 恢复指针检索）。
+	 */
+	async #compactContext(prompt?: string): Promise<void> {
+		const before = this.#messages.length;
+		if (before === 0) {
+			this.#gateReport = "[compact] 无上下文可紧缩";
+			return;
+		}
+		const focus = prompt !== undefined && prompt !== "" ? `关注点：${prompt}\n` : "";
+		const instruction =
+			`请把下面的对话压缩为要点摘要（保留事实、结论与未决事项，丢弃寒暄与重复）：\n${focus}\n` +
+			this.#messages.map((message) => `[${message.role}] ${messageToText(message)}`).join("\n");
+		let summary = "";
+		try {
+			for await (const event of this.#model.stream({
+				messages: [{ role: "user", content: instruction }],
+				tools: [],
+			})) {
+				if (event.type === "content_delta") summary += event.delta;
+				else if (event.type === "error") throw new Error(`${event.error.code}: ${event.error.message}`);
+			}
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			this.#gateReport = `[compact] 紧缩失败（上下文未改动）：${detail}`;
+			return;
+		}
+		const text = summary.trim();
+		if (text === "") {
+			this.#gateReport = "[compact] 摘要为空（上下文未改动）";
+			return;
+		}
+		this.#messages = [{ role: "user", content: `[compacted] ${text}` }];
+		await this.#appendChained({
+			type: "compaction",
+			payload: { summary: text, messagesBefore: before } as unknown as JsonValue,
+		});
+		this.#gateReport = `[compact] 上下文已紧缩：${before} 条消息 → 1 条摘要（${text.length} 字）`;
+	}
+
+	/**
+	 * /rewind 内建执行体：回退最近 N 轮用户输入（轮次 = 一条文本 user 消息
+	 * 及其后续消息；工具结果回填不算新一轮）。
+	 * JSONL 追加链不截断（append-only 铁律）——回退只作用于模型侧上下文。
+	 */
+	async #rewindContext(steps: number): Promise<void> {
+		const starts = this.#messages
+			.map((message, index) => ({ message, index }))
+			.filter(({ message }) => message.role === "user" && typeof message.content === "string")
+			.map(({ index }) => index);
+		const drop = Math.min(steps, starts.length);
+		if (drop === 0) {
+			this.#gateReport = "[rewind] 无可回退轮次";
+			return;
+		}
+		const cut = starts[starts.length - drop]!;
+		this.#messages = this.#messages.slice(0, cut);
+		this.#gateReport = `[rewind] 已回退 ${drop} 轮（剩余 ${this.#messages.length} 条消息；JSONL 追加链不截断）`;
+	}
+
+	/**
+	 * /clear 内建执行体：清空模型侧上下文与转录视图（滚回偏移归零）。
+	 * JSONL 追加链不截断（append-only 铁律）；根条目不重建（会话仅一个根）。
+	 */
+	async #clearContext(): Promise<void> {
+		this.#messages = [];
+		this.projection.clear();
+		this.#styled.clear();
+		this.#scrollOffset = 0;
+		this.#gateReport = "[clear] 会话上下文与转录已清空（JSONL 追加链保留）";
+	}
+
 	/** 装配执行体：权限门（manual ask → 审批浮层回路）→ 真实工具。 */
 	async #execute(call: ToolCall, signal: AbortSignal): Promise<unknown> {
 		const binding = this.#registry.get(call.name);
 		if (binding === undefined) throw new Error(`unknown-tool: ${call.name}`);
 		const argSummary = binding.argSummary?.(call.args) ?? String(JSON.stringify(call.args) ?? "undefined").slice(0, 200);
+		// BI-20.1 接线：plan 态只读拦截（先于权限门——只读是工作模式语义，
+		// 写操作在 plan 态直接结构化拒绝，不进权限裁决回路）。
+		const modeCheck = this.#modeSelector.intercept(call.name, argSummary);
+		if (!modeCheck.allowed) {
+			this.#permissionDecisions.push({ tool: call.name, decision: "deny(plan-mode-readonly)" });
+			throw new Error(`plan-mode-readonly: plan 态只读，拒绝工具 ${call.name}`);
+		}
 		const request = { tool: call.name, argSummary, mode: this.#gate.mode } satisfies PermissionRequest;
 		const decision = this.#gate.check(request);
 		this.#permissionDecisions.push({ tool: call.name, decision: decision.decision });
@@ -932,6 +1209,25 @@ export class AgentTuiSession {
 function truncate(value: unknown, max = 60): string {
 	const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "undefined");
 	return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** 消息 → 摘要用纯文本（内容块逐块取代表文本；思考块只留标记）。 */
+function messageToText(message: AgentMessage): string {
+	if (typeof message.content === "string") return message.content;
+	return message.content
+		.map((block) => {
+			switch (block.type) {
+				case "text":
+					return block.text;
+				case "thinking":
+					return "(思考过程已省略)";
+				case "tool_use":
+					return `(调用工具 ${block.name}) ${JSON.stringify(block.input) ?? ""}`;
+				case "tool_result":
+					return `(工具结果) ${block.content}`;
+			}
+		})
+		.join("\n");
 }
 
 /**

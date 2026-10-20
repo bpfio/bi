@@ -282,6 +282,11 @@ export interface SubcommandDeps {
   osPlatform?: NodeJS.Platform;
   /** copy 注入：OSTYPE 环境变量覆盖（如 msys/cygwin/linux/darwin）；测试覆盖 GitBash 等。 */
   osType?: string;
+  /**
+   * vis 注入：令牌轮转权威工厂（BI-20.5 接线）。core 不依赖 tui——轮转引擎在
+   * tui 侧，由宿主（bin/bi.ts）注入；仅在 env BI_VIS_TOKEN_ROTATE=1 时生效。
+   */
+  visTokenAuthority?: import("./vis").VisTokenAuthorityFactory;
 }
 
 // ---------------------------------------------------------------------------
@@ -695,7 +700,11 @@ async function handleDoctor(rest: readonly string[], io: SubcommandIo, deps: Sub
 
 /** `bi vis [sessionId] [--port N] [--host H]`：本地 Web 会话可视化（缺省 127.0.0.1 + 随机端口；非回环强制 BI_VIS_AUTH_TOKEN）。 */
 async function handleVisCommand(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
-  return handleVis(rest, io, deps, { attachSignals: false });
+  return handleVis(rest, io, deps, {
+    attachSignals: false,
+    // BI-20.5 接线：令牌轮转权威（宿主注入；env BI_VIS_TOKEN_ROTATE=1 时才启用）。
+    ...(deps.visTokenAuthority !== undefined ? { tokenAuthority: deps.visTokenAuthority } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------

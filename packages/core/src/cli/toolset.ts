@@ -80,6 +80,30 @@ import { CronTools } from "../cron/cron-tools";
 import { readMediaFile, type ReadMediaFileArgs, type ReadMediaFileDeps, type ReadMediaFileResult } from "../tool/handlers/read-media-file";
 import { JobRegistry, type JobId } from "../jobs/job-registry";
 import { JobTools, JOB_LIST_TOOL_SPEC, JOB_OUTPUT_TOOL_SPEC, JOB_KILL_TOOL_SPEC } from "../jobs/job-tools";
+// BI-13.2：LSP 符号级导航器官（@bi/mcp 包，核心层按相对路径桥接；server 经 lspClient 注入缝）。
+import { createLspTool, LSP_OPERATIONS, type LspToolClientLike } from "../../../mcp/src/lsp/lsp-tool";
+// BI-07.8：AgentSwarm 蜂群器官（runner 经 swarmRunner 注入缝）。
+import { AgentSwarmTool, AGENT_SWARM_TOOL_SPEC } from "../subagent/swarm/agent-swarm-tool";
+import type { SwarmService } from "../subagent/swarm/swarm-service";
+// BI-07.9：Skill 声明式技能器官（registry 经 skillRegistry 注入缝；缺省 node:fs 端口）。
+import { SkillTool, SKILL_TOOL_SPEC } from "../subagent/skill-tool";
+import { SkillRegistry, type SkillFsPort } from "../subagent/skill-executor";
+// BI-13.1/BI-13.3：select_tools 工具接线（registry 后端 = buildCatalog 紧凑名录）。
+// 器官零改动：createToolActivator 处理器 + buildCatalog/flattenBudget 名录压缩器均为只读器官。
+import {
+	createToolActivator,
+	type ActivatedToolLike,
+	type SelectToolsRegistryLike,
+	type UnknownToolRefusalLike,
+	type SurfaceByteStatsLike,
+} from "../tools/tool-activator";
+import {
+	buildCatalog,
+	flattenBudget,
+	type CatalogRoot,
+	type CatalogSource,
+} from "../mcp/tool-catalog";
+import { summarizeToolLine } from "../mcp/catalog-summarizer";
 
 // ---------------------------------------------------------------------------
 // 公共面
@@ -193,6 +217,40 @@ export interface BuildDefaultToolsetOptions {
 	 * 维持既有工具面零变动）。host 按 config [tools] job_tools 实例化并注入；本卡仅做绑定装配。
 	 */
 	readonly jobs?: boolean;
+	/**
+	 * BI-13.2 lsp_navigate 挂载门：true 才注册 lsp_navigate 工具（缺省不挂，
+	 * 维持既有工具面零变动）。host 按 config [tools] lsp 实例化并注入；本卡仅做绑定装配。
+	 * lspClient 为 LSP server 注入接缝——未注入（server 未连）时工具仍挂载，
+	 * execute 结构化返回 {ok:false,code:"lsp-unavailable"}，不抛裸异常（依赖缺失不伪造能力）。
+	 */
+	readonly lsp?: boolean;
+	/** LSP server 客户端注入面（LspToolClientLike 结构类型）；未注入 = execute 返回 lsp-unavailable。 */
+	readonly lspClient?: LspToolClientLike;
+	/**
+	 * BI-07.8 AgentSwarm 挂载门：true 才注册 AgentSwarm 工具（缺省不挂）。
+	 * 随 BI-25 子代理使能联动（config [subagent] enabled）；swarmRunner 实例一并注入
+	 * （SwarmService，由宿主经 SubagentRunner 派生面装配）。runner 未注入时开关无效
+	 * （不挂载，依赖注入缺失不伪造能力）。
+	 */
+	readonly swarm?: boolean;
+	/** AgentSwarm 调度器注入面（SwarmService）；未注入 = 开关无效，不挂载。 */
+	readonly swarmRunner?: SwarmService;
+	/**
+	 * BI-07.9 Skill 挂载门：true 才注册 Skill 工具（缺省不挂）。常挂语义——host 恒
+	 * 传 true；器官自身容错：skills 目录缺失时 execute 返回结构化 {ok:false,code:"no-skills"}。
+	 * skillRegistry 为注入缝（测试替身用）；缺省由绑定层按 node:fs 端口自建注册表
+	 * （零真实网络/子进程）。
+	 */
+	readonly skill?: boolean;
+	/** SkillRegistry 注入面（测试替身用）；缺省由绑定层按 node:fs 端口自建。 */
+	readonly skillRegistry?: SkillRegistry;
+	/**
+	 * BI-13.1 select_tools 挂载门：true 才注册 select_tools 工具（缺省不挂，
+	 * 维持既有工具面零变动；BI-13.3 合流——catalog 为名录后端）。
+	 * registry 注入 = 当前工具集定义列表（经 buildCatalog 建紧凑名录）；
+	 * 模型传工具名 → 换全量 inputSchema。false 时本项不挂载、零变动。
+	 */
+	readonly select_tools?: boolean;
 }
 
 /**
@@ -261,6 +319,28 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 			jobOutputBinding(jobTools),
 			jobKillBinding(jobTools),
 		);
+	}
+	// BI-13.2：lsp_navigate —— 仅当 host 显式开启 lsp 门控才注册（缺省不挂，工具面零变动）。
+	// lspClient 未注入（server 未连）= 工具仍挂载，execute 结构化返回 lsp-unavailable（不抛裸异常）。
+	if (options.lsp === true) {
+		tools.push(lspNavigateBinding(options.lspClient));
+	}
+	// BI-07.8：AgentSwarm —— 仅当 swarm 门开且 runner 注入才注册（缺省不挂）。
+	// runner 未注入时开关无效（不挂载，依赖注入缺失不伪造能力）。
+	if (options.swarm === true && options.swarmRunner !== undefined) {
+		tools.push(agentSwarmBinding(options.swarmRunner));
+	}
+	// BI-07.9：Skill —— 仅当 host 显式开启（常挂：恒传 true）才注册（缺省不挂，工具面零变动）。
+	if (options.skill === true) {
+		tools.push(skillBinding(options.skillRegistry));
+	}
+	// BI-13.1/BI-13.3：select_tools —— 仅当 host 显式开启 select_tools 门控才注册
+	// （缺省不挂，工具面零变动）。registry 后端 = 当前工具集（内置）经 buildCatalog
+	// 建的紧凑名录；模型传工具名 → 换全量 inputSchema。MCP 面工具（packages/mcp
+	// client 的 toolsAcrossServers）本单暂不接，扩展缝见 makeSelectToolsRegistry 注释。
+	if (options.select_tools === true) {
+		const registry = makeSelectToolsRegistry(tools);
+		tools.push(selectToolsBinding(registry));
 	}
 	return tools;
 }
@@ -1265,4 +1345,311 @@ function jobKillBinding(jobTools: JobTools): ToolBinding {
 		argSummary: (args) => `id=${optionalStringArg(args, "id")}`,
 		execute: async (args) => jobTools.runKill(args),
 	};
+}
+
+// ---------------------------------------------------------------------------
+// BI-13.2 · lsp_navigate —— LSP 符号级导航（委托 createLspTool 器官）
+// ---------------------------------------------------------------------------
+
+/**
+ * lsp_navigate 绑定：喂模型定义 + 安全执行（server 注入缝）。
+ * 注册名 lsp_navigate 对齐挂载门/配置键（器官 createLspTool 的 spec name 为 "lsp"，
+ * 本绑定覆盖为 "lsp_navigate" 以对齐工具面；operation 枚举以器官 LSP_OPERATIONS 为
+ * 单一事实源，其余描述/输入面照器官原文手写——器官无 lsp_navigate 同名 SPEC）。
+ * readOnly:true（查询类）。lspClient 未注入（server 未连）= 工具仍挂载，
+ * execute 结构化返回 {ok:false,code:"lsp-unavailable"}，不抛裸异常（依赖缺失不伪造能力）。
+ */
+function lspNavigateBinding(client: LspToolClientLike | undefined): ToolBinding {
+	return {
+		definition: {
+			name: "lsp_navigate",
+			description:
+				"LSP 符号级代码导航：goToDefinition（跳定义）、findReferences（找引用）、" +
+				"goToImplementation（跳实现）、hover（悬停文档）。" +
+				"输入 0 基行列；输出按文件分组渲染（≤100 条位置、16000 字符保护截断）。" +
+				"要求 LSP 服务器已连接且声明对应能力。",
+			inputSchema: {
+				type: "object",
+				properties: {
+					operation: {
+						type: "string",
+						enum: [...LSP_OPERATIONS],
+						description: "导航操作",
+					},
+					file_path: { type: "string", minLength: 1, description: "文件绝对路径或 file:// URI" },
+					line: { type: "integer", minimum: 0, description: "0 基行号" },
+					character: { type: "integer", minimum: 0, description: "0 基列号（UTF-16 码元）" },
+				},
+				required: ["operation", "file_path", "line", "character"],
+				additionalProperties: false,
+			},
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeArg(args, "file_path"),
+		execute: async (args) => {
+			// server 注入接缝缺失：结构化降级，不抛裸异常（房规：依赖缺失不伪造能力）。
+			if (client === undefined) {
+				return JSON.stringify({
+					ok: false,
+					code: "lsp-unavailable",
+					message: "LSP server 未连接（lspClient 未注入）",
+				});
+			}
+			const outcome = await createLspTool(client).handle(args);
+			return JSON.stringify(outcome);
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// BI-07.8 · AgentSwarm —— 并行子智能体蜂群（委托 AgentSwarmTool 器官）
+// ---------------------------------------------------------------------------
+
+/**
+ * AgentSwarm 绑定：喂模型定义 + 受限执行（runner 注入缝）。
+ * definition 以器官 AGENT_SWARM_TOOL_SPEC 为单一事实源（直接引用 spec 常量）。
+ * readOnly:false（派发子代理属写/派发语义，非查询）。runner 由宿主经 SubagentRunner
+ * 派生面装配注入（SwarmService）；本绑定只做工具包装，不接 spawnFn 端口本身。
+ */
+function agentSwarmBinding(runner: SwarmService): ToolBinding {
+	return {
+		definition: {
+			...AGENT_SWARM_TOOL_SPEC,
+			inputSchema: AGENT_SWARM_TOOL_SPEC.inputSchema as Record<string, unknown>,
+		},
+		readOnly: false,
+		argSummary: (args) => summarizeArg(args, "prompt_template"),
+		execute: async (args) => {
+			const result = await new AgentSwarmTool(runner).run(args);
+			return JSON.stringify(result);
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// BI-07.9 · Skill —— 声明式技能调度（委托 SkillTool 器官）
+// ---------------------------------------------------------------------------
+
+/** 生产缺省 node:fs 端口（零真实网络/子进程；测试注 memfs 等价 stub）。 */
+const nodeSkillFsPort: SkillFsPort = {
+	readdir: (dir) => readdir(dir),
+	readFile: (path) => readFile(path, "utf8"),
+	isDirectory: (path) => {
+		try {
+			return statSync(path).isDirectory();
+		} catch {
+			return false;
+		}
+	},
+};
+
+/**
+ * Skill 绑定：喂模型定义 + 安全执行（registry 注入缝）。
+ * definition 以器官 SKILL_TOOL_SPEC 为单一事实源（直接引用 spec 常量）。
+ * readOnly:true（查询类：展开 SKILL.md 为注入 prompt，不执行脚本）。
+ * 器官自身容错：skills 目录缺失/空 → registry.refresh 后 list 为空 → execute 结构化
+ * 返回 {ok:false,code:"no-skills"}，不抛（房规：依赖缺失不伪造能力）。
+ * registry 缺省按 node:fs 端口自建（双技能目录扫描；目录不存在由器官按"该层无技能"处理）。
+ */
+function skillBinding(registry: SkillRegistry | undefined): ToolBinding {
+	const resolved = registry ?? new SkillRegistry({ fs: nodeSkillFsPort });
+	return {
+		definition: {
+			...SKILL_TOOL_SPEC,
+			inputSchema: SKILL_TOOL_SPEC.inputSchema as Record<string, unknown>,
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeArg(args, "skill"),
+		execute: async (args) => {
+			// 每次执行刷新注册表（skills 目录可能变动；零真实网络/子进程）。
+			await resolved.refresh();
+			// skills 目录缺失/空 → 结构化降级，不抛。
+			if (resolved.list().length === 0) {
+				return JSON.stringify({
+					ok: false,
+					code: "no-skills",
+					message: "no skills available（skills 目录缺失或为空）",
+				});
+			}
+			const result = await new SkillTool({ registry: resolved }).run(args);
+			return JSON.stringify(result);
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// BI-13.1/BI-13.3 · select_tools —— 按需激活工具（registry 后端 = buildCatalog 名录）
+// ---------------------------------------------------------------------------
+
+/** 内置工具集命名空间（MCP 扩展面留缝；当前仅覆盖内置工具集）。 */
+const SELECT_TOOLS_NAMESPACE = "builtin";
+/** 名录摘要渐进展现的 token 预算（BI-13.3 flattenBudget 口径：2,000 token）。 */
+const SELECT_TOOLS_CATALOG_BUDGET = 2000;
+
+/** 扁平化名录条目（带所属命名空间，供紧凑字节/全量字节统计复用）。 */
+type FlatCatalogTool = {
+	readonly name: string;
+	readonly description?: string;
+	readonly inputSchema?: unknown;
+	readonly namespace: string;
+};
+
+/**
+ * 把当前工具集的 ToolBinding[] 薄适配为 SelectToolsRegistryLike（不改器官）。
+ * - 名录后端 = buildCatalog（对内置工具集建分级命名空间 + 预算内渐进摘要）；
+ * - select(names)：名录内名字 → 返回全量 inputSchema（含 server 路由）；
+ *   未知名 → 返回最近候选建议（Levenshtein 近邻，阈值内）；
+ * - surfaceByteStats：baseline（全量展开）/ initial（紧凑名录）/ current（已激活
+ *   增量叠加）三态字节统计，喂器官 compressionStats（初态压降口径）。
+ *
+ * 备注（接缝，本单不实现）：
+ * 1. MCP 面工具（packages/mcp client 的 toolsAcrossServers）暂不纳入名录——
+ *    当前会话工具集以内置为主；MCP 扩展待后续单接入（只需在 sources 追加一个
+ *    MCP 命名空间并桥接 toolsAcrossServers 即可，registry 接口保持不变）。
+ * 2. usageStats 消费：catalog 当前不接收激活计数（buildCatalog 无该入参）；
+ *    select 命中计数留待器官接口支持后再喂 catalog（接缝，本单留注释）。
+ */
+export function makeSelectToolsRegistry(
+	bindings: readonly ToolBinding[],
+): SelectToolsRegistryLike & {
+	/** 当前工具集的紧凑名录（buildCatalog 产物，供测试/日志断言）。 */
+	readonly catalog: CatalogRoot;
+	/** 预算内渐进式名录摘要行（BI-13.3 flattenBudget，2,000 token）。 */
+	catalogSummary(): string[];
+} {
+	const sources: CatalogSource[] = [
+		{
+			name: SELECT_TOOLS_NAMESPACE,
+			tools: bindings.map((b) => ({
+				name: b.definition.name,
+				description: b.definition.description,
+				inputSchema: b.definition.inputSchema,
+			})),
+		},
+	];
+	const catalog = buildCatalog(sources);
+	const flat: FlatCatalogTool[] = catalog.namespaces.flatMap((ns) =>
+		ns.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, namespace: ns.namespace })),
+	);
+	const byName = new Map<string, FlatCatalogTool>(flat.map((t) => [t.name, t]));
+	const allNames = [...byName.keys()];
+	const activated = new Set<string>();
+
+	return {
+		catalog,
+		catalogSummary(): string[] {
+			return flattenBudget(catalog, SELECT_TOOLS_CATALOG_BUDGET);
+		},
+		async select(names) {
+			const activatedTools: ActivatedToolLike[] = [];
+			const alreadyActive: string[] = [];
+			const unknown: UnknownToolRefusalLike[] = [];
+			for (const name of names) {
+				const tool = byName.get(name);
+				if (tool === undefined) {
+					unknown.push({
+						kind: "unknown-tool",
+						name,
+						message: `工具 "${name}" 不在工具目录中`,
+						suggestions: nearestNames(name, allNames),
+					});
+					continue;
+				}
+				if (activated.has(name)) {
+					alreadyActive.push(name);
+				}
+				activated.add(name);
+				activatedTools.push({
+					name: tool.name,
+					server: SELECT_TOOLS_NAMESPACE,
+					description: tool.description ?? "",
+					inputSchema: tool.inputSchema,
+				});
+			}
+			return { activated: activatedTools, alreadyActive, unknown };
+		},
+		surfaceByteStats(): SurfaceByteStatsLike {
+			let baseline = 0;
+			let initial = 0;
+			for (const t of flat) {
+				baseline += byteLengthOf(
+					JSON.stringify({ name: t.name, description: t.description ?? "", inputSchema: t.inputSchema }),
+				);
+				initial += byteLengthOf(summarizeToolLine(t.namespace, t));
+			}
+			const current =
+				initial +
+				[...activated].reduce((sum, name) => {
+					const t = byName.get(name);
+					if (t === undefined) return sum;
+					const full = byteLengthOf(
+						JSON.stringify({ name: t.name, description: t.description ?? "", inputSchema: t.inputSchema }),
+					);
+					const compact = byteLengthOf(summarizeToolLine(t.namespace, t));
+					return sum + Math.max(0, full - compact);
+				}, 0);
+			return { baselineBytes: baseline, initialBytes: initial, currentBytes: current };
+		},
+	};
+}
+
+/**
+ * select_tools 绑定：喂模型定义（activator.tool 单一事实源）+ 受限执行。
+ * execute 委托 createToolActivator.handle；非法输入结构化回传（ok:false,error），
+ * 不抛裸异常；合法激活结果原样 JSON 序列化（含 activated/alreadyActive/unknown）。
+ * readOnly:true（查询类，仅换回 schema，不执行其他工具）。
+ */
+function selectToolsBinding(registry: SelectToolsRegistryLike): ToolBinding {
+	const activator = createToolActivator(registry);
+	return {
+		definition: {
+			...activator.tool,
+			inputSchema: activator.tool.inputSchema as Record<string, unknown>,
+		},
+		readOnly: true,
+		argSummary: (args) => summarizeArg(args, "names"),
+		execute: async (args) => {
+			const outcome = await activator.handle(args);
+			if (!outcome.ok) {
+				return JSON.stringify({ ok: false, error: outcome.error });
+			}
+			return JSON.stringify(outcome.result);
+		},
+	};
+}
+
+/** 最近候选名（Levenshtein 近邻，阈值内；无近邻返回空数组）。 */
+function nearestNames(name: string, candidates: readonly string[], limit = 3): string[] {
+	const threshold = Math.max(2, Math.floor(name.length / 3));
+	return candidates
+		.map((c) => ({ c, d: levenshtein(name, c) }))
+		.filter((x) => x.d <= threshold)
+		.sort((a, b) => a.d - b.d)
+		.slice(0, limit)
+		.map((x) => x.c);
+}
+
+/** Levenshtein 编辑距离（薄实现，仅用于未知工具名候选建议）。 */
+function levenshtein(a: string, b: string): number {
+	const m = a.length;
+	const n = b.length;
+	if (m === 0) return n;
+	if (n === 0) return m;
+	let prev = new Array<number>(n + 1);
+	let cur = new Array<number>(n + 1);
+	for (let j = 0; j <= n; j++) prev[j] = j;
+	for (let i = 1; i <= m; i++) {
+		cur[0] = i;
+		for (let j = 1; j <= n; j++) {
+			const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+			const del = (prev[j] ?? 0) + 1;
+			const ins = (cur[j - 1] ?? 0) + 1;
+			const sub = (prev[j - 1] ?? 0) + cost;
+			cur[j] = Math.min(del, ins, sub);
+		}
+		const swap = prev;
+		prev = cur;
+		cur = swap;
+	}
+	return prev[n] ?? 0;
 }

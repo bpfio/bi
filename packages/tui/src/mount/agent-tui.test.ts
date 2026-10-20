@@ -28,6 +28,8 @@ import type { Clock } from "../../../core/src/guard/deadline";
 import type { ParsedKey } from "../engine/diff-renderer";
 import { expandCommand, type SlashCommand } from "../../../core/src/commands/custom-commands";
 import { SessionManager } from "../../../core/src/session/manager";
+import { PermissionGate } from "../../../core/src/guard/permission-gate";
+import { runDiffGate } from "./diff-gate";
 
 // ---------------------------------------------------------------------------
 // fixture
@@ -784,6 +786,498 @@ describe("BI-30.1 · 斜杠命令执行面", () => {
 			expect(sink.frames.at(-1)!.lines.some((l) => l.includes("缺少必选参数"))).toBe(true);
 			const manager = new SessionManager({ rootDir: join(root, "sessions") });
 			expect(await manager.entries(sessionId)).toHaveLength(0);
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-11 接线 · TokenHud 上屏 + 手动门三命令（会话面）
+// ---------------------------------------------------------------------------
+
+describe("BI-11 接线 · TokenHud + 手动门三命令", () => {
+	test("usage 读数 → 状态行挂 HUD 段（Tokens + Cache）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([
+				[
+					{ type: "usage", usage: { inputTokens: 42_000, cachedInputTokens: 36_960 } },
+					{ type: "content_delta", delta: "你好。" },
+					{ type: "done", stopReason: "stop" },
+				],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 6,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session.start("HUD 上屏");
+			await session.submit("打声招呼");
+			const last = sink.frames.at(-1)!;
+			expect(last.lines.some((l) => l.includes("Tokens: 42k/128k (32%) | Cache: 88%"))).toBe(true);
+			expect(last.lines.some((l) => l.includes("就绪"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("无 usage 读数：状态行不挂 HUD 段（绝不冒充 0/0）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([
+				[{ type: "content_delta", delta: "你好。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 6,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session.start("HUD 缺席");
+			await session.submit("打声招呼");
+			expect(sink.frames.at(-1)!.lines.some((l) => l.includes("Tokens:"))).toBe(false);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("三命令替身注入：/compact 提示词透传、不入模型回合、JSONL 零条目", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port, received } = scriptedModel([]); // 调用即抛 → 断言不入模型回合
+			const calls: string[] = [];
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				gateCommands: {
+					compact: (prompt) => {
+						calls.push(`compact:${prompt ?? ""}`);
+					},
+				},
+			});
+			const sessionId = await session.start("三命令");
+			const result = await session.submit("/compact 保留架构决策");
+			expect(result.endedAs).toBe("finish");
+			expect(calls).toEqual(["compact:保留架构决策"]);
+			expect(received).toHaveLength(0);
+			expect(session.projection.render().some((l) => l.includes("[compact]"))).toBe(true);
+			const manager = new SessionManager({ rootDir: join(root, "sessions") });
+			expect(await manager.entries(sessionId)).toHaveLength(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("三命令替身注入：/rewind 步数透传、/clear 无参触发，均不入模型回合", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port, received } = scriptedModel([]);
+			const calls: string[] = [];
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				gateCommands: {
+					rewind: (steps) => {
+						calls.push(`rewind:${steps}`);
+					},
+					clear: () => {
+						calls.push("clear");
+					},
+				},
+			});
+			await session.start("三命令");
+			await session.submit("/rewind 2");
+			await session.submit("/clear");
+			expect(calls).toEqual(["rewind:2", "clear"]);
+			expect(received).toHaveLength(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("参数非法（/rewind 无参）：结构化错误上屏，执行体零调用", async () => {		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]);
+			const calls: string[] = [];
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				gateCommands: {
+					rewind: (steps) => {
+						calls.push(`rewind:${steps}`);
+					},
+				},
+			});
+			await session.start("参数校验");
+			const result = await session.submit("/rewind");
+			expect(result.finalText).toContain("缺少 steps 参数");
+			expect(calls).toEqual([]);
+			expect(session.projection.render().some((l) => l.includes("缺少 steps 参数"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("执行体抛错：结构化失败回执上屏，不炸会话", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+				gateCommands: {
+					clear: () => {
+						throw new Error("清面失败");
+					},
+				},
+			});
+			await session.start("执行体抛错");
+			const result = await session.submit("/clear");
+			expect(result.endedAs).toBe("finish");
+			expect(result.finalText).toContain("清面失败");
+			expect(session.projection.render().some((l) => l.includes("清面失败"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("内建 /clear：转录与模型侧上下文清空（投影仅剩回执行）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([
+				[{ type: "content_delta", delta: "第一轮回答。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session.start("内建清面");
+			await session.submit("第一轮");
+			expect(session.projection.render().some((l) => l.includes("[assistant] 第一轮回答。"))).toBe(true);
+			const result = await session.submit("/clear");
+			expect(result.finalText).toContain("[clear]");
+			const l3 = session.projection.render();
+			expect(l3.some((l) => l.includes("[assistant] 第一轮回答。"))).toBe(false);
+			expect(l3.some((l) => l.includes("[user] 第一轮"))).toBe(false);
+			expect(l3.some((l) => l.includes("[clear]"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("内建 /rewind 1：回退最近一轮（下一回合模型侧无旧用户消息）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port, received } = scriptedModel([
+				[{ type: "content_delta", delta: "回答一。" }, { type: "done", stopReason: "stop" }],
+				[{ type: "content_delta", delta: "回答二。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			await session.start("内建回退");
+			await session.submit("第一轮");
+			const result = await session.submit("/rewind 1");
+			expect(result.finalText).toContain("已回退 1 轮");
+			await session.submit("第二轮");
+			// 第二回合模型侧只收到新用户消息（旧轮已回退）
+			expect(received[1]!.messages).toHaveLength(1);
+			expect(received[1]!.messages[0]!.content).toBe("第二轮");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("内建 /compact：上下文摘要紧缩（模型调用 + [compacted] 消息 + JSONL compaction 条目）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port, received } = scriptedModel([
+				[{ type: "content_delta", delta: "回答一。" }, { type: "done", stopReason: "stop" }],
+				[{ type: "content_delta", delta: "要点摘要。" }, { type: "done", stopReason: "stop" }],
+				[{ type: "content_delta", delta: "回答二。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 80,
+				hooks: sink.hooks,
+			});
+			const sessionId = await session.start("内建紧缩");
+			await session.submit("第一轮");
+			const result = await session.submit("/compact 保留结论");
+			expect(result.finalText).toContain("上下文已紧缩");
+			// 摘要调用：模型收到单条摘要指令
+			expect(received[1]!.messages).toHaveLength(1);
+			expect(String(received[1]!.messages[0]!.content)).toContain("保留结论");
+			// 紧缩后上下文 = 一条 [compacted] 消息
+			await session.submit("第二轮");
+			expect(received[2]!.messages[0]!.content).toBe("[compacted] 要点摘要。");
+			// JSONL：compaction 条目落盘
+			const manager = new SessionManager({ rootDir: join(root, "sessions") });
+			const entries = await manager.entries(sessionId);
+			expect(entries.map((e) => e.type)).toContain("compaction");
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-20 接线 · diff 审查门入口落屏
+// ---------------------------------------------------------------------------
+
+describe("BI-20 接线 · /diff 入口落屏", () => {
+	test("/diff 经斜杠命令面上屏：转录含 diff 视图行与门禁裁决", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]); // 不入模型回合
+			const diff = [
+				"diff --git a/packages/tui/src/hud.ts b/packages/tui/src/hud.ts",
+				"--- a/packages/tui/src/hud.ts",
+				"+++ b/packages/tui/src/hud.ts",
+				"@@ -1,2 +1,2 @@",
+				"-旧行",
+				"+新行",
+			].join("\n");
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 10,
+				cols: 80,
+				hooks: sink.hooks,
+				// 宿主斜杠命令面接线形态（bin/bi.ts 同款）：/diff → diff 审查门入口
+				slashCommand: async (line) => {
+					if (!line.startsWith("/diff")) return `未知斜杠命令: ${line}`;
+					const result = await runDiffGate({
+						cwd: root,
+						ports: { readDiff: async () => diff, confirm: async () => true },
+					});
+					return result.text;
+				},
+			});
+			await session.start("diff 落屏");
+			const result = await session.submit("/diff");
+			expect(result.endedAs).toBe("finish");
+			const l3 = session.projection.render();
+			expect(l3.some((l) => l.includes("[diff] 工作区变更：1 个文件，+1 -1"))).toBe(true);
+			expect(l3.some((l) => l.includes("[M] packages/tui/src/hud.ts (+1 -1)"))).toBe(true);
+			expect(l3.some((l) => l.includes("+新行"))).toBe(true);
+			expect(l3.some((l) => l.includes("审查门: 通过"))).toBe(true);
+			// 上屏文本无裸 ANSI 转义序列
+			expect(l3.some((l) => l.includes("\u001b["))).toBe(false);
+			expect(sink.frames.at(-1)!.lines.some((l) => l.includes("[M] packages/tui/src/hud.ts"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BI-20.1 接线 · /mode 四态工作模式入口
+// ---------------------------------------------------------------------------
+
+describe("BI-20.1 接线 · /mode 入口", () => {
+	test("/mode 无参：本地回执显示当前态（不入模型回合）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]); // 不入模型回合
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 60,
+				hooks: sink.hooks,
+			});
+			await session.start("模式查询");
+			const result = await session.submit("/mode");
+			expect(result.endedAs).toBe("finish");
+			expect(result.finalText).toBe("[build] 当前模式: build");
+			expect(session.workMode).toBe("build");
+			const l3 = session.projection.render();
+			expect(l3.some((l) => l.includes("[build] 当前模式: build"))).toBe(true);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("/mode plan：切态回执带只读提示，权限面切 manual；离 plan 复原", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]);
+			const gate = new PermissionGate({ mode: "auto" });
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				gate,
+				rows: 8,
+				cols: 60,
+				hooks: sink.hooks,
+			});
+			await session.start("模式切换");
+			const entered = await session.submit("/mode plan");
+			expect(entered.finalText).toContain("plan-mode-readonly");
+			expect(session.workMode).toBe("plan");
+			// plan 态：权限面切 manual（只读期写操作逐条问）
+			expect(gate.mode).toBe("manual");
+			const left = await session.submit("/mode build");
+			expect(left.finalText).toBe("[build] 已切换到 build");
+			expect(session.workMode).toBe("build");
+			expect(gate.mode).toBe("auto"); // 复原进入 plan 前的权限面模式
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("/mode 非法 id：结构化拒绝（不改态）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 60,
+				hooks: sink.hooks,
+			});
+			await session.start("模式非法");
+			const result = await session.submit("/mode turbo");
+			expect(result.finalText).toContain("未知模式: turbo");
+			expect(session.workMode).toBe("build");
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("plan 态写工具被结构化拒绝 plan-mode-readonly（工具不执行）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port, received } = scriptedModel([
+				[
+					{ type: "tool_call_delta", index: 0, id: "call_1", name: "echo_tool", argumentsDelta: '{"text":"写点东西"}' },
+					{ type: "done", stopReason: "tool_use" },
+				],
+				[{ type: "content_delta", delta: "已停在只读。" }, { type: "done", stopReason: "stop" }],
+			]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [echoBinding()],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "auto",
+				rows: 8,
+				cols: 60,
+				hooks: sink.hooks,
+			});
+			await session.start("plan 只读");
+			await session.submit("/mode plan");
+			const result = await session.submit("改个文件");
+			expect(result.toolResults[0]!.ok).toBe(false);
+			expect(String(result.toolResults[0]!.error)).toContain("plan-mode-readonly");
+			expect(result.permissionDecisions).toContainEqual({ tool: "echo_tool", decision: "deny(plan-mode-readonly)" });
+			const serialized = JSON.stringify(received[1]!.messages.at(-1)!.content);
+			expect(serialized).toContain("plan-mode-readonly");
+			expect(serialized).toContain('"isError":true');
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("状态行含工作模式徽标（接活 mode-indicator）", async () => {
+		const { root, cleanup } = await makeRoot();
+		try {
+			const sink = frameSink();
+			const { port } = scriptedModel([]);
+			const session = new AgentTuiSession({
+				model: port,
+				tools: [],
+				cwd: root,
+				sessionsRoot: join(root, "sessions"),
+				permissionMode: "manual",
+				rows: 8,
+				cols: 60,
+				hooks: sink.hooks,
+			});
+			await session.start("徽标");
+			expect(session.statusText()).toBe("[build] [manual] 就绪");
+			await session.submit("/mode yolo");
+			expect(session.statusText()).toBe("[yolo] [manual] 就绪");
+			expect(sink.frames.at(-1)!.lines.some((l) => l.includes("[yolo] [manual]"))).toBe(true);
 		} finally {
 			await cleanup();
 		}

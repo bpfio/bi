@@ -39,9 +39,9 @@ describe("BI-27.4 · builtinSlashCandidates 与过滤", () => {
   });
 
   test("filterSlashCandidates：前缀优先原序；模糊子序列补位；去重", () => {
-    // "re" 前缀命中 reload / reload-tui（builtin 原序）
+    // "re" 前缀命中 reload / reload-tui / rewind（builtin 原序；BI-11 接线起 /rewind 入面）
     const re = filterSlashCandidates("/re", builtinSlashCandidates);
-    expect(re.map((c) => c.name)).toEqual(["reload", "reload-tui"]);
+    expect(re.map((c) => c.name)).toEqual(["reload", "reload-tui", "rewind"]);
     // 模糊命中："cf" 无前缀命中 → 子序列 c…f 命中 config
     const fuzzy = filterSlashCandidates("/cf", [{ name: "copy", description: "" }, { name: "config", description: "" }]);
     expect(fuzzy.map((c) => c.name)).toEqual(["config"]);
@@ -67,7 +67,7 @@ describe("BI-27.4 · builtinSlashCandidates 与过滤", () => {
     expect(filterSlashCandidates("/", many)).toHaveLength(CANDIDATE_MENU_MAX_ITEMS);
     // 大小写不敏感前缀
     const folded = filterSlashCandidates("/RE", builtinSlashCandidates);
-    expect(folded.map((c) => c.name)).toEqual(["reload", "reload-tui"]);
+    expect(folded.map((c) => c.name)).toEqual(["reload", "reload-tui", "rewind"]);
   });
 });
 
@@ -81,7 +81,7 @@ describe("BI-27.4 · CandidateMenu 状态机", () => {
     menu.sync("/");
     expect(menu.visible).toBe(true);
     expect(menu.items.length).toBeGreaterThan(0);
-    menu.sync("/re");
+    menu.sync("/rel");
     expect(menu.visible).toBe(true);
     expect(menu.items.map((c) => c.name)).toEqual(["reload", "reload-tui"]);
     // 含空白（进入参数阶段）：关闭
@@ -100,7 +100,7 @@ describe("BI-27.4 · CandidateMenu 状态机", () => {
 
   test("moveUp/moveDown 双端钳制；sync 复位选择", () => {
     const menu = new CandidateMenu();
-    menu.sync("/re"); // 2 项：reload / reload-tui
+    menu.sync("/rel"); // 2 项：reload / reload-tui
     expect(menu.selectedIndex).toBe(0);
     menu.moveDown();
     expect(menu.selectedIndex).toBe(1);
@@ -169,10 +169,10 @@ describe("BI-27.4 · CandidateMenu 状态机", () => {
 
   test("completeNonSlash：斜杠草稿恒 undefined（归菜单）；前缀延伸补全语义", () => {
     const menu = new CandidateMenu();
-    expect(menu.completeNonSlash("/re")).toBeUndefined();
-    // 内置名为斜杠命令："re" 前缀延伸出 ["reload","reload-tui"]，
+    expect(menu.completeNonSlash("/rel")).toBeUndefined();
+    // 内置名为斜杠命令："rel" 前缀延伸出 ["reload","reload-tui"]，
     // 第一共同前缀 = "reload"（其一为另一的前缀）→ 补全为最短候选名。
-    expect(menu.completeNonSlash("re")).toBe("reload");
+    expect(menu.completeNonSlash("rel")).toBe("reload");
   });
 });
 
@@ -180,7 +180,7 @@ describe("BI-27.4 · CandidateMenu.lines 渲染行", () => {
   test("不可见返回空数组；可见时 `/name  描述` 对齐 + 选中行 ❯ 标记", () => {
     const menu = new CandidateMenu();
     expect(menu.lines(60)).toEqual([]); // 未 sync：不可见
-    menu.sync("/re");
+    menu.sync("/rel");
     const lines = menu.lines(60);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("/reload");

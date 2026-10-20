@@ -303,6 +303,15 @@ export class TranscriptProjection {
     return this.layerList.flatMap((l) => [...l.history]);
   }
 
+  /**
+   * 清空投影（BI-11 接线：/clear 执行体）——丢弃全部条目与派生层，
+   * 宽度保持不变；清空后投影等价于新建空投影（不变式依旧成立）。
+   */
+  clear(): void {
+    this.entryList.length = 0;
+    this.layerList = [];
+  }
+
   /** L3/L4 成对视图行（只读快照）。 */
   viewLines(): readonly ViewLine[] {
     return this.layerList.flatMap((l) => [...l.view]);

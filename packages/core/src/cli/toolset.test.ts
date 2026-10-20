@@ -27,9 +27,10 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, basename } from "node:path";
+import { join, basename, dirname } from "node:path";
 import {
 	buildDefaultToolset,
+	makeSelectToolsRegistry,
 	DEFAULT_SEARCH_API_KEY_ENV,
 	DEFAULT_BASH_TOOL_TIMEOUT_MS,
 	BASH_TRUNCATION_MARKER,
@@ -43,6 +44,9 @@ import {
 import type { ToolBinding } from "./headless";
 import type { FetchExecutor } from "../tools/web-fetch";
 import { pngBytes } from "../tool/handlers/read-media-file.test";
+import type { LspToolClientLike } from "../../../mcp/src/lsp/lsp-tool";
+import { SwarmService } from "../subagent/swarm/swarm-service";
+import { SkillRegistry, type SkillFsPort } from "../subagent/skill-executor";
 
 // ---------------------------------------------------------------------------
 // 底座：tmp 工作区 / fetch 与 spawn 替身 / AbortSignal
@@ -968,6 +972,179 @@ describe("BI-08.3 / BI-07.11 · 挂载式门控", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 工单 C · BI-13.2 / BI-07.8 / BI-07.9 · 三器官挂载式门控 + execute 行为
+// ---------------------------------------------------------------------------
+
+/** LSP server 注入缝替身（LspToolClientLike；零真实 server）。 */
+const stubLspClient: LspToolClientLike = {
+	goToDefinition: async (filePath, line, character) => ({
+		operation: "goToDefinition",
+		locations: [{ uri: filePath, startLine: line, startCharacter: character, endLine: line, endCharacter: character }],
+		totalLocations: 1,
+		omittedLocations: 0,
+		truncated: false,
+		rendered: `${filePath}:${line}`,
+	}),
+	findReferences: async () => ({
+		operation: "findReferences",
+		locations: [],
+		totalLocations: 0,
+		omittedLocations: 0,
+		truncated: false,
+		rendered: "",
+	}),
+	goToImplementation: async () => ({
+		operation: "goToImplementation",
+		locations: [],
+		totalLocations: 0,
+		omittedLocations: 0,
+		truncated: false,
+		rendered: "",
+	}),
+	hover: async (filePath, line, character) => ({
+		operation: "hover",
+		found: true,
+		contents: "doc",
+		truncated: false,
+		rendered: `${filePath}:${line}`,
+	}),
+};
+
+/** SwarmService 替身：spawnFn 直接回显 prompt（零真实子进程/子代理）。 */
+function makeSwarmService(): SwarmService {
+	return new SwarmService(async (prompt) => `out:${prompt}`);
+}
+
+/** Skill 注册表 fs 替身：按技能名 → SKILL.md 正文映射（零真实磁盘）。 */
+function makeSkillFs(skillBodies: Record<string, string>): SkillFsPort {
+	const SKILLS_SUFFIX = "/skills";
+	return {
+		readdir: (dir) => (dir.endsWith(SKILLS_SUFFIX) ? Object.keys(skillBodies) : []),
+		readFile: (path) => {
+			const name = basename(dirname(path));
+			const body = skillBodies[name];
+			if (body === undefined) throw new Error(`no skill file: ${path}`);
+			return body;
+		},
+		isDirectory: (path) =>
+			path.endsWith(SKILLS_SUFFIX) || Object.prototype.hasOwnProperty.call(skillBodies, basename(path)),
+	};
+}
+
+const REVIEW_SKILL =
+	"---\nname: review\ndescription: r\nparams:\n  pr:\n    type: number\n    required: true\n    description: PR 编号\n---\n展开 {{pr}}\n";
+
+describe("工单 C · BI-13.2 / BI-07.8 / BI-07.9 · 三器官挂载式门控", () => {
+	test("缺省（不传三开关）：工具名集合不含 lsp_navigate / AgentSwarm / Skill（现状回归）", () => {
+		const names = new Set(namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() })));
+		expect(names.has("lsp_navigate")).toBe(false);
+		expect(names.has("AgentSwarm")).toBe(false);
+		expect(names.has("Skill")).toBe(false);
+	});
+
+	// --- BI-13.2 lsp_navigate ---
+	test("lsp:true → 含 lsp_navigate（readOnly=true）；注册名覆盖为 lsp_navigate", () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true });
+		const names = namesOf(tools);
+		expect(names).toContain("lsp_navigate");
+		const lsp = byName(tools, "lsp_navigate");
+		expect(lsp.readOnly).toBe(true);
+		expect(lsp.definition.name).toBe("lsp_navigate");
+		expect(lsp.definition.inputSchema).toHaveProperty("type", "object");
+	});
+
+	test("lsp:true 但 lspClient 未注入 → execute 结构化返回 {ok:false,code:'lsp-unavailable'}，不抛", async () => {
+		const lsp = byName(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true }), "lsp_navigate");
+		const res = JSON.parse((await lsp.execute({ operation: "hover", file_path: "/a.ts", line: 0, character: 0 }, SIGNAL)) as string) as {
+			ok: false;
+			code: string;
+		};
+		expect(res.ok).toBe(false);
+		expect(res.code).toBe("lsp-unavailable");
+	});
+
+	test("lsp:true 且注入 lspClient → execute 委托器官 dispatch（hover 透传结果）", async () => {
+		const lsp = byName(
+			buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true, lspClient: stubLspClient }),
+			"lsp_navigate",
+		);
+		const res = JSON.parse(
+			(await lsp.execute({ operation: "hover", file_path: "/a.ts", line: 3, character: 5 }, SIGNAL)) as string,
+		) as { ok: true; result: { operation: string; rendered: string } };
+		expect(res.ok).toBe(true);
+		expect(res.result.operation).toBe("hover");
+		expect(res.result.rendered).toContain("/a.ts:3");
+	});
+
+	// --- BI-07.8 AgentSwarm ---
+	test("swarm:true 但 swarmRunner 未注入 → 不挂载（依赖缺失不伪造能力）", () => {
+		const names = new Set(namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), swarm: true })));
+		expect(names.has("AgentSwarm")).toBe(false);
+	});
+
+	test("swarm:true 且注入 swarmRunner → 含 AgentSwarm（readOnly=false）；execute 派发蜂群返回 ok:true", async () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), swarm: true, swarmRunner: makeSwarmService() });
+		const names = namesOf(tools);
+		expect(names).toContain("AgentSwarm");
+		const swarm = byName(tools, "AgentSwarm");
+		expect(swarm.readOnly).toBe(false);
+		expect(swarm.definition.name).toBe("AgentSwarm");
+		const res = JSON.parse(
+			(await swarm.execute({ tasks: ["x", "y"], prompt_template: "do {{item}}" }, SIGNAL)) as string,
+		) as { ok: true; results: Array<{ item: string; ok: boolean; output: string }>; failed: number; total: number };
+		expect(res.ok).toBe(true);
+		expect(res.total).toBe(2);
+		expect(res.results[0]!.output).toBe("out:do x");
+		expect(res.results[1]!.output).toBe("out:do y");
+	});
+
+	// --- BI-07.9 Skill ---
+	test("skill:true → 含 Skill（readOnly=true）；skills 目录缺失 → execute 返回 {ok:false,code:'no-skills'}", async () => {
+		const tools = buildDefaultToolset("/tmp", {
+			spawnImpl: explodingSpawn(),
+			skill: true,
+			skillRegistry: new SkillRegistry({ fs: makeSkillFs({}) }),
+		});
+		const names = namesOf(tools);
+		expect(names).toContain("Skill");
+		const skill = byName(tools, "Skill");
+		expect(skill.readOnly).toBe(true);
+		expect(skill.definition.name).toBe("Skill");
+		const res = JSON.parse((await skill.execute({ skill: "anything" }, SIGNAL)) as string) as { ok: false; code: string };
+		expect(res.ok).toBe(false);
+		expect(res.code).toBe("no-skills");
+	});
+
+	test("skill:true 且注入含技能 registry → execute 展开 SKILL.md 为注入 prompt（ok:true）", async () => {
+		const registry = new SkillRegistry({
+			fs: makeSkillFs({ review: REVIEW_SKILL }),
+			userSkillsDir: "/u/.bi/skills",
+			workspaceSkillsDir: "/w/.bi/skills",
+		});
+		const skill = byName(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), skill: true, skillRegistry: registry }), "Skill");
+		const res = JSON.parse(
+			(await skill.execute({ skill: "review", input: { pr: 7 } }, SIGNAL)) as string,
+		) as { ok: true; skill: string; prompt: string; params: Record<string, unknown> };
+		expect(res.ok).toBe(true);
+		expect(res.skill).toBe("review");
+		expect(res.prompt).toBe("展开 7\n");
+		expect(res.params).toMatchObject({ pr: 7 });
+	});
+
+	test("skill:true 且参数非法（缺 skill）→ execute 结构化返回 invalid-input（不触 registry 崩溃）", async () => {
+		const registry = new SkillRegistry({
+			fs: makeSkillFs({ review: REVIEW_SKILL }),
+			userSkillsDir: "/u/.bi/skills",
+			workspaceSkillsDir: "/w/.bi/skills",
+		});
+		const skill = byName(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), skill: true, skillRegistry: registry }), "Skill");
+		const res = JSON.parse((await skill.execute({ input: {} }, SIGNAL)) as string) as { ok: false; code: string };
+		expect(res.ok).toBe(false);
+		expect(res.code).toBe("invalid-input");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // 信号透传（全工具面）
 // ---------------------------------------------------------------------------
 
@@ -999,5 +1176,73 @@ describe("BI-25.1/28 · 信号透传", () => {
 			}
 		}
 		expect(calls).toHaveLength(0); // 已中止：器官调用根本不启动
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 工单 G · BI-13.1/BI-13.3 · select_tools 挂载式门控 + 名录后端（buildCatalog）
+// ---------------------------------------------------------------------------
+
+describe("工单 G · BI-13.1/BI-13.3 · select_tools", () => {
+	test("缺省（不传开关）/ select_tools:false → 工具名集合不含 select_tools（零变动回归）", () => {
+		expect(new Set(namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() }))).has("select_tools")).toBe(false);
+		expect(
+			new Set(namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), select_tools: false }))).has("select_tools"),
+		).toBe(false);
+	});
+
+	test("select_tools:true → 含 select_tools（readOnly=true）；定义面 name/inputSchema 齐备（names 必填）", () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), select_tools: true });
+		const names = namesOf(tools);
+		expect(names).toContain("select_tools");
+		const st = byName(tools, "select_tools");
+		expect(st.readOnly).toBe(true);
+		expect(st.definition.name).toBe("select_tools");
+		expect(st.definition.inputSchema).toHaveProperty("type", "object");
+		expect((st.definition.inputSchema as Record<string, unknown>)["required"]).toEqual(["names"]);
+	});
+
+	test("execute 传入名录中名字 → 返回对应工具全量 inputSchema（含 server 路由，与绑定定义一致）", async () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), select_tools: true });
+		const st = byName(tools, "select_tools");
+		const raw = (await st.execute({ names: ["read_file"] }, SIGNAL)) as string;
+		const res = JSON.parse(raw) as {
+			activated: Array<{ name: string; server: string; inputSchema: unknown }>;
+			unknown: unknown[];
+		};
+		expect(res.activated).toHaveLength(1);
+		expect(res.activated[0]!.name).toBe("read_file");
+		expect(res.activated[0]!.server).toBe("builtin");
+		// 全量 inputSchema 与 read_file 绑定定义逐字节一致（select 换回全 schema）。
+		expect(res.activated[0]!.inputSchema).toEqual(byName(tools, "read_file").definition.inputSchema);
+		expect(res.unknown).toEqual([]);
+	});
+
+	test("execute 传入未知名 → 结构化 unknown + 最近候选建议（非空，且含正确候选）", async () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), select_tools: true });
+		const st = byName(tools, "select_tools");
+		const raw = (await st.execute({ names: ["read_fle"] }, SIGNAL)) as string;
+		const res = JSON.parse(raw) as {
+			activated: unknown[];
+			unknown: Array<{ kind: string; name: string; suggestions?: string[] }>;
+		};
+		expect(res.activated).toEqual([]);
+		expect(res.unknown).toHaveLength(1);
+		expect(res.unknown[0]!.kind).toBe("unknown-tool");
+		expect(res.unknown[0]!.name).toBe("read_fle");
+		expect(res.unknown[0]!.suggestions).toBeDefined();
+		expect(res.unknown[0]!.suggestions!.length).toBeGreaterThan(0);
+		expect(res.unknown[0]!.suggestions!).toContain("read_file");
+	});
+
+	test("BI-13.3：名录后端（buildCatalog）接入后摘要非空（命名空间 builtin + 渐进摘要行）", () => {
+		// 用缺省工具集（8 件）建 registry，断言 catalog 与 flattenBudget 摘要均非空。
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn() });
+		const registry = makeSelectToolsRegistry(tools);
+		expect(registry.catalog.totalTools).toBeGreaterThan(0);
+		const summary = registry.catalogSummary();
+		expect(summary.length).toBeGreaterThan(0);
+		// 摘要行形态：`- builtin.<tool>(...)`（BI-13.3 单行签名）。
+		expect(summary[0]).toMatch(/^- builtin\./);
 	});
 });

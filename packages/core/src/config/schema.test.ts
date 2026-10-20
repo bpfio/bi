@@ -309,3 +309,46 @@ describe("schema: BI-08.3 / BI-07.11 挂载式门控键", () => {
     expect(bad.issues.some((i) => i.path === "tools.media")).toBe(true);
   });
 });
+
+describe("schema: 虚账清偿 wave0 挂载式键（lsp / select_tools / image_offload / auto_compactor）", () => {
+  /** 装载路径（对齐 ConfigService.compose）：校验 → 合并到默认底 → backfill 回填叶子默认。 */
+  function load(raw: unknown): { config: BiConfig; issues: ConfigIssue[] } {
+    const { layer, issues } = validate(raw);
+    const base = createDefaultConfig();
+    deepMergeLayer(base, layer);
+    BI_CONFIG_SCHEMA.backfill?.(base);
+    return { config: base, issues };
+  }
+
+  test("缺省 false（缺省路径逐字节等价，工具面零变动）", () => {
+    const { config, issues } = load({});
+    expect(issues).toEqual([]);
+    // tools 为根分区，恒物化：两键缺省 false。
+    expect(config.tools.lsp).toBe(false);
+    expect(config.tools.select_tools).toBe(false);
+    // context 为挂载分区：声明任一有效子键才物化，其余经 backfill 补默认 false。
+    const withCtx = load({ context: { time_context: true } }).config;
+    expect(withCtx.context?.time_context).toBe(true);
+    expect(withCtx.context?.image_offload).toBe(false);
+    expect(withCtx.context?.auto_compactor).toBe(false);
+  });
+
+  test("显式声明 true/false → 原样透传；类型不符的键丢弃并诊断", () => {
+    const { config, issues } = load({
+      tools: { lsp: true, select_tools: false },
+      context: { image_offload: true, auto_compactor: false },
+    });
+    expect(issues).toEqual([]);
+    expect(config.tools.lsp).toBe(true);
+    expect(config.tools.select_tools).toBe(false);
+    expect(config.context?.image_offload).toBe(true);
+    expect(config.context?.auto_compactor).toBe(false);
+
+    // 类型不符：tools.lsp 整键无效 → 缺省 false；context 整层无效 → 未物化。
+    const bad = load({ tools: { lsp: "yes" }, context: { image_offload: 1 } });
+    expect(bad.config.tools.lsp).toBe(false);
+    expect(bad.config.context).toBeUndefined();
+    expect(bad.issues.some((i) => i.path === "tools.lsp")).toBe(true);
+    expect(bad.issues.some((i) => i.path === "context.image_offload")).toBe(true);
+  });
+});

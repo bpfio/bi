@@ -76,7 +76,7 @@ describe("W3-D7 main: [context] time_context → runHeadless", () => {
 				out: () => {},
 				err: () => {},
 				config: configWith((c) => {
-					c.context = { time_context: true, date_change_sensor: false, tool_result_prune: false, max_history_entries: 0, timezone: "Asia/Shanghai" };
+					c.context = { time_context: true, date_change_sensor: false, tool_result_prune: false, max_history_entries: 0, timezone: "Asia/Shanghai", image_offload: false, auto_compactor: false };
 				}),
 				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [fixedOutputTool("ok")] },
 			});
@@ -121,7 +121,7 @@ describe("W3-D7 main: [context] time_context → runHeadless", () => {
 				out: () => {},
 				err: () => {},
 				config: configWith((c) => {
-					c.context = { time_context: false, date_change_sensor: false, tool_result_prune: false, max_history_entries: 4, timezone: "Asia/Shanghai" };
+					c.context = { time_context: false, date_change_sensor: false, tool_result_prune: false, max_history_entries: 4, timezone: "Asia/Shanghai", image_offload: false, auto_compactor: false };
 				}),
 				headless: { cwd: root, sessionsRoot: join(root, "sessions"), tools: [fixedOutputTool("ok")], maxRounds: 8 },
 			});

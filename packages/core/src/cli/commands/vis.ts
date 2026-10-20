@@ -18,13 +18,21 @@
  *         防路径穿越；未知 id 结构化 404（session_not_found）。
  *
  * v1 不做（照抄侦察报告第 5 节）：token 统计 / 上下文曲线 / agents 树 / cron /
- * logs / zip 导入 / 实时推送 / 富文本渲染 / 令牌轮转 / 多网卡地址。
+ * logs / zip 导入 / 实时推送 / 富文本渲染 / 多网卡地址。
+ *
+ * BI-20.5 接线（可选增强，env 显式 opt-in）：令牌轮转。
+ *   - 开关：环境变量 BI_VIS_TOKEN_ROTATE=1（config 不加键，默认面零变化）；
+ *   - 开启且宿主注入轮转权威 → 令牌校验走权威（当前令牌恒真、上一代令牌在
+ *     宽限期内双活）；关闭 → 走现状静态令牌路径（BI_VIS_AUTH_TOKEN）；
+ *   - 依赖方向：轮转引擎在 tui 侧，core 不依赖 tui（不许倒置依赖）——core 只
+ *     认「令牌权威端口」，由宿主（bin/bi.ts）把 tui 侧产物注入进来。
  *
  * 测试零外呼：VisServer 的 serve 工厂可注入，handler 纯函数可直测路由矩阵。
  */
 
 import { SessionManager, SessionNotFoundError } from "../../session/manager";
 import type { SessionEntry } from "../../session/types";
+import type { TokenAuthority } from "../../web/vis-handler";
 
 /** 会话 id 白名单（与 manager.SESSION_ID_PATTERN 同口径，防路径穿越）。 */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -35,6 +43,19 @@ export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 0;
 /** 非回环绑定强制要求的环境变量。 */
 export const AUTH_TOKEN_ENV = "BI_VIS_AUTH_TOKEN";
+/**
+ * BI-20.5 接线：令牌轮转开关环境变量（值恒为 "1" 才启用；缺省/他值 = 关闭，
+ * 走现状静态令牌路径）。config 不加键——显式 env opt-in，避免默认面行为漂移。
+ */
+export const TOKEN_ROTATE_ENV = "BI_VIS_TOKEN_ROTATE";
+
+/**
+ * 令牌权威工厂端口：core 不依赖 tui（轮转引擎在 tui 侧，依赖方向不可倒置），
+ * 由宿主注入「令牌权威」实现（TokenRotator 天然满足本端口）。
+ * onRotate：轮转发生时回调（新令牌；宿主据此重印带令牌的访问链接）。
+ */
+export type VisTokenAuthorityFactory = (onRotate?: (token: string) => void) => TokenAuthority;
+
 
 /**
  * 判定 host 是否为回环（loopback），仅回环时免令牌。
@@ -183,6 +204,12 @@ export interface VisHandlerOptions {
   requireToken: boolean;
   /** 生效令牌（requireToken=false 时可为空）。 */
   token: string;
+  /**
+   * BI-20.5 接线：令牌权威端口（可选）。注入后令牌校验走权威的 validate
+   * （轮转语义：当前令牌恒真、上一代令牌在宽限期内双活）；缺省走现状静态
+   * 令牌比对（token 字符串相等）。
+   */
+  tokens?: TokenAuthority;
 }
 
 /** vis 请求处理器：纯函数，便于单测直测路由矩阵（不启真实 socket）。 */
@@ -190,11 +217,14 @@ export class VisHandler {
   readonly manager: SessionManager;
   readonly requireToken: boolean;
   readonly token: string;
+  /** BI-20.5 接线：令牌权威端口（缺省 undefined = 静态令牌路径）。 */
+  readonly tokens: TokenAuthority | undefined;
 
   constructor(options: VisHandlerOptions) {
     this.manager = options.manager;
     this.requireToken = options.requireToken;
     this.token = options.token;
+    this.tokens = options.tokens;
   }
 
   async dispatch(request: Request): Promise<Response> {
@@ -244,8 +274,12 @@ export class VisHandler {
   }
 
   private authorized(request: Request, url: URL): boolean {
-    if (this.token.length === 0) return false;
     const candidates = extractTokenCandidates(request, url);
+    // BI-20.5 接线：权威端口优先（轮转语义：宽限期内旧令牌仍过）；缺省静态比对。
+    if (this.tokens !== undefined) {
+      return candidates.some((c) => this.tokens!.validate(c));
+    }
+    if (this.token.length === 0) return false;
     return candidates.some((c) => c === this.token);
   }
 }
@@ -262,6 +296,8 @@ export interface VisServerDeps {
   port: number;
   requireToken: boolean;
   token: string;
+  /** BI-20.5 接线：令牌权威端口（缺省 undefined = 静态令牌路径）。 */
+  tokens?: TokenAuthority;
   /** 可注入的 serve 工厂（测试替身，避免真实监听）；缺省 Bun.serve。 */
   serve?: (options: {
     hostname: string;
@@ -272,7 +308,7 @@ export interface VisServerDeps {
 
 /** 本地可视化服务器封装（Bun.serve 包装，提供 info/stop）。 */
 export class VisServer {
-  private readonly deps: Required<VisServerDeps>;
+  private readonly deps: Required<Omit<VisServerDeps, "tokens">> & { tokens?: TokenAuthority };
   private server: { port: number; stop: (close?: boolean) => void } | null = null;
   private readonly handler: VisHandler;
 
@@ -285,6 +321,7 @@ export class VisServer {
       manager: deps.manager,
       requireToken: deps.requireToken,
       token: deps.token,
+      ...(deps.tokens !== undefined ? { tokens: deps.tokens } : {}),
     });
   }
 
@@ -387,12 +424,19 @@ export interface HandleVisOptions {
   getEnv?: (name: string) => string | undefined;
   /** 是否进入常驻监听（false=仅装配并返回 info，不绑定信号/不常驻）；测试用。 */
   attachSignals?: boolean;
+  /**
+   * BI-20.5 接线：令牌轮转权威工厂（注入面）。core 不依赖 tui——轮转引擎在
+   * tui 侧，由宿主注入；本端口缺省时即便 env 开启也回退静态令牌路径（如实告警）。
+   */
+  tokenAuthority?: VisTokenAuthorityFactory;
 }
 
 /**
  * `bi vis [sessionId] [--port N] [--host H]` 处理器：
  *   - 解析旗标、装配 manager、校验 host/token 策略、启服、打印 URL、SIGINT 退出。
  *   - 非回环绑定且缺 BI_VIS_AUTH_TOKEN → 结构化拒绝启动（exit 1，不假冒）。
+ *   - BI-20.5 接线：env BI_VIS_TOKEN_ROTATE=1 且宿主注入轮转权威 → 令牌校验走
+ *     轮转（当前令牌恒真、上一代令牌宽限期内双活）；否则走现状静态令牌路径。
  */
 export async function handleVis(
   rest: readonly string[],
@@ -414,8 +458,27 @@ export async function handleVis(
 
   const nonLoopback = !isLoopback(host);
   const getEnv = options.getEnv ?? ((name: string) => process.env[name]);
+  // BI-20.5 接线：令牌轮转（可选增强，env 显式 opt-in）。轮转权威由宿主注入
+  // （core 不依赖 tui）——未注入时回退静态令牌路径并如实告警，不静默降级。
+  const rotateEnabled = getEnv(TOKEN_ROTATE_ENV) === "1";
+  let startedUrl = "";
+  let authority: TokenAuthority | undefined;
+  if (rotateEnabled) {
+    if (options.tokenAuthority !== undefined) {
+      authority = options.tokenAuthority((token) => {
+        io.out(`bi vis: 令牌已轮转 → 新访问链接 ${startedUrl}?t=${encodeURIComponent(token)}`);
+      });
+    } else {
+      io.err(
+        `bi vis: ${TOKEN_ROTATE_ENV}=1 但未装配令牌轮转权威（宿主未注入）——回退静态令牌路径`,
+      );
+    }
+  }
   let token = "";
-  if (nonLoopback) {
+  if (authority !== undefined) {
+    // 轮转权威自带令牌（当前令牌即访问凭据；轮转后由 onRotate 回调重印链接）。
+    token = authority.current();
+  } else if (nonLoopback) {
     token = getEnv(AUTH_TOKEN_ENV) ?? "";
     if (token.length === 0) {
       io.err(
@@ -434,13 +497,18 @@ export async function handleVis(
     manager,
     hostname: host,
     port,
-    requireToken: nonLoopback,
+    requireToken: authority !== undefined || nonLoopback,
     token,
+    ...(authority !== undefined ? { tokens: authority } : {}),
     ...(options.serve !== undefined ? { serve: options.serve } : {}),
   });
   const info = server.start();
+  startedUrl = info.url;
   io.out(`bi vis: 已启动 → ${info.url}`);
-  if (nonLoopback) {
+  if (authority !== undefined) {
+    io.out(`bi vis: 访问链接（含令牌）→ ${info.url}?t=${encodeURIComponent(authority.current())}`);
+    io.out(`bi vis: 已启用令牌轮转（${TOKEN_ROTATE_ENV}）——令牌定期轮转，旧令牌在宽限期内仍有效`);
+  } else if (nonLoopback) {
     io.out(`bi vis: 已启用令牌校验（${AUTH_TOKEN_ENV}）；访问请带 ?t= 或 Authorization: Bearer`);
   }
   const deepLink = args.positionals[0];

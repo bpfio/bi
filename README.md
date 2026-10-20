@@ -86,7 +86,7 @@ model = "my-model"
 bun bin/bi.ts doctor
 ```
 
-也可以按键查询生效值（`get` / `set` / `list`，共 62 键，见下文「配置参考」）：
+也可以按键查询生效值（`get` / `set` / `list`，共 68 键，见下文「配置参考」）：
 
 ```bash
 bun bin/bi.ts config get models.default
@@ -129,7 +129,7 @@ REPL 同一面）/ `4` 已识别但能力未配置（如 `upgrade` 无 manifest 
 
 ## 配置参考
 
-键面以 `bun bin/bi.ts config list` 实测为准（共 62 键 = 42 根键 + 20 挂载分区键，
+键面以 `bun bin/bi.ts config list` 实测为准（共 68 键 = 46 根键 + 22 挂载分区键，
 按分组；复杂表/实体数组如
 `providers.entries` / `models.entries` / `permission.rules` / `hooks.entries` 不进
 get/set 键面，直接写 TOML）：
@@ -148,15 +148,15 @@ get/set 键面，直接写 TOML）：
 | `secondary_model` | `secondary_model.background`、`secondary_model.subagent`、`secondary_model.summarize` |
 | `telemetry` | `telemetry.enabled`、`telemetry.sanitize_errors` |
 | `thinking` | `thinking.budget_tokens`、`thinking.effort`、`thinking.enabled` |
-| `tools` | `tools.allow`、`tools.deny`、`tools.output_limit_bytes` |
+| `tools` | `tools.allow`、`tools.deny`、`tools.output_limit_bytes`、`tools.media`、`tools.job_tools`、`tools.lsp`、`tools.select_tools` |
 | `tui` | `tui.mouse_mode`、`tui.notifications`、`tui.show_thoughts`、`tui.theme` |
 | `watch` | `watch.debounce_ms`、`watch.enabled`、`watch.ignore` |
 | `workspace` | `workspace.additional_dir`、`workspace.respect_gitignore` |
 
-挂载分区的标量子键已进 get/set 键面（共 20 个）：`verify.on_completion`；
+挂载分区的标量子键已进 get/set 键面（共 22 个）：`verify.on_completion` / `verify.checks` / `verify.deliverables` / `verify.objective`；
 `subagent.enabled` / `subagent.max_iterations` / `subagent.timeout_ms` / `subagent.default_profile` / `subagent.btw_enabled`；
 `ptc.enabled` / `ptc.timeout_ms` / `ptc.max_tool_calls`；`cron.enabled`；
-`context.time_context` / `context.date_change_sensor` / `context.tool_result_prune` / `context.max_history_entries` / `context.timezone`；
+`context.time_context` / `context.date_change_sensor` / `context.tool_result_prune` / `context.max_history_entries` / `context.timezone` / `context.image_offload` / `context.auto_compactor`；
 `memory.dream_enabled` / `memory.inject_enabled`。
 
 ### 挂载式分区（config-gated，缺省关）
@@ -171,7 +171,7 @@ get/set 键面，直接写 TOML）：
 | `[subagent]` | `enabled` = 注册 `spawn_subagent` 模型工具；`btw_enabled` = `/btw` 旁路问答 |
 | `[ptc]` | `enabled` = 注册 PTC 脚本工具 `run_ptc_script`（`timeout_ms` / `max_tool_calls` 为执行边界） |
 | `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`） |
-| `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` |
+| `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入） |
 
 ### 环境变量覆盖
