@@ -881,3 +881,11 @@ origin=**0b066ef**（bpfio/bi，树净零差，HEAD=origin/main）；本会话�
 - **EXCEL-BACKLOG 卡**（planned）：GAP-1 的 M/L 档不入本波——隔离层接线（里程碑①最值）/TUI 工具面补齐/resume 重放 tool 轮/上下文缺省开+TUI 管线/eval 语料回归门/MCP resources+Streamable HTTP/插件执行面/发布自动化。cron 到点自动触发与 /diff 之外的 diff 预览亦在其中。
 - **新识风险**：bin 层类型覆盖盲区（bin/ 不进任何 tsconfig）；e2e-drill-m-crash 并发风暴用例整机负载下偶发（kimi 实证与本波改动无关，manager.ts append 竞态既有）。
 - 派工档案：docs/dispatch/2026-10-20-excel-wave/（3 报告+2 工单+5 运行日志全存）。
+
+### 会话终态（2026-10-21 凌晨封存笔）
+
+- **代码**：origin/main = HEAD = `ee1d0a0`，树净零差；本会话提交链 `23205c0`（FIX-A）→ `7d6200e`（FIX-B）→ `ee1d0a0`（战役档案+三十一章）全部已推。
+- **台账**：任务卡零悬空（仅 EXCEL-BACKLOG planned 待用户裁定节奏）；批次全 completed（含三张历史壳批次 ORGAN-WIRE-1/TUI-ALIGN-3/BI-PROD-2026-10-20 实名收口）；research KB #32/#33/#34；手记 #287。
+- **文档**：DEVLOG 三十一章 + 本封存笔；派工档案 docs/dispatch/2026-10-20-excel-wave/（3 报告+3 工单+5 日志+索引 README）。
+- **门禁终态**：bun test 4979 pass / 0 fail（283 文件）+ 根 typecheck 零错 + 七包 tsc 全 OK + BI_PTY_E2E pty 绿。
+- **方法论落点**：METH-1 文档待用户裁定是否立为 docs/ 正式方法论文档（验证金字塔/六档门禁矩阵/发布检查单可直接采用）；其 7 项「待实测」基线指标（M3/M4/M5/M6/M10/M11/M12）可在下周窗口首采。
