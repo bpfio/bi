@@ -800,3 +800,22 @@ origin=**cc7eb08**（bpfio/bi，树净零差）；提交链 8152de1→4b43ba3→
 - **kimi 两处自主偏离均判合格**：①[session] 走挂载式而非根键（保 17 根键钉死测试，功能等价，比简报原案更对）；②简报优先级措辞自相矛盾处取显式链并申辩。另自主加触碰 config.ts（MOUNTED_SECTIONS 注册），理由成立收货。
 - **验收四步**：diff 逐行亲验（7 文件）/门禁复跑 4870 pass-0 fail+三 tsc 0/真机冒烟三连（config 24 → 原 P4 五回合完答；--max-rounds 1 → stdout 完整失败对象+exit 1 脱离管道直取；旗标 2 压 config 24）/抽样（config get 读 24、list 恰 70 键）。
 - **冒烟连带捕获**：模型把 PATH 上旧版全局 bi 0.2.1 当被测仓库验证（11 命令 vs GT 16）——非产品缺陷（仓库帮助面 16 条齐全），属证据错配；评测探针从此钉死 `bun bin/bi.ts`。**新发现 F-EV-02 (P3, open)**：[loop_control] 四键全仓零消费虚账。
+
+## 二十九、功能台账全覆盖 v2 + 修复波 1 (2026-10-20 深夜)
+
+用户令：对照 183 卡台账驱动 bi 全覆盖测试、发现入账、派 kimi 修复、产出终评。批次 BI-COVERAGE-2026-10-20。报告 `docs/test/coverage-2026-10-20/report.md`。
+
+### 三波结果
+
+T1-A 主控伪端点 CLI 级 20/20（help16 子命令/fork-export-transfer-query-config-doctor 全链路真机）；T1-B/C 派 kimi 26 检查 25 过 1 挂（upgrade 只读检查/vis 令牌/acp 帧/worktree 全链/dag 三态/plugins 三态/pty 横幅+/help+/exit/headless 三形态+resume 追加）；T2 bi 狗粮 6/6（写读闭环、BI.md 注入开闸一回合答中、截断、edit、resume 自我纠错）。
+
+### 三缺陷当波闭环（kimi 修复 33ba1fb + 主控四步验收）
+
+- **F-EV-03 (P2 安全)**：a2a host HTTP 面零令牌校验（kimi 逮住+主控复现实锤：token 下无/错全 200）→ 非空令牌全路由 Bearer/?t= 门禁 401，冒烟 401/401/200/200。
+- **F-EV-05 (P3)**：boundToolText 行稀少输出半预算退化（单行 200KB 只保 32796）→ 尾侧空侧预算并入头侧，真机复测保 65535。
+- **F-EV-04 (P3)**：[vis] 配置面静默丢弃 → 挂载式分区+装配接线，键面 73。
+- kimi 4 处自主偏离全核实合格，含纠正工单错写的令牌 env 名（内建实为 BI_VIS_AUTH_TOKEN）——代理敢纠主控是高价值信号。
+
+### 终评 v3
+
+硬幻觉率 0（跨两轮评测复验）；工具面效用全部真机实证；失败面结构化；已知边界=回合缺省 8 可配、微器官 opt-in 设计。唯一挂账 F-EV-02（[loop_control] 零消费虚账，P3 open 待裁决）。门禁 4898/0+三 tsc 0。
