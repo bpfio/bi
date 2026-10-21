@@ -11,6 +11,11 @@
  *      截该行（头侧取前缀、尾侧取后缀），被截的边界行仍计为 1 条保留行
  *      （有内容可见）。码点边界保证多字节字符（中文/emoji 代理对）绝不截半。
  *
+ * 尾侧空侧的预算归属（F-EV-05 钉死）：行级切分后尾侧为空（行数 ≤ HEAD_LINES，
+ * 如单行长文本）时，**尾侧字符预算整段并入头侧**（头侧拿满 available），
+ * 不做对半分——否则单行 200KB 在 65536 上限下只留半预算（约 32K），
+ * 白扔另一半预算。头尾都有行时维持对半分语义不变。
+ *
  * 计数语义（钉死）：
  * - 一切 char 计数按 Unicode 码点（非 UTF-16 code unit）；一切行以 \n 分割
  *   （split("\n") 原义，尾部 \n 会产生最后一条空行，计入 originalLines）。
@@ -261,7 +266,10 @@ export function boundToolText(output: string, options: BoundToolTextOptions = {}
   // 对半分：头侧取整半，尾侧拿余量；可用预算为负（标记行本身超上限的极端
   // 配置）时钳到 0，此时结果只含标记行，允许略超 maxChars（退化配置，仅当
   // 调用方显式传入极小 maxChars 才可能发生）。
-  const headBudget = Math.max(0, Math.floor(available / 2));
+  // 尾侧为空（行数 ≤ HEAD_LINES，单行长文本）时：尾侧预算整段并入头侧，
+  // 头侧拿满 available（保足 maxChars），不做对半分（F-EV-05）。
+  const headBudget =
+    tailCount > 0 ? Math.max(0, Math.floor(available / 2)) : Math.max(0, available);
   const tailBudget = Math.max(0, available - headBudget);
 
   const head = keepHeadLines(headSlice, headBudget);

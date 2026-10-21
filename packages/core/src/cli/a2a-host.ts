@@ -10,6 +10,12 @@
  *   结构化拒绝，不启动（0.0.0.0/:: 属通配绑定，视作非回环）；
  * - enabled=false 或 listen 非法 → 结构化 { ok:false, reason } 不抛。
  *
+ * HTTP 面令牌门禁（F-EV-03）：
+ * - 令牌（环境变量读到的那个）非空时，**所有路由**都必须校验
+ *   `Authorization: Bearer <token>` 或 `?t=<token>`；失败回 401
+ *   {"error":"unauthorized"}（JSON 形态对齐 bi vis 令牌门禁）；
+ * - 令牌为空（回环便利态）→ 不校验，维持无条件探活响应（缺省路径零行为差）。
+ *
  * 分层声明：本模块只做配置翻译与监听探活面；角色派生/传输接线/dispatch
  * 归后续工单（子命令装配波次），此处不碰。
  */
@@ -73,6 +79,29 @@ export function parseListen(listen: string): { hostname: string; port: number } 
 }
 
 /**
+ * 从请求中提取候选令牌：URL ?t= 优先，其次 Authorization（Bearer 或裸值）。
+ * 口径对齐 bi vis 令牌门禁（commands/vis.ts 同名逻辑，本模块不反向依赖）。
+ */
+function extractTokenCandidates(request: Request, url: URL): string[] {
+  const candidates: string[] = [];
+  const urlToken = url.searchParams.get("t");
+  if (urlToken !== null && urlToken.length > 0) candidates.push(urlToken);
+  const auth = request.headers.get("authorization");
+  if (auth !== null) {
+    const trimmed = auth.trim();
+    const bearer = /^Bearer\s+(.+)$/i.exec(trimmed);
+    candidates.push(bearer !== null ? (bearer[1]?.trim() ?? trimmed) : trimmed);
+  }
+  return candidates;
+}
+
+/** 令牌门禁：候选中任一与生效令牌相等即放行。 */
+function isAuthorized(request: Request, token: string): boolean {
+  const url = new URL(request.url);
+  return extractTokenCandidates(request, url).some((candidate) => candidate === token);
+}
+
+/**
  * 把 A2aSection 翻译成 HostOptions 并启动探活监听。
  * 返回成功句柄（host/port/address/close）或结构化拒绝，不抛。
  */
@@ -107,10 +136,19 @@ export async function startA2aHost(
   const server = Bun.serve({
     hostname,
     port,
-    fetch: () =>
-      new Response(JSON.stringify({ service: "bi-a2a", status: "ok" }), {
+    fetch: (request) => {
+      // F-EV-03：令牌非空时所有路由都过门禁（?t= 或 Authorization: Bearer）；
+      // 令牌为空 = 回环便利态，维持无条件探活响应（缺省路径零行为差）。
+      if (token.length > 0 && !isAuthorized(request, token)) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      }
+      return new Response(JSON.stringify({ service: "bi-a2a", status: "ok" }), {
         headers: { "content-type": "application/json; charset=utf-8" },
-      }),
+      });
+    },
   });
   return {
     ok: true,

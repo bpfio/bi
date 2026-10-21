@@ -9,7 +9,7 @@
  * 退出码语义：0 成功 / 1 运行期失败 / 2 用法错误 / 4 能力不在位。
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBi } from "./main";
@@ -555,6 +555,45 @@ describe("PROD-2 子命令 help 面（dispatch 接管，exit 0）", () => {
       expect(outs.join("\n")).toContain(keyword);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// F-EV-04：config [vis] 挂载分区接线（dispatch 装载全局配置 → vis 命令消费）
+// ---------------------------------------------------------------------------
+
+describe("F-EV-04 config [vis] 接线（dispatch 级）", () => {
+  /** 写一份只含 [vis] 表的全局配置（临时 homeDir，零外呼、绝不触碰真实 ~/.bi）。 */
+  async function writeVisConfig(body: string): Promise<string> {
+    const home = await tmpDir("bi-vis-cfg-");
+    await mkdir(join(home, ".bi"), { recursive: true });
+    await writeFile(join(home, ".bi", "config.toml"), body, "utf8");
+    return home;
+  }
+
+  test("[vis] enabled=false → 结构化拒绝启动 exit 4（能力未配置）", async () => {
+    const home = await writeVisConfig('[vis]\nenabled = false\n');
+    const c = collect();
+    expect(await runBi(["vis"], { ...c.io, deps: { homeDir: home } })).toBe(4);
+    expect(c.errs.join("\n")).toContain("[vis-disabled]");
+  });
+
+  test("[vis] listen + token_env 生效：非回环缺自定义 env 令牌 → exit 1 且点名该 env", async () => {
+    const home = await writeVisConfig(
+      '[vis]\nenabled = true\nlisten = "0.0.0.0:9"\ntoken_env = "MY_VIS_TOKEN"\n',
+    );
+    const c = collect();
+    expect(await runBi(["vis"], { ...c.io, deps: { homeDir: home } })).toBe(1);
+    const text = c.errs.join("\n");
+    expect(text).toContain("0.0.0.0"); // config listen 的 host 生效（非回环 → 需令牌）
+    expect(text).toContain("MY_VIS_TOKEN"); // config token_env 生效
+  });
+
+  test("[vis] token_env 缺省 → 仍要求内建 BI_VIS_AUTH_TOKEN（既有兼容）", async () => {
+    const home = await writeVisConfig('[vis]\nenabled = true\nlisten = "0.0.0.0:9"\n');
+    const c = collect();
+    expect(await runBi(["vis"], { ...c.io, deps: { homeDir: home } })).toBe(1);
+    expect(c.errs.join("\n")).toContain("BI_VIS_AUTH_TOKEN");
+  });
 });
 
 // ---------------------------------------------------------------------------

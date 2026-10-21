@@ -835,6 +835,29 @@ export const sessionSchema = sObj({
 });
 export type SessionSection = InferSchema<typeof sessionSchema>;
 
+/**
+ * [vis] 挂载式分区（仿 [verify]/[subagent]/[ptc]/[cron]/[context]/[memory]/[session]，不进 17 根键）。
+ *
+ * 语义钉死：
+ * - 未显式声明时 `config.vis === undefined` → vis 命令走内建缺省（回环 + 随机端口，
+ *   缺省路径零行为差：bi vis 照常可用，不因配置缺省而拒启）；
+ * - 声明后 enabled=true 才允许启动；enabled 缺省 false（backfill 补默认）→ 结构化
+ *   拒绝启动（能力未配置语义，对齐 bi a2a host 的 [a2a-disabled]）；
+ * - listen = "ip:port"（缺省 127.0.0.1:0）→ 缺省监听地址；CLI 旗标 --host/--port
+ *   优先级更高（旗标 > config > 内建缺省）；
+ * - token_env = 令牌环境变量名（缺省空 = 用内建 BI_VIS_AUTH_TOKEN）→ 非回环绑定的
+ *   令牌门读哪个 env。
+ */
+export const visSchema = sObj({
+  /** true = 允许启动 vis 服务；缺省 false = 拒绝启动（设 enabled=true 后可用）。 */
+  enabled: sBool(false),
+  /** 缺省监听地址 "ip:port"（CLI --host/--port 优先）。 */
+  listen: sStr("127.0.0.1:0"),
+  /** 令牌环境变量名；空 = 用内建 BI_VIS_AUTH_TOKEN（保持既有兼容）。 */
+  token_env: sStr(""),
+});
+export type VisSection = InferSchema<typeof visSchema>;
+
 export const subagentSchema = sObj({
   /** true = 注入 SubagentRunner 并经装配面注册 spawn_subagent 模型工具；缺省 false = 不注册（既有工具面零变动）。 */
   enabled: sBool(false),
@@ -883,7 +906,7 @@ const rootSectionsSchema = sObj(ROOT_SECTION_SCHEMAS);
  * BI 根配置 Schema（17 个强类型分区 + 挂载式分区）。
  *
  * 与纯 sObj 根的唯一差异：挂载式分区（[verify]/[subagent]/[ptc]/[cron]/
- * [context]/[memory]/[session]）在**校验期**从原始输入摘出单独校验，
+ * [context]/[memory]/[session]/[vis]）在**校验期**从原始输入摘出单独校验，
  * 不进入默认值形状、也不由 backfill 注入——因此
  * DEFAULT_BI_CONFIG / createDefaultConfig() 恒为 17 个根键（既有钉死断言
  * 不红），配置层未声明挂载分区时合并结果同样不含该键（缺省路径
@@ -899,8 +922,9 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     const contextRaw = isPlainObject(raw) ? raw["context"] : undefined;
     const memoryRaw = isPlainObject(raw) ? raw["memory"] : undefined;
     const sessionRaw = isPlainObject(raw) ? raw["session"] : undefined;
+    const visRaw = isPlainObject(raw) ? raw["vis"] : undefined;
     const withoutMounted = isPlainObject(raw)
-      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron" && key !== "context" && key !== "memory" && key !== "session"))
+      ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "verify" && key !== "subagent" && key !== "ptc" && key !== "cron" && key !== "context" && key !== "memory" && key !== "session" && key !== "vis"))
       : raw;
     const sections = rootSectionsSchema.validateLayer(withoutMounted, path, issues);
     const verifyLayer = verifySchema.validateLayer(verifyRaw, joinPath(path, "verify"), issues);
@@ -910,6 +934,7 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     const contextLayer = contextSchema.validateLayer(contextRaw, joinPath(path, "context"), issues);
     const memoryLayer = memorySchema.validateLayer(memoryRaw, joinPath(path, "memory"), issues);
     const sessionLayer = sessionSchema.validateLayer(sessionRaw, joinPath(path, "session"), issues);
+    const visLayer = visSchema.validateLayer(visRaw, joinPath(path, "vis"), issues);
     if (
       sections === undefined &&
       verifyLayer === undefined &&
@@ -918,7 +943,8 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
       cronLayer === undefined &&
       contextLayer === undefined &&
       memoryLayer === undefined &&
-      sessionLayer === undefined
+      sessionLayer === undefined &&
+      visLayer === undefined
     )
       return undefined;
     return {
@@ -930,6 +956,7 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
       ...(contextLayer !== undefined ? { context: contextLayer } : {}),
       ...(memoryLayer !== undefined ? { memory: memoryLayer } : {}),
       ...(sessionLayer !== undefined ? { session: sessionLayer } : {}),
+      ...(visLayer !== undefined ? { vis: visLayer } : {}),
     };
   },
   () => rootSectionsSchema.defaultValue(),
@@ -956,6 +983,9 @@ export const BI_CONFIG_SCHEMA: Schema<BiConfig> = makeSchema<BiConfig>(
     if (isPlainObject(value) && isPlainObject(value["session"])) {
       sessionSchema.backfill?.(value["session"]);
     }
+    if (isPlainObject(value) && isPlainObject(value["vis"])) {
+      visSchema.backfill?.(value["vis"]);
+    }
   },
 );
 
@@ -966,12 +996,12 @@ type RootBiConfig = {
 
 /**
  * BI 配置根类型（17 个强类型分区 + 可选挂载分区）。
- * 挂载分区（verify/subagent/ptc/cron/context/memory/session）为可选：仅当配置层
+ * 挂载分区（verify/subagent/ptc/cron/context/memory/session/vis）为可选：仅当配置层
  * 显式声明时才物化（挂载式拓扑，见 BI_CONFIG_SCHEMA 注释）；未声明时恒 undefined，
  * 消费方 Optional chaining。
  * 可变性与其余 17 分区一致（装载/测试面按分区赋值）。
  */
-export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection; context?: ContextSection; memory?: MemorySection; session?: SessionSection };
+export type BiConfig = RootBiConfig & { verify?: VerifySection; subagent?: SubagentSection; ptc?: PtcSection; cron?: CronSection; context?: ContextSection; memory?: MemorySection; session?: SessionSection; vis?: VisSection };
 
 /** BiConfig 的顶层分区名联合（供 TUI /config 面板导航使用）。 */
 export type BiConfigSectionName = keyof BiConfig;

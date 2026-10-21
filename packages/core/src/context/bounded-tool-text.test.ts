@@ -194,16 +194,36 @@ describe("BI-08 行级预算（头 200 + 尾 200 + 标记行）", () => {
 
   test("200 条超长行（每行 1000 码点）：字符兜底防撑爆，结果 ≤ 上限", () => {
     // total = 200199；标记上界 = formatMarker(200199, 200) = 60；tailCount = 0
-    // （200 行全归头侧）→ available = 63939，头预算 31969：31 整行（31030）
-    // + 第 32 行前 938 码点。omitted = 200199 − 31969 = 168230，M = 168。
+    // （200 行全归头侧）→ available = 63939；F-EV-05：尾侧为空时尾侧预算整段并入
+    // 头侧（头预算 = 63939）：63 整行（63062）+ 第 64 行前 876 码点。
+    // omitted = 200199 − 63939 = 136260，M = 200 − 64 = 136。
     const lines = Array.from({ length: 200 }, (_, i) => String(i).padStart(3, "0") + "z".repeat(997));
     const output = lines.join("\n");
     const r = expectBounded(output);
     expect(cpLen(r.text)).toBeLessThanOrEqual(64_000);
-    expect(r.keptHeadLines).toBe(32);
+    expect(r.keptHeadLines).toBe(64);
     expect(r.keptTailLines).toBe(0);
     expect(r.text.startsWith(lines[0] as string)).toBe(true);
-    expect(r.text.endsWith("031" + "z".repeat(935) + "\n[... output truncated: 168230 chars / 168 lines omitted ...]")).toBe(true);
+    expect(r.text.endsWith("063" + "z".repeat(873) + "\n[... output truncated: 136260 chars / 136 lines omitted ...]")).toBe(true);
+  });
+
+  test("F-EV-05：单行超长文本（200KB）尾侧为空 → 尾侧预算并入头侧，保足 maxChars", () => {
+    // 200KB 单行（204800 码点 / 1 行）→ 行级切分后 tailCount = 0（尾侧为空）。
+    // 标记上界 = formatMarker(204800, 1) = 58；available = 65536 − 58 − 1 = 65477。
+    // 修复前：头侧只拿对半（32738）→ 仅留约 32K 码点（尾侧预算整段浪费）；
+    // 修复后：头侧拿满 65477 → 文本 65477 + 1 + 58 = 65536 码点（= maxChars）。
+    const output = "A".repeat(200 * 1024);
+    const r = expectBounded(output, { maxChars: 65_536 });
+    expect(r.originalChars).toBe(204_800);
+    expect(r.originalLines).toBe(1);
+    expect(r.keptHeadLines).toBe(1);
+    expect(r.keptTailLines).toBe(0);
+    expect(cpLen(r.text)).toBeGreaterThanOrEqual(65_000);
+    expect(cpLen(r.text)).toBeLessThanOrEqual(65_536);
+    expect(cpLen(r.text)).toBe(65_536);
+    expect(r.omittedChars).toBe(204_800 - 65_477);
+    expect(r.text.startsWith("A".repeat(65_477))).toBe(true);
+    expect(r.text.endsWith("[... output truncated: 139323 chars / 0 lines omitted ...]")).toBe(true);
   });
 
   test("标记行计入预算：截断结果总码点数恒 ≤ maxChars（含极小预算）", () => {

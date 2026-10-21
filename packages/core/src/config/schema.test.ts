@@ -8,6 +8,7 @@ import {
   sessionSchema,
   setDottedPath,
   validateConfigLayer,
+  visSchema,
   type BiConfig,
   type BiConfigLayer,
   type ConfigIssue,
@@ -428,6 +429,58 @@ describe("schema: F-EV-01 [session] 挂载分区（headless 回合上限）", ()
     const unknown = load({ session: { max_round: 24 } });
     expect(unknown.config.session).toBeUndefined();
     expect(unknown.issues.some((i) => i.path === "session.max_round")).toBe(true);
+  });
+});
+
+describe("schema: F-EV-04 [vis] 挂载分区（vis 服务配置面）", () => {
+  /** 装载路径（对齐 ConfigService.compose）：校验 → 合并到默认底 → backfill 回填叶子默认。 */
+  function load(raw: unknown): { config: BiConfig; issues: ConfigIssue[] } {
+    const { layer, issues } = validate(raw);
+    const base = createDefaultConfig();
+    deepMergeLayer(base, layer);
+    BI_CONFIG_SCHEMA.backfill?.(base);
+    return { config: base, issues };
+  }
+
+  test("缺省不物化：不声明 [vis] → config.vis 为 undefined（缺省路径零行为差）", () => {
+    const { config, issues } = load({});
+    expect(issues).toEqual([]);
+    expect(config.vis).toBeUndefined();
+    // 挂载拓扑：不进 17 根键（既有钉死断言不红）
+    expect("vis" in DEFAULT_BI_CONFIG).toBe(false);
+    expect(Object.keys(DEFAULT_BI_CONFIG)).toHaveLength(17);
+    // 分区 schema 缺省值：enabled=false / listen=127.0.0.1:0 / token_env 空
+    const defaults = visSchema.defaultValue();
+    expect(defaults.enabled).toBe(false);
+    expect(defaults.listen).toBe("127.0.0.1:0");
+    expect(defaults.token_env).toBe("");
+  });
+
+  test("声明生效：三键原样装载", () => {
+    const { config, issues } = load({
+      vis: { enabled: true, listen: "0.0.0.0:8080", token_env: "MY_VIS_TOKEN" },
+    });
+    expect(issues).toEqual([]);
+    expect(config.vis?.enabled).toBe(true);
+    expect(config.vis?.listen).toBe("0.0.0.0:8080");
+    expect(config.vis?.token_env).toBe("MY_VIS_TOKEN");
+  });
+
+  test("声明后缺省叶子由 backfill 补全（enabled=false 拒绝启动语义可判）", () => {
+    const { config, issues } = load({ vis: { listen: "127.0.0.1:9000" } });
+    expect(issues).toEqual([]);
+    expect(config.vis?.enabled).toBe(false);
+    expect(config.vis?.listen).toBe("127.0.0.1:9000");
+    expect(config.vis?.token_env).toBe("");
+  });
+
+  test("未知子键丢弃并诊断；类型不符 → 整层不物化（不冒充合法）", () => {
+    const bad = load({ vis: { enabled: "yes" } });
+    expect(bad.config.vis).toBeUndefined();
+    expect(bad.issues.some((i) => i.path === "vis.enabled")).toBe(true);
+    const unknown = load({ vis: { port: 8080 } });
+    expect(unknown.config.vis).toBeUndefined();
+    expect(unknown.issues.some((i) => i.path === "vis.port")).toBe(true);
   });
 });
 

@@ -205,6 +205,78 @@ describe("PROD-2 config · help 面", () => {
   });
 });
 
+describe("PROD-4 config · [vis] 挂载分区键面（F-EV-04）", () => {
+  test("get 缺省态：vis 三键读分区 schema 缺省（不物化也能读）", async () => {
+    const home = await tmpHome();
+    const cases: Array<[string, string]> = [
+      ["vis.enabled", "false"],
+      ["vis.listen", "127.0.0.1:0"],
+      ["vis.token_env", ""],
+    ];
+    for (const [key, expected] of cases) {
+      const { io, outs } = collect();
+      expect(await runBi(["config", "get", key], { ...io, deps: { homeDir: home } })).toBe(0);
+      expect(outs.join("\n"), `缺省态 ${key}`).toContain(expected);
+    }
+  });
+
+  test("list：含 vis.* 挂载键", async () => {
+    const home = await tmpHome();
+    const { io, outs } = collect();
+    expect(await runBi(["config", "list"], { ...io, deps: { homeDir: home } })).toBe(0);
+    const text = outs.join("\n");
+    for (const key of ["vis.enabled", "vis.listen", "vis.token_env"]) {
+      expect(text, `list 含 ${key}`).toContain(`${key} =`);
+    }
+  });
+
+  test("set/get 往返：vis.enabled(bool) / vis.listen(str) / vis.token_env(str)", async () => {
+    const home = await tmpHome();
+
+    const s1 = collect();
+    expect(await runBi(["config", "set", "vis.enabled", "true"], { ...s1.io, deps: { homeDir: home } })).toBe(0);
+    expect(s1.outs.join("\n")).toContain("已写入 vis.enabled = true");
+
+    const s2 = collect();
+    expect(await runBi(["config", "set", "vis.listen", "0.0.0.0:8080"], { ...s2.io, deps: { homeDir: home } })).toBe(0);
+    expect(s2.outs.join("\n")).toContain('已写入 vis.listen = 0.0.0.0:8080');
+
+    const s3 = collect();
+    expect(await runBi(["config", "set", "vis.token_env", "MY_VIS_TOKEN"], { ...s3.io, deps: { homeDir: home } })).toBe(0);
+    expect(s3.outs.join("\n")).toContain("已写入 vis.token_env = MY_VIS_TOKEN");
+
+    const g1 = collect();
+    expect(await runBi(["config", "get", "vis.enabled"], { ...g1.io, deps: { homeDir: home } })).toBe(0);
+    expect(g1.outs.join("\n")).toContain("true");
+    const g2 = collect();
+    expect(await runBi(["config", "get", "vis.listen"], { ...g2.io, deps: { homeDir: home } })).toBe(0);
+    expect(g2.outs.join("\n")).toContain("0.0.0.0:8080");
+    const g3 = collect();
+    expect(await runBi(["config", "get", "vis.token_env"], { ...g3.io, deps: { homeDir: home } })).toBe(0);
+    expect(g3.outs.join("\n")).toContain("MY_VIS_TOKEN");
+  });
+
+  test("写回落盘：config.toml 含 [vis] 表与设置项", async () => {
+    const home = await tmpHome();
+    const io = collect();
+    await runBi(["config", "set", "vis.enabled", "true"], { ...io.io, deps: { homeDir: home } });
+    const cfg = await import("node:fs/promises").then((m) => m.readFile(join(home, ".bi", "config.toml"), "utf8"));
+    expect(cfg).toContain("[vis]");
+    expect(cfg).toContain("enabled = true");
+  });
+
+  test("非法值：vis.enabled(非布尔) → exit 2；未知子键 → exit 2", async () => {
+    const home = await tmpHome();
+    const b = collect();
+    expect(await runBi(["config", "set", "vis.enabled", "yes"], { ...b.io, deps: { homeDir: home } })).toBe(2);
+    expect(b.errs.join("\n")).toContain("非法布尔值");
+
+    const u = collect();
+    expect(await runBi(["config", "get", "vis.nope"], { ...u.io, deps: { homeDir: home } })).toBe(2);
+    expect(u.errs.join("\n")).toContain("未知配置键");
+  });
+});
+
 describe("PROD-3 config · 六挂载分区键面（verify/subagent/ptc/cron/context/memory）", () => {
   // —— 缺省态 get：分区缺省不在 DEFAULT_BI_CONFIG，须从分区 schema 缺省解析 ——
   test("get 缺省态：六分区标量键读分区 schema 缺省", async () => {

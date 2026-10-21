@@ -28,10 +28,17 @@
  *     认「令牌权威端口」，由宿主（bin/bi.ts）把 tui 侧产物注入进来。
  *
  * 测试零外呼：VisServer 的 serve 工厂可注入，handler 纯函数可直测路由矩阵。
+ *
+ * F-EV-04 接线（config [vis] 挂载式分区，缺省不物化）：
+ *   - listen = "ip:port" → 缺省监听地址（CLI --host/--port 旗标优先于 config）；
+ *   - token_env → 令牌环境变量名（缺省空 = 用内建 BI_VIS_AUTH_TOKEN，保持既有兼容）；
+ *   - enabled=false → 结构化拒绝启动（能力未配置，exit 4，对齐 bi a2a host 语义）；
+ *     未声明 [vis] 时不读 enabled（缺省路径零行为差：bi vis 照常可用）。
  */
 
 import { SessionManager, SessionNotFoundError } from "../../session/manager";
 import type { SessionEntry } from "../../session/types";
+import type { VisSection } from "../../config/schema";
 import type { TokenAuthority } from "../../web/vis-handler";
 
 /** 会话 id 白名单（与 manager.SESSION_ID_PATTERN 同口径，防路径穿越）。 */
@@ -70,6 +77,22 @@ export function isLoopback(host: string): boolean {
 /** 校验 sessionId 是否在白名单内（防路径穿越）。 */
 export function isSafeSessionId(sessionId: string): boolean {
   return SESSION_ID_PATTERN.test(sessionId);
+}
+
+/**
+ * 解析 config [vis] listen（"ip:port"）→ { hostname, port }。
+ * 非法 → undefined（调用方结构化报错，不静默丢弃配置错误）。
+ */
+export function parseVisListen(listen: string): { hostname: string; port: number } | undefined {
+  const idx = listen.lastIndexOf(":");
+  if (idx <= 0 || idx === listen.length - 1) return undefined;
+  const hostname = listen.slice(0, idx).trim();
+  const portRaw = listen.slice(idx + 1).trim();
+  if (hostname.length === 0) return undefined;
+  if (!/^\d+$/.test(portRaw)) return undefined;
+  const port = Number.parseInt(portRaw, 10);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) return undefined;
+  return { hostname, port };
 }
 
 const JSON_HEADERS: Record<string, string> = {
@@ -429,12 +452,20 @@ export interface HandleVisOptions {
    * tui 侧，由宿主注入；本端口缺省时即便 env 开启也回退静态令牌路径（如实告警）。
    */
   tokenAuthority?: VisTokenAuthorityFactory;
+  /**
+   * F-EV-04：config [vis] 分区（未声明 = undefined → 缺省路径零行为差）。
+   * 声明后 enabled/listen/token_env 三键生效（CLI 旗标优先于 listen）。
+   */
+  visSection?: VisSection;
 }
 
 /**
  * `bi vis [sessionId] [--port N] [--host H]` 处理器：
  *   - 解析旗标、装配 manager、校验 host/token 策略、启服、打印 URL、SIGINT 退出。
- *   - 非回环绑定且缺 BI_VIS_AUTH_TOKEN → 结构化拒绝启动（exit 1，不假冒）。
+ *   - 非回环绑定且缺令牌环境变量（config [vis] token_env，缺省 BI_VIS_AUTH_TOKEN）
+ *     → 结构化拒绝启动（exit 1，不假冒）。
+ *   - F-EV-04：config [vis] 声明后 enabled=false → 结构化拒绝启动（exit 4）；
+ *     listen 提供缺省监听地址（CLI 旗标优先）。
  *   - BI-20.5 接线：env BI_VIS_TOKEN_ROTATE=1 且宿主注入轮转权威 → 令牌校验走
  *     轮转（当前令牌恒真、上一代令牌宽限期内双活）；否则走现状静态令牌路径。
  */
@@ -445,11 +476,34 @@ export async function handleVis(
   options: HandleVisOptions = {},
 ): Promise<number> {
   const args = parseVisArgs(rest);
-  const host = (typeof args.flags.get("--host") === "string"
-    ? (args.flags.get("--host") as string)
-    : (options.defaultHost ?? DEFAULT_HOST));
-  const portRaw = args.flags.get("--port");
-  const port = portRaw !== undefined ? Number.parseInt(portRaw as string, 10) : DEFAULT_PORT;
+  // F-EV-04：config [vis] 分区（未声明 = undefined → 缺省路径零行为差）。
+  const visSection = options.visSection;
+  // 启停闸：未声明 [vis] 时不读 enabled（bi vis 照常可用）；声明后 enabled 必须为
+  // true 才启动（能力未配置语义，对齐 bi a2a host 的 [a2a-disabled]，exit 4）。
+  if (visSection !== undefined && visSection.enabled !== true) {
+    io.err("bi vis: [vis-disabled] config [vis] enabled=false（能力未配置；设 enabled=true 后可用）");
+    return 4;
+  }
+  // 缺省监听：CLI 旗标 > config [vis] listen > 内建缺省（127.0.0.1:0）。
+  const configListen = visSection !== undefined ? parseVisListen(visSection.listen) : undefined;
+  if (visSection !== undefined && configListen === undefined) {
+    io.err(`bi vis: config [vis] listen 非法: ${visSection.listen}（需 "ip:port"）`);
+    io.err("运行 bi vis --help 查看用法");
+    return 2;
+  }
+  const cliHost = args.flags.get("--host");
+  const host =
+    typeof cliHost === "string"
+      ? cliHost
+      : (configListen?.hostname ?? options.defaultHost ?? DEFAULT_HOST);
+  const cliPort = args.flags.get("--port");
+  const portRaw =
+    typeof cliPort === "string"
+      ? cliPort
+      : configListen !== undefined
+        ? String(configListen.port)
+        : undefined;
+  const port = portRaw !== undefined ? Number.parseInt(portRaw, 10) : DEFAULT_PORT;
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     io.err(`bi vis: --port 非法: ${String(portRaw)}（需 0-65535）`);
     io.err("运行 bi vis --help 查看用法");
@@ -475,14 +529,17 @@ export async function handleVis(
     }
   }
   let token = "";
+  // 令牌环境变量名：config [vis] token_env（缺省空 = 用内建 BI_VIS_AUTH_TOKEN）。
+  const tokenEnv =
+    visSection !== undefined && visSection.token_env.length > 0 ? visSection.token_env : AUTH_TOKEN_ENV;
   if (authority !== undefined) {
     // 轮转权威自带令牌（当前令牌即访问凭据；轮转后由 onRotate 回调重印链接）。
     token = authority.current();
   } else if (nonLoopback) {
-    token = getEnv(AUTH_TOKEN_ENV) ?? "";
+    token = getEnv(tokenEnv) ?? "";
     if (token.length === 0) {
       io.err(
-        `bi vis: 非回环绑定 ${host} 需要环境变量 ${AUTH_TOKEN_ENV}（缺失则拒绝启动，避免裸奔暴露）`,
+        `bi vis: 非回环绑定 ${host} 需要环境变量 ${tokenEnv}（缺失则拒绝启动，避免裸奔暴露）`,
       );
       return 1;
     }
@@ -509,7 +566,7 @@ export async function handleVis(
     io.out(`bi vis: 访问链接（含令牌）→ ${info.url}?t=${encodeURIComponent(authority.current())}`);
     io.out(`bi vis: 已启用令牌轮转（${TOKEN_ROTATE_ENV}）——令牌定期轮转，旧令牌在宽限期内仍有效`);
   } else if (nonLoopback) {
-    io.out(`bi vis: 已启用令牌校验（${AUTH_TOKEN_ENV}）；访问请带 ?t= 或 Authorization: Bearer`);
+    io.out(`bi vis: 已启用令牌校验（${tokenEnv}）；访问请带 ?t= 或 Authorization: Bearer`);
   }
   const deepLink = args.positionals[0];
   if (deepLink !== undefined && isSafeSessionId(deepLink)) {

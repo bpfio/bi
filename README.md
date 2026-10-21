@@ -89,7 +89,7 @@ model = "my-model"
 bun bin/bi.ts doctor
 ```
 
-也可以按键查询生效值（`get` / `set` / `list`，共 70 键，见下文「配置参考」）：
+也可以按键查询生效值（`get` / `set` / `list`，共 73 键，见下文「配置参考」）：
 
 ```bash
 bun bin/bi.ts config get models.default
@@ -139,11 +139,11 @@ bun bin/bi.ts
 
 统一退出码语义：`0` 成功 / `1` 运行期失败 / `2` 用法错误 / `3` 装配凭据类（无头与
 REPL 同一面）/ `4` 已识别但能力未配置（如 `upgrade` 无 manifest 源、`a2a` 的
-`[a2a] enabled=false`）。
+`[a2a] enabled=false`、`vis` 的 `[vis] enabled=false`）。
 
 ## 配置参考
 
-键面以 `bun bin/bi.ts config list` 实测为准（共 70 键 = 47 根键 + 23 挂载分区键，
+键面以 `bun bin/bi.ts config list` 实测为准（共 73 键 = 47 根键 + 26 挂载分区键，
 按分组；复杂表/实体数组如
 `providers.entries` / `models.entries` / `permission.rules` / `hooks.entries` 不进
 get/set 键面，直接写 TOML）：
@@ -167,12 +167,13 @@ get/set 键面，直接写 TOML）：
 | `watch` | `watch.debounce_ms`、`watch.enabled`、`watch.ignore` |
 | `workspace` | `workspace.additional_dir`、`workspace.respect_gitignore` |
 
-挂载分区的标量子键已进 get/set 键面（共 23 个）：`verify.on_completion` / `verify.checks` / `verify.deliverables` / `verify.objective`；
+挂载分区的标量子键已进 get/set 键面（共 26 个）：`verify.on_completion` / `verify.checks` / `verify.deliverables` / `verify.objective`；
 `subagent.enabled` / `subagent.max_iterations` / `subagent.timeout_ms` / `subagent.default_profile` / `subagent.btw_enabled`；
 `ptc.enabled` / `ptc.timeout_ms` / `ptc.max_tool_calls`；`cron.enabled`；
 `context.time_context` / `context.date_change_sensor` / `context.tool_result_prune` / `context.max_history_entries` / `context.timezone` / `context.image_offload` / `context.auto_compactor`；
 `memory.dream_enabled` / `memory.inject_enabled`；
-`session.max_rounds`。
+`session.max_rounds`；
+`vis.enabled` / `vis.listen` / `vis.token_env`。
 
 ### 挂载式分区（config-gated，缺省关）
 
@@ -189,6 +190,7 @@ get/set 键面，直接写 TOML）：
 | `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
 | `[session]` | 无头会话回合上限：`max_rounds`（缺省 0 = 用内建缺省 8；调研型任务建议 16-32；CLI `--max-rounds` 优先级更高） |
+| `[vis]` | 本地会话可视化（`bi vis`）配置面：`enabled`（声明后须 `true` 才启动，否则结构化拒绝 exit 4；未声明 `[vis]` 时不受影响）/ `listen`（缺省监听 `"ip:port"`，CLI `--host`/`--port` 优先）/ `token_env`（令牌环境变量名，缺省空 = 用内建 `BI_VIS_AUTH_TOKEN`） |
 | `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；坏条目结构化警告不阻塞；SSE 型暂未支持） |
 
 （`[mcp]` 一行按便利列在上表内；实为根分区，缺省恒物化为 `servers = {}`，不属挂载拓扑。）
@@ -205,6 +207,19 @@ get/set 键面，直接写 TOML）：
 
 共享密钥走环境变量 `BI_A2A_TOKEN`（不进 TOML 键面）：回环绑定缺省用进程内一次性随机
 密钥；非回环绑定（含 `0.0.0.0`/`::` 通配）缺该变量即拒绝启动，不裸奔暴露。
+`BI_A2A_TOKEN` 非空时，HTTP 探活面**所有路由**都要带令牌（`?t=<token>` 或
+`Authorization: Bearer <token>`），否则回 401 `{"error":"unauthorized"}`；令牌为空
+（回环便利态）时维持免校验探活。
+
+### `[vis]` 分区（`bi vis` 配置面）
+
+`[vis]` 是挂载式分区（未声明不物化，`bi vis` 缺省行为零变化），三个键驱动 `bi vis`：
+
+| 键 | 缺省 | 说明 |
+| --- | --- | --- |
+| `vis.enabled` | `false` | 声明 `[vis]` 后的启停闸；`false` → 结构化 exit 4（能力未配置）；未声明 `[vis]` 时不读该键（`bi vis` 照常可用） |
+| `vis.listen` | `127.0.0.1:0` | 缺省监听 `ip:port`（`port 0` = 内核随机）；CLI `--host` / `--port` 旗标优先于 config |
+| `vis.token_env` | `""` | 令牌环境变量名（非回环绑定的令牌门读哪个 env）；空 = 用内建 `BI_VIS_AUTH_TOKEN`（既有兼容） |
 
 ### 接线面一览
 
@@ -214,7 +229,7 @@ get/set 键面，直接写 TOML）：
 | --- | --- | --- |
 | worktree | `bi worktree create\|list\|merge\|discard` | Git worktree 并发沙箱引擎；工作树落 `<repo>/.bi/worktrees`；`merge` 冲突如实报 `conflict: true` 并回滚现场交人工审查（exit 1），`discard` 幂等 |
 | workflow·DAG | `bi dag run <spec.json> [--workflow-id <id>]` | `WorkflowSpec`（`steps[].id/run/depends_on/params`）分层并行调度；已注册 `shell` 步骤 handler（`params.command` 经 `sh -c` 执行，单步 30s 超时） |
-| a2a | `bi a2a host [--listen <ip:port>]` | 由 config `[a2a]` 装配 host 并前台运行（`enabled` 门控，false → exit 4）；回环绑定缺省一次性随机密钥，**非回环绑定强制 `BI_A2A_TOKEN`**（缺失即拒绝启动） |
+| a2a | `bi a2a host [--listen <ip:port>]` | 由 config `[a2a]` 装配 host 并前台运行（`enabled` 门控，false → exit 4）；回环绑定缺省一次性随机密钥，**非回环绑定强制 `BI_A2A_TOKEN`**（缺失即拒绝启动）；令牌非空时 HTTP 探活面全路由校验令牌（否则 401） |
 | plugins | `bi plugins [list\|validate] [--dir <目录>]` | 双协议插件声明加载器（只解析清单、零代码执行）；缺省扫 `~/.bi/plugins` 与 `./.bi/plugins`，`--dir` 覆盖扫描根；加载失败逐条警告不阻塞 |
 | CodeMode | 模型工具 `run_js` | `node:vm` 纯计算沙箱（禁网络/禁 fs/禁工具注入），由 config `[tools] code_mode` 显式 `true` 才挂载，缺省工具面零变动 |
 

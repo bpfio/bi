@@ -154,7 +154,9 @@ describe("W1-D3 headless: outputLimitBytes（BI-08.1）", () => {
 			} as HeadlessOptions);
 
 			const value = result.toolResults[0]!.value as string;
-			expect(value).toBe("x".repeat(72) + "\n" + "[... output truncated: 428 chars / 0 lines omitted ...]");
+			// F-EV-05：单行（尾侧为空）时尾侧字符预算整段并入头侧——头侧拿满
+			// available（200 − 标记行 55 − 分隔符 1 = 144），不再是半预算 72。
+			expect(value).toBe("x".repeat(144) + "\n" + "[... output truncated: 356 chars / 0 lines omitted ...]");
 			expect(result.verification).toBeUndefined();
 		} finally {
 			await cleanup();

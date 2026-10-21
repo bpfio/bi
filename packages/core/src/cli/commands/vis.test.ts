@@ -18,6 +18,7 @@ import {
   isSafeSessionId,
   pairTools,
   parseVisArgs,
+  parseVisListen,
   renderIndexHtml,
   SubUsageError,
   VisHandler,
@@ -291,6 +292,159 @@ describe("handleVis 主机/令牌策略", () => {
     expect(r.positionals).toEqual(["sid"]);
     expect(r.flags.get("--port")).toBe("9000");
     expect(r.flags.get("--host")).toBe("localhost");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-EV-04：config [vis] 挂载分区接线
+// ---------------------------------------------------------------------------
+
+describe("F-EV-04 config [vis] 接线", () => {
+  function fakeIo() {
+    const outs: string[] = [];
+    const errs: string[] = [];
+    return { io: { out: (l: string) => outs.push(l), err: (l: string) => errs.push(l) }, outs, errs };
+  }
+
+  /** 回显真实解析端口的 serve 替身（不真实监听）。 */
+  function echoServe(): VisServerDeps["serve"] {
+    return (opts) => ({ port: opts.port, stop: () => {} });
+  }
+
+  test("缺省不物化：未声明 [vis] → 照常启动（缺省路径零行为差）", async () => {
+    const { io, outs } = fakeIo();
+    const code = await handleVis([], io, {}, { serve: fakeServe(5173), attachSignals: false });
+    expect(code).toBe(0);
+    expect(outs.join("\n")).toContain("http://127.0.0.1:5173/");
+  });
+
+  test("config listen 生效：缺省监听地址取 [vis] listen", async () => {
+    const { io, outs } = fakeIo();
+    const code = await handleVis(
+      [],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        visSection: { enabled: true, listen: "127.0.0.1:7788", token_env: "" },
+      },
+    );
+    expect(code).toBe(0);
+    expect(outs.join("\n")).toContain("http://127.0.0.1:7788/");
+  });
+
+  test("CLI 旗标优先于 config listen：--host / --port 各自覆盖", async () => {
+    const { io, outs } = fakeIo();
+    const code = await handleVis(
+      ["--host", "0.0.0.0", "--port", "5173"],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        getEnv: () => "tok",
+        visSection: { enabled: true, listen: "127.0.0.1:7788", token_env: "" },
+      },
+    );
+    expect(code).toBe(0);
+    expect(outs.join("\n")).toContain("http://0.0.0.0:5173/");
+  });
+
+  test("token_env 生效：令牌从 config 指定的 env 名读（缺省仍是 BI_VIS_AUTH_TOKEN）", async () => {
+    const asked: string[] = [];
+    const { io, outs } = fakeIo();
+    const code = await handleVis(
+      ["--host", "0.0.0.0"],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        getEnv: (name: string) => {
+          asked.push(name);
+          return name === "MY_VIS_TOKEN" ? "tok" : undefined;
+        },
+        visSection: { enabled: true, listen: "127.0.0.1:0", token_env: "MY_VIS_TOKEN" },
+      },
+    );
+    expect(code).toBe(0);
+    expect(asked).toContain("MY_VIS_TOKEN");
+    expect(outs.join("\n")).toContain("已启用令牌校验（MY_VIS_TOKEN）");
+  });
+
+  test("token_env 生效：自定义 env 缺令牌 → 拒绝启动 exit 1（错误信息点名该 env）", async () => {
+    const { io, errs } = fakeIo();
+    const code = await handleVis(
+      ["--host", "0.0.0.0"],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        getEnv: () => undefined,
+        visSection: { enabled: true, listen: "127.0.0.1:0", token_env: "MY_VIS_TOKEN" },
+      },
+    );
+    expect(code).toBe(1);
+    expect(errs.join("\n")).toContain("MY_VIS_TOKEN");
+  });
+
+  test("token_env 缺省（空串）→ 仍读内建 BI_VIS_AUTH_TOKEN（既有兼容）", async () => {
+    const { io, errs } = fakeIo();
+    const code = await handleVis(
+      ["--host", "0.0.0.0"],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        getEnv: () => undefined,
+        visSection: { enabled: true, listen: "127.0.0.1:0", token_env: "" },
+      },
+    );
+    expect(code).toBe(1);
+    expect(errs.join("\n")).toContain("BI_VIS_AUTH_TOKEN");
+  });
+
+  test("enabled=false → 结构化拒绝启动 exit 4（能力未配置）", async () => {
+    const { io, errs } = fakeIo();
+    const code = await handleVis(
+      [],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        visSection: { enabled: false, listen: "127.0.0.1:0", token_env: "" },
+      },
+    );
+    expect(code).toBe(4);
+    expect(errs.join("\n")).toContain("[vis-disabled]");
+  });
+
+  test("config listen 非法 → 结构化报错 exit 2（不静默丢弃配置错误）", async () => {
+    const { io, errs } = fakeIo();
+    const code = await handleVis(
+      [],
+      io,
+      {},
+      {
+        serve: echoServe(),
+        attachSignals: false,
+        visSection: { enabled: true, listen: "no-port", token_env: "" },
+      },
+    );
+    expect(code).toBe(2);
+    expect(errs.join("\n")).toContain("config [vis] listen 非法");
+  });
+
+  test("parseVisListen：合法 ip:port 与 port=0；非法 → undefined", () => {
+    expect(parseVisListen("127.0.0.1:0")).toEqual({ hostname: "127.0.0.1", port: 0 });
+    expect(parseVisListen("0.0.0.0:8080")).toEqual({ hostname: "0.0.0.0", port: 8080 });
+    expect(parseVisListen("no-colon")).toBeUndefined();
+    expect(parseVisListen("127.0.0.1:")).toBeUndefined();
+    expect(parseVisListen("127.0.0.1:70000")).toBeUndefined();
   });
 });
 

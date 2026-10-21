@@ -36,7 +36,8 @@
  *              allOk → 0，存在异常 → 1）。
  *   vis      = commands/vis.ts handleVis（BI-20.5b 本地 Web 会话可视化：
  *              Bun.serve 拉起，缺省 127.0.0.1 + 随机端口；非回环强制
- *              BI_VIS_AUTH_TOKEN；只读 API 暴露会话列表 / 消息流 / 分支树 / 工具配对）。
+ *              BI_VIS_AUTH_TOKEN；只读 API 暴露会话列表 / 消息流 / 分支树 / 工具配对；
+ *              F-EV-04：config [vis] 分区可配 enabled/listen/token_env）。
  *   query    = commands/query.ts handleQuery（F-ST-07 会话语料检索薄壳：
  *              重建索引 → 过滤表达式执行 → 命中逐行 JSON；表达式非法 exit 2）。
  *
@@ -46,6 +47,7 @@
  */
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { ConfigService } from "../../config/config-service";
 import { resolveConfigPaths } from "../../config/paths";
 import { detectStack, draftBiMd } from "../../rules/init-service";
 import { SessionManager } from "../../session/manager";
@@ -765,8 +767,17 @@ async function handleDoctor(rest: readonly string[], io: SubcommandIo, deps: Sub
 
 /** `bi vis [sessionId] [--port N] [--host H]`：本地 Web 会话可视化（缺省 127.0.0.1 + 随机端口；非回环强制 BI_VIS_AUTH_TOKEN）。 */
 async function handleVisCommand(rest: readonly string[], io: SubcommandIo, deps: SubcommandDeps): Promise<number> {
+  // F-EV-04：config [vis] 分区接线——与 handleConfig 同姿势装载全局配置
+  // （homeDir 注入；测试走临时目录，不触真实 ~/.bi）。未声明 [vis] → undefined
+  // （缺省路径零行为差：bi vis 照常可用）。
+  const service = new ConfigService({
+    ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
+    ...(deps.cwd !== undefined ? { workDir: deps.cwd } : {}),
+  });
+  const config = await service.load();
   return handleVis(rest, io, deps, {
     attachSignals: false,
+    ...(config.vis !== undefined ? { visSection: config.vis } : {}),
     // BI-20.5 接线：令牌轮转权威（宿主注入；env BI_VIS_TOKEN_ROTATE=1 时才启用）。
     ...(deps.visTokenAuthority !== undefined ? { tokenAuthority: deps.visTokenAuthority } : {}),
   });

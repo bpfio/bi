@@ -6,12 +6,14 @@ import { parseListen, startA2aHost, A2A_TOKEN_ENV } from "./a2a-host";
 
 /** 还原令牌环境（测试间隔离，防泄漏到其他用例）。 */
 const savedToken = process.env[A2A_TOKEN_ENV];
+const TEST_TOKEN_ENV = "BI_A2A_TEST_TOKEN";
 afterEach(() => {
   if (savedToken === undefined) {
     delete process.env[A2A_TOKEN_ENV];
   } else {
     process.env[A2A_TOKEN_ENV] = savedToken;
   }
+  delete process.env[TEST_TOKEN_ENV];
 });
 
 describe("parseListen", () => {
@@ -107,6 +109,81 @@ describe("startA2aHost 回环启动", () => {
       "unknown-sender",
       "bad-signature",
     ]);
+    result.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-EV-03：HTTP 面令牌门禁（令牌非空 → 全路由校验；令牌空 → 回环便利态）
+// ---------------------------------------------------------------------------
+
+describe("startA2aHost HTTP 令牌门禁（F-EV-03）", () => {
+  /** 起一个回环 host（不绑 0.0.0.0），令牌走自定义 env 名注入。 */
+  async function startWithToken(token: string | undefined) {
+    if (token === undefined) {
+      delete process.env[TEST_TOKEN_ENV];
+    } else {
+      process.env[TEST_TOKEN_ENV] = token;
+    }
+    const result = await startA2aHost(
+      { enabled: true, listen: "127.0.0.1:0", allow: [] },
+      { tokenEnv: TEST_TOKEN_ENV },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected start ok");
+    return result;
+  }
+
+  test("令牌非空 + 无令牌 → 401 {error:unauthorized}", async () => {
+    const result = await startWithToken("s3cret");
+    const res = await fetch(`http://127.0.0.1:${result.port}/`);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+    result.close();
+  });
+
+  test("令牌非空 + 错令牌 → 401（?t= 与 Authorization 两条路径都拒）", async () => {
+    const result = await startWithToken("s3cret");
+    const viaQuery = await fetch(`http://127.0.0.1:${result.port}/?t=wrong`);
+    expect(viaQuery.status).toBe(401);
+    expect(await viaQuery.json()).toEqual({ error: "unauthorized" });
+    const viaHeader = await fetch(`http://127.0.0.1:${result.port}/`, {
+      headers: { authorization: "Bearer wrong" },
+    });
+    expect(viaHeader.status).toBe(401);
+    result.close();
+  });
+
+  test("令牌非空 + Authorization: Bearer <token> → 200 健康 JSON", async () => {
+    const result = await startWithToken("s3cret");
+    const res = await fetch(`http://127.0.0.1:${result.port}/`, {
+      headers: { authorization: "Bearer s3cret" },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ service: "bi-a2a", status: "ok" });
+    result.close();
+  });
+
+  test("令牌非空 + ?t=<token> → 200 健康 JSON", async () => {
+    const result = await startWithToken("s3cret");
+    const res = await fetch(`http://127.0.0.1:${result.port}/?t=s3cret`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ service: "bi-a2a", status: "ok" });
+    result.close();
+  });
+
+  test("令牌非空时任意路径都受门禁约束（不只探活根路径）", async () => {
+    const result = await startWithToken("s3cret");
+    const res = await fetch(`http://127.0.0.1:${result.port}/api/anything`);
+    expect(res.status).toBe(401);
+    result.close();
+  });
+
+  test("令牌为空（回环便利态）→ 无令牌也 200（缺省路径零行为差）", async () => {
+    const result = await startWithToken(undefined);
+    const res = await fetch(`http://127.0.0.1:${result.port}/`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ service: "bi-a2a", status: "ok" });
     result.close();
   });
 });
