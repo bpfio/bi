@@ -855,3 +855,29 @@ T1-A 主控伪端点 CLI 级 20/20（help16 子命令/fork-export-transfer-query
 origin=**0b066ef**（bpfio/bi，树净零差，HEAD=origin/main）；本会话提交链 beea533→cb5cadf→903599d→79b91da→33ba1fb→b8b9eec→0b066ef。台账：task_query(planned/running/blocked)=**0**；F-EV-01~05 全 fixed；GHOST-A/B、COV-T1BC/COV-FIX1 全 closed；批次 BI-EVAL / BI-COVERAGE / BI-GHOSTWIRE 全 completed；手记 #283-#286。门禁 4932 pass/0 fail（274 文件）+ 三包 tsc 0；真机效用 S1-S5 全绿。
 
 **终态画像**：bi 16 子命令全接线；三节 11 键配置虚账清零（loop_control/identity/watch 全部有生产消费者，回合预算缺省 16）；幻觉率 0/7（双评审复验）；工具面/失败面/热重载全部真机实证。**备案例外（非 bi 产品缺陷）**：TOOL-1/TOOL-2/LOGBOOK-EXPORT-1 三条 open 系 bpfio/logbook 工具链基础设施缺陷（task_upsert 破坏性覆盖、devlog 幂等误伤、大导出不可达），各带操作规程规避，留 bpfio/logbook 上游处置。bi 停在完全干净、随时可继续的状态。
+
+---
+
+## 三十一、优秀 CLI agent 战役：三单调研评估 + P0 修复两波 BI-EXCEL (2026-10-21 凌晨)
+
+用户五项指令：①kimi 调研 CLI agent 开发知识入 logbook；②kimi 设计后续验证/升级方法论；③kimi 评估 bi 距「优秀」差距；④主控独立评价；⑤按差距派修。全部闭环。
+
+### 三单 kimi 串行（同端点防 429，RES-1/METH-1/GAP-1）
+
+- **RES-1 知识调研**：kimi 自己当主控拆 4 张只读子单（codebuddy hy3 双节点合规）并行回收合成 358 行报告——六主题（主循环终止语义/上下文工程两管线/工具面/会话持久化/评测/UX）+ 六实现对照（Claude Code/Codex/aider/OpenCode/Gemini/Goose·Cline）+「未核实」标注纪律（零 benchmark 编造）。主控抽样核实通过。→ research KB #32。
+- **METH-1 方法论**：377 行可执行文档——两条不变量（提交面=门禁面/零网络零密钥可回归）、验证金字塔 L0-L5、变更六档门禁矩阵（D1 config 键面三重验证最常漏）、台账卡状态机（悬空归零=唯一硬红线）、四节奏评测面、质量风险登记册 R1-R9、度量 12 指标（红线 M1 幻觉/M2 完成/M9 悬空；无基线的 7 项标「待实测」禁估值）。kimi 现读仓库 7 处事实主控逐一实锤。附发布前一页纸检查单 15 项。→ research KB #33。
+- **GAP-1 差距评估**：kimi 只读仓库 21.5 分钟（自跑 bun test 4928/0 + config list 73 键），十一维加权 **2.57/5**（标杆 4.3），P0×8/P1×12/P2×10。**主控对 8 条 P0 逐条对树核实 7/7 直接证实零幻觉**（cron 零实例化/[tui] 零消费/lsp 恒败/MCP 被 [ptc] 吞//diff 恒拒/TUI 恒 createSession/resume 不重放 tool 轮）。核心判词：「仓库里装着 Claude Code 60% 的零件，只装配出一半产品；headless 离优秀一档，REPL 是鸿沟，安全层有决策无隔离」。→ research KB #34。
+
+### P0 修复两波（FIX-A/FIX-B，kimi 写模式，验收四步全过）
+
+**FIX-A（23205c0，21 文 +1279）**：①[cron] 虚账接线——CronService 实例化注入（调度核经 CronCorePort 委托 workflow BI-07.14），三件套登记/巡检/注销真实生效；**到点自动触发未接如实陈述**（不造新虚账）；②MCP 解耦 [ptc]——servers 非空即挂载，REPL 同步挂载+closeAll；③lsp_navigate 诚实化——无 lspClient 不挂载+结构化警告，删恒败死分支；④REPL `--resume <id>`——reopenSession+进程级接管登记（会话 id 连续/首条挂尾）+resume-context 重放单一事实源，坏 id exit 2。真机冒烟：longcat 真模型调 cron_list 成功/无 [ptc] 下 MCP 真装配/lsp 告警/resume exit 2。+32 测试。
+
+**FIX-B（7d6200e，15 文 +664）**：⑤/diff 接真交互——DiffReviewOverlay+awaiting-confirm 态（按键派浮层栈顶），y=批准/n·Esc=拒绝看真实 diff；⑥[tui].mouse_mode 真接线，theme/notifications/show_thoughts 三键如实标「预留未接线」；⑦README 四处漂移对齐（117→109 卡实测/CI 扩**七包 tsc** 让现实配得上宣传/双 tsconfig→根 tsconfig 实况/补 npm i -g 安装路径）；⑧LSP 告警 warnOnce 去重（反向验证）；附修 bin/bi.ts 缺 PermissionRule type import（kimi 披露的既有隐患：bin 层不在任何 tsconfig 覆盖）。+19 测试。
+
+**门禁终态**：4979 pass/0 fail（283 文件）+ 根 typecheck 零错 + 七包 tsc 全 OK + pty 门控绿。两波合计 +51 用例。
+
+### 遗留与 backlog
+
+- **EXCEL-BACKLOG 卡**（planned）：GAP-1 的 M/L 档不入本波——隔离层接线（里程碑①最值）/TUI 工具面补齐/resume 重放 tool 轮/上下文缺省开+TUI 管线/eval 语料回归门/MCP resources+Streamable HTTP/插件执行面/发布自动化。cron 到点自动触发与 /diff 之外的 diff 预览亦在其中。
+- **新识风险**：bin 层类型覆盖盲区（bin/ 不进任何 tsconfig）；e2e-drill-m-crash 并发风暴用例整机负载下偶发（kimi 实证与本波改动无关，manager.ts append 竞态既有）。
+- 派工档案：docs/dispatch/2026-10-20-excel-wave/（3 报告+2 工单+5 运行日志全存）。
