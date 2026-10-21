@@ -110,6 +110,39 @@ export class ArgParseError extends Error {
   }
 }
 
+/**
+ * 提取续会话目标（`--resume <sessionId>` / `--resume=<sessionId>`）。
+ *
+ * FIX-A F4：REPL 启动路径的续会话入口用（REPL 无 --prompt 等无头旗标，
+ * 故不走 parseGlobalArgs 的 unknown-flag 报错面）。
+ * 返回 { resume?, rest }——rest 为剔除 --resume 旗标与其值后的其余 token
+ * （`--resume` 缺值时旗标留在 rest，交由全局解析器报 missing-value）。
+ */
+export function parseResumeArg(argv: readonly string[]): { resume?: string; rest: string[] } {
+	const rest: string[] = [];
+	let resume: string | undefined;
+	for (let i = 0; i < argv.length; i++) {
+		const token = argv[i];
+		if (token === undefined) break;
+		if (token === "--resume") {
+			const value = argv[i + 1];
+			if (value === undefined) {
+				rest.push(token); // 缺值 → 留给全局解析器结构化报错
+				continue;
+			}
+			resume = value;
+			i += 1;
+			continue;
+		}
+		if (token.startsWith("--resume=")) {
+			resume = token.slice("--resume=".length);
+			continue;
+		}
+		rest.push(token);
+	}
+	return resume !== undefined ? { resume, rest } : { rest };
+}
+
 /** 解析全局参数矩阵；未知/缺值/非法值/重复单值均抛结构化 ArgParseError。 */
 export function parseGlobalArgs(argv: readonly string[]): ParsedArgs {
   const specs = new Map(GLOBAL_ARGS.map((spec) => [spec.flag, spec]));

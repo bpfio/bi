@@ -96,6 +96,7 @@ import { editExternally as defaultEditExternally, type EditResult } from "../edi
 import { cwd } from "node:process";
 
 import { AgentTuiSession, type TuiSessionResult, type TuiSessionState } from "./agent-tui";
+import { registerResumeTarget, clearResumeTarget } from "../../../core/src/session/manager";
 import { DEFAULT_KEYBINDINGS, actionForKey, type Keybindings } from "./keybindings";
 import { promptClickToCursor } from "./mouse-cursor";
 import { layoutPromptLine, segmentGraphemes } from "../components/cjk-width";
@@ -628,9 +629,25 @@ function stateOf(session: AgentTuiSession): TuiSessionState {
   return session.state;
 }
 
+/**
+ * REPL 初始会话（续会话，FIX-A F4）：给定则**复用既有会话**——会话 id 连续、
+ * JSONL 续写同一份会话文件（不新建会话、不覆盖历史）。
+ */
+export interface ReplInitialSession {
+  /** 被重开的会话 id（既有会话；宿主经 SessionManager.reopenSession 校验过）。 */
+  readonly sessionId: string;
+  /** 既有会话标题（start 时复用；缺省 = REPL 缺省标题）。 */
+  readonly title?: string;
+}
+
 export interface ReplOptions {
   /** 目标会话（调用方装配；未 start 时 REPL 以 title 自动初始化）。 */
   readonly session: AgentTuiSession;
+  /**
+   * 初始会话（续会话，FIX-A F4）：给定则复用该既有会话（会话 id 连续），
+   * 不给则新建会话（缺省路径逐字节等价）。
+   */
+  readonly initialSession?: ReplInitialSession;
   /** 注入按键流（AsyncIterable<ParsedKey>；真实终端侧 InputLoop→KeyStream 桥归后续卡）。 */
   readonly keys: AsyncIterable<ParsedKey>;
   /** 自动 start 的会话标题（缺省 "bi repl"；会话已 start 时忽略）。 */
@@ -682,7 +699,17 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
   const editor = new LineEditor(bindings);
   const prompt = new PromptView();
 
-  if (session.sessionId === undefined) await session.start(options.title ?? "bi repl");
+  if (session.sessionId === undefined) {
+    // FIX-A F4：续会话——先登记接管目标，再启动会话：会话内部自建的 SessionManager
+    // 在 createSession 时复用该既有会话（不新建文件），首条新条目挂到既有末条目。
+    const initial = options.initialSession;
+    if (initial !== undefined) registerResumeTarget(initial.sessionId);
+    try {
+      await session.start(initial?.title ?? options.title ?? "bi repl");
+    } finally {
+      clearResumeTarget(); // 一次性登记：start 之后必清（防跨会话残留）
+    }
+  }
   session.app.push(prompt);
   prompt.update(editor.draft, editor.cursor);
   onPrompt(editor.draft);

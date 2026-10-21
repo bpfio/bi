@@ -114,6 +114,10 @@ stream-json 形态落末帧 `session_done`（`exit="rounds-exceeded"`），`--ou
 bun bin/bi.ts
 ```
 
+续会话（REPL 形态）：`bun bin/bi.ts --resume <sessionId>` 复用既有会话——会话 id 连续
+（JSONL 续写同一份会话文件）、既有历史注入模型上下文；会话不存在 → 结构化报错
+`[session-not-found]`，退出码 2（不静默开新会话）。
+
 ## 子命令一览
 
 与 `bun bin/bi.ts --help` 的真实文本一致（16 个，按 help 输出顺序）：
@@ -162,7 +166,7 @@ get/set 键面，直接写 TOML）：
 | `secondary_model` | `secondary_model.background`、`secondary_model.subagent`、`secondary_model.summarize` |
 | `telemetry` | `telemetry.enabled`、`telemetry.sanitize_errors` |
 | `thinking` | `thinking.budget_tokens`、`thinking.effort`、`thinking.enabled` |
-| `tools` | `tools.allow`、`tools.code_mode`、`tools.deny`、`tools.output_limit_bytes`、`tools.media`、`tools.job_tools`、`tools.lsp`、`tools.select_tools` |
+| `tools` | `tools.allow`、`tools.code_mode`、`tools.deny`、`tools.output_limit_bytes`、`tools.media`、`tools.job_tools`、`tools.lsp`（需宿主 LSP 装配；本版本未提供 → `lsp_navigate` 不挂载并告警）、`tools.select_tools` |
 | `tui` | `tui.mouse_mode`、`tui.notifications`、`tui.show_thoughts`、`tui.theme` |
 | `watch` | `watch.debounce_ms`、`watch.enabled`、`watch.ignore` |
 | `workspace` | `workspace.additional_dir`、`workspace.respect_gitignore` |
@@ -186,12 +190,12 @@ get/set 键面，直接写 TOML）：
 | `[verify]` | 完工自验看门狗（`deliverable` / `command` 检查条目 + `on_completion` 开关） |
 | `[subagent]` | `enabled` = 注册 `spawn_subagent` 模型工具；`btw_enabled` = `/btw` 旁路问答 |
 | `[ptc]` | `enabled` = 注册 PTC 脚本工具 `run_ptc_script`（`timeout_ms` / `max_tool_calls` 为执行边界） |
-| `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`） |
+| `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`；登记/巡检/注销真实生效，调度核走 workflow 解析核）；**到点自动触发尚未接线**（不会自动执行任何动作），归后续卡 |
 | `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
 | `[session]` | 无头会话回合上限：`max_rounds`（缺省 0 = 用内建缺省 16；调研型任务建议 16-32；CLI `--max-rounds` 优先级更高） |
 | `[vis]` | 本地会话可视化（`bi vis`）配置面：`enabled`（声明后须 `true` 才启动，否则结构化拒绝 exit 4；未声明 `[vis]` 时不受影响）/ `listen`（缺省监听 `"ip:port"`，CLI `--host`/`--port` 优先）/ `token_env`（令牌环境变量名，缺省空 = 用内建 `BI_VIS_AUTH_TOKEN`） |
-| `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；坏条目结构化警告不阻塞；SSE 型暂未支持） |
+| `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；`servers` 非空即挂载，与 `[ptc]` 无关；坏条目结构化警告不阻塞；SSE 型暂未支持） |
 
 （`[mcp]` 一行按便利列在上表内；实为根分区，缺省恒物化为 `servers = {}`，不属挂载拓扑。）
 

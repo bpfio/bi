@@ -59,6 +59,41 @@ export interface ForkSessionInput {
   title?: string;
 }
 
+/**
+ * 续会话句柄（reopenSession 返回）：既有会话的元数据 + 全部条目 + 追加游标。
+ */
+export interface ReopenedSession {
+  /** 会话 id（= 被重开的会话 id）。 */
+  readonly sessionId: string;
+  /** 会话标题（既有标题，非新建）。 */
+  readonly title: string;
+  /** 全部干净条目（按 seq 升序；损坏残缺区已丢弃）。 */
+  readonly entries: readonly SessionEntry[];
+  /** 末条目 id（新条目的追加父节点；空会话 = null）。 */
+  readonly tailId: string | null;
+}
+
+/**
+ * 进程级「续会话目标」登记簿（宿主装配用）。
+ *
+ * 背景：TUI 会话（packages/tui/src/mount/agent-tui.ts）内部自建 SessionManager
+ * （无注入缝），REPL 续会话需要在**不改 agent-tui.ts** 的前提下让会话 id 连续
+ * （JSONL 续写同一份会话文件）——故由宿主（mount/repl.ts）在启动会话前登记目标 id；
+ * createSession 命中登记时复用既有会话（不新建文件、不覆盖历史），登记随即消费
+ * （一次性，避免污染后续会话）。
+ */
+let resumeTargetSessionId: string | undefined;
+
+/** 登记续会话目标（宿主装配用；一次性消费——createSession 命中即复用该会话）。 */
+export function registerResumeTarget(sessionId: string): void {
+  resumeTargetSessionId = sessionId;
+}
+
+/** 清除续会话目标（防跨会话残留；宿主装配用）。 */
+export function clearResumeTarget(): void {
+  resumeTargetSessionId = undefined;
+}
+
 /** 会话不存在。 */
 export class SessionNotFoundError extends Error {
   constructor(sessionId: string) {
@@ -79,6 +114,8 @@ export class SessionManager {
   readonly #rootDir: string;
   readonly #now: () => number;
   readonly #generateId: () => string;
+  /** 本实例接管的既有会话（续会话）：首条新条目挂到既有末条目而非开新根。 */
+  readonly #adoptedSessions = new Set<string>();
 
   constructor(options: SessionManagerOptions = {}) {
     this.#rootDir = options.rootDir ?? defaultSessionsRoot();
@@ -91,8 +128,23 @@ export class SessionManager {
     return this.#rootDir;
   }
 
-  /** 创建新会话：写入 meta 首行并 fsync。文件以独占方式创建，不覆盖已有会话。 */
+  /**
+   * 创建新会话：写入 meta 首行并 fsync。文件以独占方式创建，不覆盖已有会话。
+   *
+   * 续会话例外（FIX-A F4）：进程级「续会话目标」登记命中时**复用既有会话**
+   * （不新建文件、不覆盖历史），并把该会话登记为本实例的接管目标——后续以
+   * parentId=null 追加的首条新条目自动挂到既有末条目（追加链连续，不开第二个根）。
+   */
   async createSession(init: CreateSessionInput = {}): Promise<SessionMeta> {
+    if (init.sessionId === undefined && resumeTargetSessionId !== undefined) {
+      const target = resumeTargetSessionId;
+      resumeTargetSessionId = undefined; // 一次性消费
+      const meta = await this.getSessionMeta(target);
+      if (meta !== undefined) {
+        this.#adoptedSessions.add(target);
+        return meta;
+      }
+    }
     const sessionId = init.sessionId ?? this.#generateId();
     assertSafeSessionId(sessionId);
     const meta: SessionMeta = {
@@ -158,6 +210,21 @@ export class SessionManager {
     return (await this.loadSession(sessionId)).entries;
   }
 
+  /**
+   * 重开既有会话（续会话缝，FIX-A F4）：加载元数据 + 全部干净条目，返回续接句柄
+   * （含追加游标 tailId）。会话不存在 → SessionNotFoundError（宿主据此结构化报错退出）。
+   */
+  async reopenSession(sessionId: string): Promise<ReopenedSession> {
+    const loaded = await this.loadSession(sessionId);
+    const tail = loaded.entries.length > 0 ? loaded.entries[loaded.entries.length - 1]!.id : null;
+    return {
+      sessionId: loaded.meta.sessionId,
+      title: loaded.meta.title,
+      entries: loaded.entries,
+      tailId: tail,
+    };
+  }
+
   /** 会话元数据；不存在返回 undefined。 */
   async getSessionMeta(sessionId: string): Promise<SessionMeta | undefined> {
     try {
@@ -188,9 +255,14 @@ export class SessionManager {
     const loaded = await this.loadSession(sessionId);
     if (parentId === null) {
       if (loaded.entries.length > 0) {
-        throw new Error(
-          `会话 ${sessionId} 已存在根条目，不允许第二个根（请把新条目挂到已有节点）`,
-        );
+        if (this.#adoptedSessions.has(sessionId)) {
+          // 续会话（FIX-A F4）：首条新条目挂到既有末条目——追加链连续，不开第二个根。
+          parentId = loaded.entries[loaded.entries.length - 1]!.id;
+        } else {
+          throw new Error(
+            `会话 ${sessionId} 已存在根条目，不允许第二个根（请把新条目挂到已有节点）`,
+          );
+        }
       }
     } else if (!loaded.entries.some((entry) => entry.id === parentId)) {
       throw new Error(`父节点不存在: ${parentId}（会话 ${sessionId}）`);

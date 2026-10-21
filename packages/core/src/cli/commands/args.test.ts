@@ -6,7 +6,7 @@
  * 重复单值 flag 的结构化报错、GLOBAL_ARGS 矩阵定义完整性。
  */
 import { describe, expect, test } from "bun:test";
-import { ArgParseError, GLOBAL_ARGS, parseGlobalArgs } from "./args";
+import { ArgParseError, GLOBAL_ARGS, parseGlobalArgs, parseResumeArg } from "./args";
 
 function catchCode(run: () => unknown): { code: ArgParseError["code"]; flag?: string } {
   try {
@@ -161,5 +161,31 @@ describe("BI-20.2 GLOBAL_ARGS：矩阵定义完整性", () => {
     expect(byFlag.get("--prompt")?.repeatable).toBe(false);
     expect(byFlag.get("--output-format")?.allowedValues).toEqual(["stream-json", "text", "json"]);
     expect(byFlag.get("--agent-file")?.valueName).toBe("<path.md>");
+  });
+});
+
+describe("FIX-A F4 · parseResumeArg（REPL 续会话目标提取）", () => {
+  test("空格传值：提取 --resume <id>，其余 token 原样留在 rest", () => {
+    const parsed = parseResumeArg(["--resume", "sess-1", "--prompt", "hi"]);
+    expect(parsed.resume).toBe("sess-1");
+    expect(parsed.rest).toEqual(["--prompt", "hi"]);
+  });
+
+  test("等号传值：提取 --resume=<id>（旗标与值都不留在 rest）", () => {
+    const parsed = parseResumeArg(["--resume=sess-2"]);
+    expect(parsed.resume).toBe("sess-2");
+    expect(parsed.rest).toEqual([]);
+  });
+
+  test("无 --resume：resume 为 undefined，rest 原样返回", () => {
+    const parsed = parseResumeArg(["--prompt", "hi"]);
+    expect(parsed.resume).toBeUndefined();
+    expect(parsed.rest).toEqual(["--prompt", "hi"]);
+  });
+
+  test("缺值：旗标留在 rest（交由全局解析器报 missing-value）", () => {
+    const parsed = parseResumeArg(["--resume"]);
+    expect(parsed.resume).toBeUndefined();
+    expect(parsed.rest).toEqual(["--resume"]);
   });
 });

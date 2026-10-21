@@ -766,9 +766,11 @@ export type PtcSection = InferSchema<typeof ptcSchema>;
 /**
  * [cron] 分区：会话内 cron 三件套（cron_schedule/cron_list/cron_remove）注册门。
  * 缺省 enabled=false = 不注册（既有工具面零变动）；仅显式声明 [cron] 才物化
- * （挂载式拓扑，同 [subagent]/[verify]）。实际定时触发（CronService.tick）归宿主
- * 运行环——本分区只管条目管理/列表/注销三工具的注册，绝不假冒"已可定时执行"
- * （触发动作 onFire 由 host 注入，core CLI 不 import workflow 的 CronCorePort）。
+ * （挂载式拓扑，同 [subagent]/[verify]）。FIX-A F1：宿主装配层（cli/main.ts
+ * 无头路径 + bin/bi.ts REPL 路径）按 enabled=true 实例化 CronService（调度核经
+ * CronCorePort 委托 workflow 解析核）并注入工具集缝——三工具的登记/巡检/注销
+ * 真实生效。**到点自动触发仍未接线**（CronService.tick 无宿主推进、onFire 无
+ * 注入）——绝不假冒"已可定时执行"，工具描述与 README 如实陈述。
  */
 export const cronSchema = sObj({
   /** true = 注册 cron_schedule/cron_list/cron_remove 三工具；缺省 false = 不注册（既有工具面零变动）。 */

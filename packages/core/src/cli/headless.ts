@@ -82,6 +82,7 @@ import { scanShell } from "../sandbox/shell-scan";
 import { type SubagentRunner } from "../subagent/runner";
 import { spawnSubagentBinding } from "./subagent-adapter";
 import { SessionManager } from "../session/manager";
+import { resumeContextMessages } from "./resume-context";
 import type { AppendEntryInput, JsonValue, SessionEntry } from "../session/types";
 import type { OutputFormat } from "./commands/args";
 
@@ -715,27 +716,8 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	// --resume 历史重放：user/assistant 的文本轮按序进上下文（assistant 兼容
 	// {text} 与 {content:[{type:"text",text}]} 双形态；tool 轮的配对重放归
 	// BI-10.2 语法树语义，本面备案不重放——续聊文本场景成立）。
-	const resumeHistory: AgentMessage[] = [];
-	for (const entry of resumeEntries) {
-		if (entry.type !== "user" && entry.type !== "assistant") continue;
-		const payload = entry.payload as { text?: unknown; content?: unknown } | null;
-		if (payload === null || typeof payload !== "object") continue;
-		let text: string | undefined;
-		if (typeof payload.text === "string") text = payload.text;
-		else if (Array.isArray(payload.content)) {
-			text = payload.content
-				.filter(
-					(block): block is { type: string; text: string } =>
-						block !== null && typeof block === "object" &&
-						(block as { type?: unknown }).type === "text" &&
-						typeof (block as { text?: unknown }).text === "string",
-				)
-				.map((block) => block.text)
-				.join("");
-		}
-		if (text === undefined || text.length === 0) continue;
-		resumeHistory.push({ role: entry.type, content: text });
-	}
+	// FIX-A F4：重放语义收敛到 cli/resume-context.ts（无头与 REPL 共用单一事实源）。
+	const resumeHistory: AgentMessage[] = resumeContextMessages(resumeEntries);
 	const messages: AgentMessage[] = [
 		...(systemParts.length > 0 ? [{ role: "system" as const, content: systemParts.join("\n") }] : []),
 		...resumeHistory,

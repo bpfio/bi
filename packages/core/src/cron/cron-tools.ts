@@ -4,6 +4,8 @@
  * 模型可见语义（工单钉死）：三工具面为会话内 cron 的注册/巡检/注销入口。
  * 触发动作（action 回调）不属于模型参数——由装配层在构造 CronTools 时经
  * onFire 端口注入（"触发→action 回调注入"），CronCreate 仅登记名称与表达式。
+ * FIX-A F1 备案：登记/巡检/注销已接真实工作；**到点自动触发仍未接线**
+ * （onFire 无人注入、tick 无宿主推进）——工具描述如实陈述，不冒充"到点会自动执行"。
  * 参数校验走房规 mini 校验：拒绝不走异常控制流，返回 { ok:false, code, message }。
  */
 import { CronError, type CronEntry, type CronService } from "./cron-service";
@@ -18,7 +20,8 @@ export const CRON_CREATE_TOOL_SPEC: CronToolSpec = {
   name: "CronCreate",
   description:
     "在当前会话内登记一条 cron 周期任务（5 字段表达式：分 时 日 月 周）。" +
-    "到点由运行时触发装配层注入的动作回调；同名重复登记幂等返回既有条目。",
+    "当前版本只登记条目（计算下次触发时刻），到点自动触发尚未接线，不会自动执行任何动作；" +
+    "同名重复登记幂等返回既有条目。",
   inputSchema: {
     type: "object",
     properties: {
@@ -31,7 +34,8 @@ export const CRON_CREATE_TOOL_SPEC: CronToolSpec = {
 
 export const CRON_LIST_TOOL_SPEC: CronToolSpec = {
   name: "CronList",
-  description: "列出当前会话内已登记的 cron 任务（含下次触发时刻与最近触发留痕）。",
+  description:
+    "列出当前会话内已登记的 cron 任务（含下次触发时刻；自动触发接线前「最近触发」留痕恒空）。",
   inputSchema: { type: "object", properties: {} },
 };
 

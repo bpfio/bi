@@ -12,9 +12,16 @@ import { ConfigService } from "../packages/core/src/config/config-service";
 import { ConfigError, type BiConfig } from "../packages/core/src/config/schema";
 import { resolveModelPort, ModelPortConfigError } from "../packages/core/src/cli/model-port";
 import { buildDefaultToolset } from "../packages/core/src/cli/toolset";
+import { mountMcpServers } from "../packages/core/src/cli/mcp-mount";
+import { CronService } from "../packages/core/src/cron/cron-service";
+import { workflowCronCorePort } from "../packages/core/src/cli/cron-kernel";
 import { runBi } from "../packages/core/src/cli/main";
+import { parseResumeArg } from "../packages/core/src/cli/commands/args";
+import { resumeContextMessages, withResumeHistory } from "../packages/core/src/cli/resume-context";
+import { SessionManager } from "../packages/core/src/session/manager";
+import type { AgentMessage } from "../packages/core/src/adapters/deepseek-adapter";
 import { AgentTuiSession, MOUSE_DISABLE, MOUSE_ENABLE } from "../packages/tui/src/mount/agent-tui";
-import { KeyStream, runRepl } from "../packages/tui/src/mount/repl";
+import { KeyStream, runRepl, type ReplInitialSession } from "../packages/tui/src/mount/repl";
 import { attachConfigWatch } from "../packages/tui/src/mount/config-watch";
 import { loadKeybindings } from "../packages/tui/src/mount/keybindings";
 import { InputLoop } from "../packages/tui/src/engine/diff-renderer";
@@ -61,7 +68,7 @@ function contextLimitOf(config: BiConfig, modelId: string): number | undefined {
 const builtinFallback = builtinSlashCandidates;
 
 /** 交互 REPL 主路径（bin 层装配；REPL v1 纯对话，工具注册表面归后续装配卡）。 */
-async function runReplMain(stdin: RawCapableStdin): Promise<number> {
+async function runReplMain(stdin: RawCapableStdin, resumeSessionId?: string): Promise<number> {
 	try {
 		// 先读配置取 [watch] 偏好（构造 ConfigService 的 watch 选项用；否则构造期无法读 config）
 		const probe = new ConfigService();
@@ -73,10 +80,37 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 		const config = await service.load();
 		// [watch] 三键接线：enabled 才开文件监听热重载（缺省 false 零行为差）。
 		attachConfigWatch(service, config.watch);
+
+		// FIX-A F4：--resume 续会话——经 SessionManager 重开既有会话（既有 API：
+		// reopenSession 校验 + 取历史）。无效 id → 结构化报错并退出（exit 2）。
+		// 校验前置到模型装配之前：坏 id 立即结构化失败，不被凭据/模型问题掩盖。
+		let resumeHistory: AgentMessage[] = [];
+		let initialSession: ReplInitialSession | undefined;
+		if (resumeSessionId !== undefined) {
+			const manager = new SessionManager();
+			let reopened;
+			try {
+				reopened = await manager.reopenSession(resumeSessionId);
+			} catch {
+				process.stderr.write(
+					`bi: 参数错误 [session-not-found]: --resume 会话不存在: ${resumeSessionId}\n`,
+				);
+				return 2;
+			}
+			resumeHistory = resumeContextMessages(reopened.entries);
+			initialSession = { sessionId: reopened.sessionId, title: reopened.title };
+			process.stderr.write(
+				`bi: 已恢复会话 ${reopened.sessionId}（历史 ${resumeHistory.length} 条已注入模型上下文）\n`,
+			);
+		}
+
 		const selection = resolveModelPort(config, {
 			resolveApiKey: (name) => service.resolveProviderApiKey(name),
 		});
 		process.stderr.write(`bi: 模型已装配 provider=${selection.providerName} mode=${selection.mode} model=${selection.wireModel}\n`);
+		// FIX-A F4：既有历史经模型端口包装前置到每次请求的 messages 首位（不改
+		// agent-tui.ts 的私有消息面——TUI 侧无消息注入缝，包装是宿主层唯一无侵入口）。
+		const modelPort = withResumeHistory(selection.port, resumeHistory);
 
 		// BI-28.3 接线:权限面单实例——config [permission] mode/rules 建门禁(规则
 		// 缺 scope 补 always),控制器喂 /permissions 命令面;工具回路与命令面共享。
@@ -200,27 +234,53 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 					)
 				: undefined;
 
+		// FIX-A F1：config [cron] enabled 时装配 CronService（调度核经 CronCorePort
+		// 委托仓库现成 cron 解析核——workflow BI-07.14，适配器 cli/cron-kernel.ts），
+		// 注入工具集缝 → cron_schedule/cron_list/cron_remove 三工具真正工作。
+		// 备案：到点自动触发仍未接线（工具描述与 README 如实陈述）。
+		const cronService =
+			config.cron?.enabled === true ? new CronService({ core: workflowCronCorePort() }) : undefined;
+		// FIX-A F2：config [mcp.servers] 非空即挂载（与 [ptc] 解耦——[ptc] 只管
+		// run_ptc_script 工具）；客户端随 REPL 生命周期，退出时 closeAll 尽力关闭。
+		const mcpServers = config.mcp?.servers ?? {};
+		const mcpMount =
+			Object.keys(mcpServers).length > 0
+				? await mountMcpServers(config.mcp ?? { servers: {} }, process.cwd(), {
+						warn: (line) => process.stderr.write(`${line}\n`),
+					})
+				: null;
+		const mcpTools = mcpMount?.tools ?? [];
+
 		const session = new AgentTuiSession({
-			model: selection.port,
-			tools: buildDefaultToolset(process.cwd(), {
-				// BI-16.2：config [ptc] enabled 才注入 PTC 执行边界（缺省不挂，零变化）。
-				...(config.ptc?.enabled === true
-					? { ptcDeps: { timeoutMs: config.ptc.timeout_ms, maxToolCalls: config.ptc.max_tool_calls } }
-					: {}),
-				// BI-08.3 / BI-07.11：挂载式门控（config [tools] media / job_tools 显式开启才挂载）。
-				media: config.tools?.media === true,
-				jobs: config.tools?.job_tools === true,
-				// BI-13.2：lsp_navigate 挂载门（config [tools] lsp，键已加齐）；
-				// lspClient 由宿主 LSP server 连接面注入（本卡不接 server 装配）。
-				lsp: config.tools?.lsp === true,
-				// BI-07.8：AgentSwarm 随子代理使能联动；swarmRunner 实例一并传入。
-				swarm: subagentSection?.enabled === true,
-				swarmRunner,
-			// BI-07.9：Skill 常挂（恒传 true）；skills 目录缺失由器官容错 no-skills。
-			skill: true,
-			// BI-13.1/BI-13.3：select_tools 挂载门（config [tools] select_tools，缺省 false）。
-			select_tools: config.tools?.select_tools === true,
-		}),
+			model: modelPort,
+			tools: [
+				...buildDefaultToolset(process.cwd(), {
+					// BI-16.2：config [ptc] enabled 才注入 PTC 执行边界（缺省不挂，零变化）。
+					...(config.ptc?.enabled === true
+						? { ptcDeps: { timeoutMs: config.ptc.timeout_ms, maxToolCalls: config.ptc.max_tool_calls } }
+						: {}),
+					// BI-08.3 / BI-07.11：挂载式门控（config [tools] media / job_tools 显式开启才挂载）。
+					media: config.tools?.media === true,
+					jobs: config.tools?.job_tools === true,
+					// BI-13.2：lsp_navigate 挂载门（config [tools] lsp，键已加齐）；
+					// FIX-A F3：lspClient 未注入（宿主未提供 LSP server 装配）→ 工具不挂载
+					// + 结构化警告（挂一个恒不可用的工具即虚账）。
+					lsp: config.tools?.lsp === true,
+					// FIX-A F3：结构化警告出口（stderr 诊断面）。
+					warn: (line) => process.stderr.write(`${line}\n`),
+					// BI-07.8：AgentSwarm 随子代理使能联动；swarmRunner 实例一并传入。
+					swarm: subagentSection?.enabled === true,
+					swarmRunner,
+					// BI-07.9：Skill 常挂（恒传 true）；skills 目录缺失由器官容错 no-skills。
+					skill: true,
+					// BI-13.1/BI-13.3：select_tools 挂载门（config [tools] select_tools，缺省 false）。
+					select_tools: config.tools?.select_tools === true,
+					// FIX-A F1：[cron] enabled 时注入 CronService（cron 三件套挂载门）。
+					...(cronService !== undefined ? { cronService } : {}),
+				}),
+				// FIX-A F2：MCP stdio 装配结果并入工具面（[mcp.servers] 非空时非空）。
+				...mcpTools,
+			],
 			cwd: process.cwd(),
 			gate,
 			candidates: () => menuCandidates,
@@ -276,10 +336,19 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 		}
 		loop.start();
 		try {
-			const result = await runRepl({ session, keys, title: "bi repl", keybindings: kb.bindings });
+			const result = await runRepl({
+				session,
+				keys,
+				title: "bi repl",
+				keybindings: kb.bindings,
+				// FIX-A F4：续会话——复用既有会话（会话 id 连续、JSONL 续写）。
+				...(initialSession !== undefined ? { initialSession } : {}),
+			});
 			return result.endedAs === "session-exited" ? 4 : 0;
 		} finally {
 			loop.stop();
+			// FIX-A F2：REPL 退出后尽力关闭 MCP 客户端（释放子进程），失败静默吞。
+			await mcpMount?.closeAll().catch(() => {});
 			if (stdin.isTTY === true) {
 				try {
 					process.stdout.write(MOUSE_DISABLE); // 离场还原鼠标语义
@@ -312,9 +381,13 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 }
 
 const argv = process.argv.slice(2);
+// FIX-A F4：REPL 启动路径接受 --resume <sessionId>（仅此旗标可带；带 --prompt
+// 等无头旗标时仍走无头路径——无头续会话本就有 --resume 入口）。
+const resumeArg = parseResumeArg(argv);
+const replMode = argv.length === 0 || (resumeArg.resume !== undefined && resumeArg.rest.length === 0);
 process.exitCode =
-	argv.length === 0
-		? await runReplMain(process.stdin as RawCapableStdin)
+	replMode
+		? await runReplMain(process.stdin as RawCapableStdin, resumeArg.resume)
 		: await runBi(argv, {
 				headless: {},
 				// BI-20.5 接线：vis 令牌轮转权威（tui 侧产物注入 core 的令牌权威端口

@@ -25,6 +25,8 @@ import { assembleModelRouter, type ModelRouter } from "./model-router";
 import { buildVerifyContract, runHeadless, type HeadlessOptions, type ModelPort } from "./headless";
 import { buildDefaultToolset } from "./toolset";
 import { mountMcpServers } from "./mcp-mount";
+import { CronService } from "../cron/cron-service";
+import { workflowCronCorePort } from "./cron-kernel";
 import {
 	createSubagentRunner,
 	SUBAGENT_DEFAULT_MAX_ITERATIONS,
@@ -309,16 +311,31 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const subagentSection = loadedConfig?.subagent;
 	// BI-16.2：config [ptc] 分区；enabled 缺省 false。
 	const ptcSection = loadedConfig?.ptc;
-	// FX-F：config [mcp.servers] 最小装配（仅 [ptc] enabled 时挂载；[mcp] 为根分区恒存在）。
-	// 客户端实例随会话生命周期，closeAll 在会话结束后尽力关闭（释放子进程）。
-	const mcpMount =
-		ptcSection?.enabled === true
-			? await mountMcpServers(loadedConfig?.mcp ?? { servers: {} }, h.cwd ?? process.cwd(), {
-					warn: (line) => err(line),
-				})
-			: null;
-	// FX-F：解析为普通数组（避免条件展开产生联合元素类型），并入两处工具集构建。
+	// FIX-A F1：config [cron] 分区；enabled 缺省 false。启用时装配 CronService
+	// （调度核经 CronCorePort 委托仓库现成 cron 解析核——workflow BI-07.14，
+	// 适配器见 cli/cron-kernel.ts），注入工具集缝 → cron_schedule/cron_list/
+	// cron_remove 三工具真正工作（登记/巡检/注销真实生效，非法表达式结构化拒绝）。
+	// 备案：到点自动触发未接（会话深度集成缺口）——工具描述与 README 如实陈述。
+	const cronSection = loadedConfig?.cron;
+	const cronService =
+		cronSection?.enabled === true ? new CronService({ core: workflowCronCorePort() }) : undefined;
+	// FIX-A F2：config [mcp.servers] 最小装配——[mcp].servers 非空即挂载（与 [ptc] 解耦：
+	// [ptc] 只管 run_ptc_script 工具，不再顺带决定 MCP 生死）。[mcp] 为根分区恒存在
+	// （缺省 servers = {}）。客户端实例随会话生命周期，closeAll 在会话结束后尽力关闭。
+	const mcpServers = loadedConfig?.mcp?.servers ?? {};
+	const hasMcpServers = Object.keys(mcpServers).length > 0;
+	const mcpMount = hasMcpServers
+		? await mountMcpServers(loadedConfig?.mcp ?? { servers: {} }, h.cwd ?? process.cwd(), {
+				warn: (line) => err(line),
+			})
+		: null;
+	// FIX-A F2：解析为普通数组（避免条件展开产生联合元素类型），并入两处工具集构建。
 	const mcpTools = mcpMount?.tools ?? [];
+	// FIX-A F1/F2：缺省工具集构建门。默认不构建（无头路径工具面维持既有 []——
+	// 零行为差缺省）；[ptc] / [cron] 显式开启，或 [mcp.servers] 非空时构建缺省工具集
+	// （各分区挂载门在 buildDefaultToolset 内部按配置逐项分发）。
+	const buildDefaultTools =
+		ptcSection?.enabled === true || cronSection?.enabled === true || hasMcpServers;
 	// BI-05.3（W3-D7）：config [context] 挂载式分区；任一子键显式声明才物化，
 	// 缺省 config.context === undefined → 不传 → headless 全部开关恒关（逐字节等价）。
 	const contextSection = loadedConfig?.context;
@@ -331,22 +348,31 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	// swarm（AgentSwarm 非只读五件，完整集在 runHeadless 调用处随 swarmRunner 装配）。
 	const subagentBaseTools =
 		h.tools ??
-		(ptcSection?.enabled === true
+		(buildDefaultTools
 			? [
 					...buildDefaultToolset(h.cwd ?? process.cwd(), {
-						ptcDeps: {
-							timeoutMs: ptcSection.timeout_ms,
-							maxToolCalls: ptcSection.max_tool_calls,
-						},
+						// FIX-A F1/F2：[ptc] 只管 run_ptc_script 工具（未开启 = 不挂，零行为差）。
+						...(ptcSection?.enabled === true
+							? {
+									ptcDeps: {
+										timeoutMs: ptcSection.timeout_ms,
+										maxToolCalls: ptcSection.max_tool_calls,
+									},
+								}
+							: {}),
 						media: loadedConfig?.tools.media === true,
 						jobs: loadedConfig?.tools.job_tools === true,
 						lsp: loadedConfig?.tools.lsp === true,
 						select_tools: loadedConfig?.tools.select_tools === true,
+						// FIX-A F3：结构化警告出口（stderr 诊断面）。
+						warn: (line) => err(line),
 						// X4 接线：config [tools] code_mode 显式 true 才挂 run_js（缺省 false = 不挂 = 工具面零变动）。
 						codemode: loadedConfig?.tools.code_mode === true,
 						skill: true,
+						// FIX-A F1：[cron] enabled 时注入 CronService（cron 三件套挂载门）。
+						...(cronService !== undefined ? { cronService } : {}),
 					}),
-					// FX-F：MCP stdio 装配结果并入工具集（仅 [ptc] enabled 时非空）。
+					// FIX-A F2：MCP stdio 装配结果并入工具集（[mcp].servers 非空时非空）。
 					...mcpTools,
 				]
 			: []);
@@ -379,25 +405,31 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 			prompt: parsed.prompt,
 			cwd: h.cwd ?? process.cwd(),
 			model,
-			// BI-16.2：仅 config [ptc] enabled 时才自建工具集（含 ptc 边界）；
-			// 未开启保持既有缺省 []——不改变直连调用方（测试/嵌入）的工具面。
+			// FIX-A F1/F2：缺省工具集自建门（[ptc] / [cron] 显式开启或 [mcp.servers] 非空）；
+			// 皆未开启保持既有缺省 []——不改变直连调用方（测试/嵌入）的工具面。
 			tools:
 				h.tools ??
-				(ptcSection?.enabled === true
+				(buildDefaultTools
 				? [
 						...buildDefaultToolset(h.cwd ?? process.cwd(), {
-							ptcDeps: {
-								timeoutMs: ptcSection.timeout_ms,
-								maxToolCalls: ptcSection.max_tool_calls,
-							},
-							// BI-08.3 / BI-07.11：无头路径 tools 整体仍受 [ptc] enabled 门控（现状不动），
-							// 仅在其内传递各开关（config [tools] media / job_tools / lsp 显式开启才挂载）。
+							// FIX-A F1/F2：[ptc] 只管 run_ptc_script 工具（未开启 = 不挂，零行为差）。
+							...(ptcSection?.enabled === true
+								? {
+										ptcDeps: {
+											timeoutMs: ptcSection.timeout_ms,
+											maxToolCalls: ptcSection.max_tool_calls,
+										},
+									}
+								: {}),
+							// BI-08.3 / BI-07.11：各挂载门控（config [tools] media / job_tools 显式开启才挂载）。
 							media: loadedConfig?.tools.media === true,
 							jobs: loadedConfig?.tools.job_tools === true,
 							// BI-13.2：lsp_navigate 挂载门（config [tools] lsp，键已加齐）；
-							// lspClient 由宿主 LSP server 连接面注入（本卡不接 server 装配——
-							// 未连时工具结构化返回 lsp-unavailable）。
+							// lspClient 由宿主 LSP server 连接面注入——未注入时工具**不挂载**
+							// （FIX-A F3：依赖缺失不伪造能力，结构化警告由工具集挂载面发出）。
 							lsp: loadedConfig?.tools.lsp === true,
+							// FIX-A F3：结构化警告出口（stderr 诊断面）。
+							warn: (line) => err(line),
 							// BI-07.8：AgentSwarm 随子代理使能联动（swarm 门 = [subagent] enabled）；
 							// swarmRunner 实例一并传入（上一步装配）。
 							swarm: subagentSection?.enabled === true,
@@ -408,8 +440,10 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 						select_tools: loadedConfig?.tools.select_tools === true,
 						// X4 接线：config [tools] code_mode 显式 true 才挂 run_js（缺省 false = 不挂 = 工具面零变动）。
 						codemode: loadedConfig?.tools.code_mode === true,
+						// FIX-A F1：[cron] enabled 时注入 CronService（cron 三件套挂载门）。
+						...(cronService !== undefined ? { cronService } : {}),
 					}),
-						// FX-F：MCP stdio 装配结果并入工具集（仅 [ptc] enabled 时非空）。
+						// FIX-A F2：MCP stdio 装配结果并入工具集（[mcp].servers 非空时非空）。
 						...mcpTools,
 					]
 					: []),

@@ -1054,9 +1054,9 @@ describe("工单 C · BI-13.2 / BI-07.8 / BI-07.9 · 三器官挂载式门控", 
 		expect(names.has("Skill")).toBe(false);
 	});
 
-	// --- BI-13.2 lsp_navigate ---
-	test("lsp:true → 含 lsp_navigate（readOnly=true）；注册名覆盖为 lsp_navigate", () => {
-		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true });
+	// --- BI-13.2 lsp_navigate（FIX-A F3：诚实化——无 lspClient 不挂载 + 结构化警告）---
+	test("lsp:true 且注入 lspClient → 含 lsp_navigate（readOnly=true）；注册名覆盖为 lsp_navigate", () => {
+		const tools = buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true, lspClient: stubLspClient });
 		const names = namesOf(tools);
 		expect(names).toContain("lsp_navigate");
 		const lsp = byName(tools, "lsp_navigate");
@@ -1065,14 +1065,13 @@ describe("工单 C · BI-13.2 / BI-07.8 / BI-07.9 · 三器官挂载式门控", 
 		expect(lsp.definition.inputSchema).toHaveProperty("type", "object");
 	});
 
-	test("lsp:true 但 lspClient 未注入 → execute 结构化返回 {ok:false,code:'lsp-unavailable'}，不抛", async () => {
-		const lsp = byName(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true }), "lsp_navigate");
-		const res = JSON.parse((await lsp.execute({ operation: "hover", file_path: "/a.ts", line: 0, character: 0 }, SIGNAL)) as string) as {
-			ok: false;
-			code: string;
-		};
-		expect(res.ok).toBe(false);
-		expect(res.code).toBe("lsp-unavailable");
+	test("lsp:true 但 lspClient 未注入 → 不挂载 lsp_navigate + 发结构化警告（依赖缺失不伪造能力）", () => {
+		const warns: string[] = [];
+		const names = namesOf(buildDefaultToolset("/tmp", { spawnImpl: explodingSpawn(), lsp: true, warn: (l) => warns.push(l) }));
+		expect(names).not.toContain("lsp_navigate");
+		expect(warns).toHaveLength(1);
+		expect(warns[0]).toContain("lsp=true");
+		expect(warns[0]).toContain("lsp_navigate 未挂载");
 	});
 
 	test("lsp:true 且注入 lspClient → execute 委托器官 dispatch（hover 透传结果）", async () => {

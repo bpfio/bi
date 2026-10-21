@@ -6,7 +6,9 @@ import {
   SessionFileCorruptError,
   SessionManager,
   SessionNotFoundError,
+  clearResumeTarget,
   defaultSessionsRoot,
+  registerResumeTarget,
 } from "./manager";
 import type { JsonValue } from "./types";
 
@@ -367,5 +369,76 @@ describe("SessionManager.listSessions", () => {
     dir = await mkdtemp(join(tmpdir(), "bi-session-"));
     const mgr = new SessionManager({ rootDir: join(dir, "never-created") });
     expect(await mgr.listSessions()).toEqual([]);
+  });
+});
+
+describe("FIX-A F4 · SessionManager.reopenSession（续会话缝）", () => {
+  test("重开既有会话：返回 id/标题/全部条目 + 追加游标 tailId", async () => {
+    const { mgr, sessionId, ids } = await setupChain();
+    const reopened = await mgr.reopenSession(sessionId);
+    expect(reopened.sessionId).toBe(sessionId);
+    expect(reopened.title).toBe("主线");
+    expect(reopened.entries).toHaveLength(4);
+    expect(reopened.tailId).toBe(ids[3]);
+  });
+
+  test("空会话：tailId = null（首条新条目开根）", async () => {
+    const mgr = await makeManager();
+    const meta = await mgr.createSession({ title: "空会话" });
+    const reopened = await mgr.reopenSession(meta.sessionId);
+    expect(reopened.entries).toHaveLength(0);
+    expect(reopened.tailId).toBe(null);
+  });
+
+  test("会话不存在：抛 SessionNotFoundError（宿主据此结构化报错退出）", async () => {
+    const mgr = await makeManager();
+    await expect(mgr.reopenSession("no-such-session")).rejects.toThrow(SessionNotFoundError);
+  });
+});
+
+describe("FIX-A F4 · 续会话接管（会话 id 连续 + JSONL 续写）", () => {
+  test("登记续会话目标后 createSession 复用既有会话（不新建文件、不覆盖历史）", async () => {
+    const { mgr, sessionId, ids } = await setupChain();
+    const before = await rawOf(mgr, sessionId);
+    registerResumeTarget(sessionId);
+    try {
+      const meta = await mgr.createSession({ title: "新标题应被忽略" });
+      expect(meta.sessionId).toBe(sessionId); // 复用既有会话（id 连续）
+      expect(meta.title).toBe("主线"); // 既有标题不被覆盖
+      expect(await rawOf(mgr, sessionId)).toBe(before); // 历史逐字节未动
+    } finally {
+      clearResumeTarget();
+    }
+  });
+
+  test("接管后首条新条目挂到既有末条目（追加链连续，不开第二个根）", async () => {
+    const { mgr, sessionId, ids } = await setupChain();
+    registerResumeTarget(sessionId);
+    try {
+      const meta = await mgr.createSession({ title: "续会话" });
+      const appended = await mgr.append(meta.sessionId, null, { type: "user", payload: { text: "续问" } });
+      expect(appended.parentId).toBe(ids[3]); // 挂到末条目
+      const entries = await mgr.entries(sessionId);
+      expect(entries).toHaveLength(5);
+      expect(entries[4]!.payload).toEqual({ text: "续问" });
+    } finally {
+      clearResumeTarget();
+    }
+  });
+
+  test("未接管的会话：第二个根条目仍被拒绝（既有契约不变）", async () => {
+    const { mgr, sessionId } = await setupChain();
+    await expect(
+      mgr.append(sessionId, null, { type: "user", payload: { text: "第二个根" } }),
+    ).rejects.toThrow(/已存在根条目/);
+  });
+
+  test("登记是一次性的：消费后不复用（后续 createSession 走新建）", async () => {
+    const { mgr, sessionId } = await setupChain();
+    registerResumeTarget(sessionId);
+    const reused = await mgr.createSession({ title: "续会话" });
+    expect(reused.sessionId).toBe(sessionId);
+    const fresh = await mgr.createSession({ title: "新会话" });
+    expect(fresh.sessionId).not.toBe(sessionId);
   });
 });

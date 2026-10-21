@@ -159,6 +159,19 @@ export const GREP_FILE_SIZE_LIMIT_BYTES = 1024 * 1024;
 /** grep 输出截断标记行（加在保留尾部之前）。 */
 export const GREP_TRUNCATION_MARKER = "[bi] grep 输出超过 10KB，仅保留末尾 10KB（头部已截断）";
 
+/**
+ * FIX-A F3 · lsp_navigate 未挂载的结构化警告（宿主 LSP 装配缺失）。
+ * 挂一个恒返 lsp-unavailable 的工具即虚账——本版本不提供宿主 LSP server 装配面，
+ * 故 [tools] lsp=true 但无 lspClient 注入时**不挂载**并经此面告警。
+ */
+export const LSP_MOUNT_SKIPPED_WARNING =
+	"bi: [tools] lsp=true 但本版本未提供宿主 LSP 装配，lsp_navigate 未挂载";
+
+/** 缺省警告出口：写 stderr（诊断面；测试经 options.warn 注入探针）。 */
+const defaultWarn = (line: string): void => {
+	process.stderr.write(`${line}\n`);
+};
+
 /** 缺省 spawn 实现：真实 Bun.spawn（测试绝不触达——全部经 spawnImpl 注入替身）。 */
 const defaultSpawnImpl: SpawnImpl = (cmd, options) => {
 	const proc = Bun.spawn([...cmd], { ...options });
@@ -210,7 +223,7 @@ export interface BuildDefaultToolsetOptions {
 	 * BI-07.7 会话内 Cron 注册门：提供即注册 cron_schedule/cron_list/cron_remove 三工具
 	 * （缺省不挂，既有工具面零变动）。CronService 由 host 注入（已带 CronCorePort——
 	 * core 不 import workflow，端口来自宿主运行环）；本卡只做条目管理/列表/注销三动作
-	 * 的注册，定时触发归 host 运行环 tick，绝不假冒"已可定时执行"。
+	 * 的注册。FIX-A F1：到点自动触发仍未接线（会话深度集成缺口）——绝不假冒"已可定时执行"。
 	 */
 	readonly cronService?: CronService;
 	/**
@@ -225,13 +238,18 @@ export interface BuildDefaultToolsetOptions {
 	readonly jobs?: boolean;
 	/**
 	 * BI-13.2 lsp_navigate 挂载门：true 才注册 lsp_navigate 工具（缺省不挂，
-	 * 维持既有工具面零变动）。host 按 config [tools] lsp 实例化并注入；本卡仅做绑定装配。
-	 * lspClient 为 LSP server 注入接缝——未注入（server 未连）时工具仍挂载，
-	 * execute 结构化返回 {ok:false,code:"lsp-unavailable"}，不抛裸异常（依赖缺失不伪造能力）。
+	 * 维持既有工具面零变动）。FIX-A F3：lspClient 未注入时**不挂载**该工具
+	 * （依赖缺失不伪造能力）并发一条结构化警告（warn 面）——本版本不提供宿主
+	 * LSP server 装配面，工具恒不可用，挂载即虚账。
 	 */
 	readonly lsp?: boolean;
-	/** LSP server 客户端注入面（LspToolClientLike 结构类型）；未注入 = execute 返回 lsp-unavailable。 */
+	/** LSP server 客户端注入面（LspToolClientLike 结构类型）；未注入 = 不挂载 lsp_navigate。 */
 	readonly lspClient?: LspToolClientLike;
+	/**
+	 * 结构化警告出口（缺省写 stderr；测试注入探针捕获）。
+	 * FIX-A F3：lsp_navigate 因宿主 LSP 装配缺失而不挂载时经此面告警。
+	 */
+	readonly warn?: (line: string) => void;
 	/**
 	 * BI-07.8 AgentSwarm 挂载门：true 才注册 AgentSwarm 工具（缺省不挂）。
 	 * 随 BI-25 子代理使能联动（config [subagent] enabled）；swarmRunner 实例一并注入
@@ -336,10 +354,15 @@ export function buildDefaultToolset(cwd: string, options: BuildDefaultToolsetOpt
 			jobKillBinding(jobTools),
 		);
 	}
-	// BI-13.2：lsp_navigate —— 仅当 host 显式开启 lsp 门控才注册（缺省不挂，工具面零变动）。
-	// lspClient 未注入（server 未连）= 工具仍挂载，execute 结构化返回 lsp-unavailable（不抛裸异常）。
+	// BI-13.2：lsp_navigate —— 仅当 host 显式开启 lsp 门控**且**注入了 lspClient 才注册。
+	// FIX-A F3：lspClient 未注入（宿主未提供 LSP server 装配）= 工具不挂载 + 结构化警告
+	// （依赖缺失不伪造能力；挂一个恒返 lsp-unavailable 的工具即虚账）。
 	if (options.lsp === true) {
-		tools.push(lspNavigateBinding(options.lspClient));
+		if (options.lspClient !== undefined) {
+			tools.push(lspNavigateBinding(options.lspClient));
+		} else {
+			(options.warn ?? defaultWarn)(LSP_MOUNT_SKIPPED_WARNING);
+		}
 	}
 	// BI-07.8：AgentSwarm —— 仅当 swarm 门开且 runner 注入才注册（缺省不挂）。
 	// runner 未注入时开关无效（不挂载，依赖注入缺失不伪造能力）。
@@ -1215,9 +1238,10 @@ function runPtcScriptBinding(
 
 /**
  * 三件 cron 工具绑定（委托既有 CronTools，零新造轮子）。
- * 仅做条目管理（schedule 登记）/ 列表巡检（list）/ 注销（remove）三动作注册；
- * 定时触发（到点 action 回调）归宿主运行环经 CronService.tick 推进——本卡绝不
- * 假冒"已可定时执行"，触发动作 onFire 由 host 注入（core 不 import workflow 端口）。
+ * 仅做条目管理（schedule 登记）/ 列表巡检（list）/ 注销（remove）三动作注册。
+ * FIX-A F1：登记/巡检/注销已接真实工作（宿主注入 CronService，调度核经端口委托
+ * workflow 解析核）；**到点自动触发仍未接线**（会话深度集成缺口）——工具描述与
+ * README 如实陈述，绝不假冒"到点会自动执行"。
  */
 export function cronBindings(service: CronService): ToolBinding[] {
 	const cronTools = new CronTools({ service });
@@ -1227,7 +1251,8 @@ export function cronBindings(service: CronService): ToolBinding[] {
 			name: "cron_schedule",
 			description:
 				"在当前会话内登记一条 cron 周期任务（5 字段表达式：分 时 日 月 周）。" +
-				"到点由运行时触发宿主注入的动作回调（本工具仅登记名称与表达式，不执行）。同名重复登记幂等返回既有条目。",
+				"当前版本只登记条目（计算下次触发时刻），到点自动触发尚未接线，不会自动执行任何动作。" +
+				"同名重复登记幂等返回既有条目。",
 			inputSchema: {
 				type: "object",
 				properties: {
@@ -1249,7 +1274,8 @@ export function cronBindings(service: CronService): ToolBinding[] {
 	const listBinding: ToolBinding = {
 		definition: {
 			name: "cron_list",
-			description: "列出当前会话内已登记的 cron 任务（含下次触发时刻与最近触发留痕）。",
+			description:
+				"列出当前会话内已登记的 cron 任务（含下次触发时刻；自动触发接线前「最近触发」留痕恒空）。",
 			inputSchema: { type: "object", properties: {} },
 		},
 		readOnly: true,
@@ -1397,10 +1423,11 @@ function jobKillBinding(jobTools: JobTools): ToolBinding {
  * 注册名 lsp_navigate 对齐挂载门/配置键（器官 createLspTool 的 spec name 为 "lsp"，
  * 本绑定覆盖为 "lsp_navigate" 以对齐工具面；operation 枚举以器官 LSP_OPERATIONS 为
  * 单一事实源，其余描述/输入面照器官原文手写——器官无 lsp_navigate 同名 SPEC）。
- * readOnly:true（查询类）。lspClient 未注入（server 未连）= 工具仍挂载，
- * execute 结构化返回 {ok:false,code:"lsp-unavailable"}，不抛裸异常（依赖缺失不伪造能力）。
+ * readOnly:true（查询类）。
+ * FIX-A F3：client 为**必需**——未注入 lspClient 时工具**不挂载**（挂载面发结构化
+ * 警告），故绑定内不再保留 lsp-unavailable 降级分支（依赖缺失不伪造能力）。
  */
-function lspNavigateBinding(client: LspToolClientLike | undefined): ToolBinding {
+function lspNavigateBinding(client: LspToolClientLike): ToolBinding {
 	return {
 		definition: {
 			name: "lsp_navigate",
@@ -1428,14 +1455,6 @@ function lspNavigateBinding(client: LspToolClientLike | undefined): ToolBinding 
 		readOnly: true,
 		argSummary: (args) => summarizeArg(args, "file_path"),
 		execute: async (args) => {
-			// server 注入接缝缺失：结构化降级，不抛裸异常（房规：依赖缺失不伪造能力）。
-			if (client === undefined) {
-				return JSON.stringify({
-					ok: false,
-					code: "lsp-unavailable",
-					message: "LSP server 未连接（lspClient 未注入）",
-				});
-			}
 			const outcome = await createLspTool(client).handle(args);
 			return JSON.stringify(outcome);
 		},
