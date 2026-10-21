@@ -819,3 +819,33 @@ T1-A 主控伪端点 CLI 级 20/20（help16 子命令/fork-export-transfer-query
 ### 终评 v3
 
 硬幻觉率 0（跨两轮评测复验）；工具面效用全部真机实证；失败面结构化；已知边界=回合缺省 8 可配、微器官 opt-in 设计。唯一挂账 F-EV-02（[loop_control] 零消费虚账，P3 open 待裁决）。门禁 4898/0+三 tsc 0。
+
+## 三十、虚账全部接线 + 回合预算 16 (2026-10-21 凌晨)
+
+用户令：虚账全部接线并测试、回合预算 16、kimi+codebuddy 双通道派单、遇问题即修。提交 **b8b9eec**。
+
+### 虚账审计（键级 grep 全量）
+
+比台账多挖出两节：**[loop_control] 四键 + [identity] 三键 + [watch] 三键**全为零消费（F-EV-02 扩容）。[watch] 的接收器官其实早就在——ConfigService.startWatch()（BI-01.1 热重载引擎，fs.watch+防抖）零调用方，典型"器官在、线没接"。
+
+### 双通道并行派工（文件红线互斥）
+
+- **kimi（本树）**：[loop_control]+[identity] 接线。首次派单中途 connection_error 死亡（死前零改动，重派）；二单完整交付：max_tool_calls_per_turn→AgentLoop 超限拒（不炸回合可自愈）、step_timeout_ms→ToolTimeoutPolicy 缺省、turn_timeout_ms→回合时限+**turn-timeout 新失败码**（对齐 F-EV-01 三形态失败面）、max_iterations 缺省 200→0 作回合链第四层、identity 三键（系统指令四段顺序钉死+TUI 横幅实名）+追加项 TUI 回合 8→16。新增 26 测试。
+- **codebuddy hy3@xhub（独立树）**：[watch] 三键+回合预算 16。startWatch 经 attachConfigWatch 接入 TUI 启动、debounce/ignore glob（新写 **/*/? 匹配器）透传；缺省 8→16 全面扫（headless 一行+README/args/注释+钉死测试）。+12 测试。
+- **合并事故一堂课**：xhub 拉 `git diff` 回本机 **丢未跟踪新文件**（config-watch.ts/test 被 bin/bi.ts 引用却不在 diff 里）——tsc 必挂的暗雷，靠"引用面复查"抓回。教训入册：跨树收口必须 `git status --short | grep '??'` 补拉。
+
+### 真机效用测试 S1-S5（longcat 串行）
+
+| 探针 | 结果 |
+|---|---|
+| S1 缺省 16：旧 P4 探针（曾在 8 打死）无 config 覆盖 | ✓ 3 回合完答 |
+| S2b 工具上限 2：一回合并行 3 bash | ✓ 2 执行 1 拒（结构化文案入会话），模型下回合自愈重试 |
+| S3 turn_timeout_ms=12s：sleep 20 | ✓ exit=1+turn-timeout（json.exit/stderr/帧三形态） |
+| S4b identity 注入行为学：系统指令要求答话以口令开头 | ✓ 回答以「琥珀厅为您服务」开头 |
+| S5 identity name/tagline：pty 横幅 | ✓ 横幅实名+副题行 |
+
+**取证课两连**：S2/S2b 两度误判 FAIL——翻错会话文件+有损 dump（只打 value 不打 error）。真机判 FAIL 前必须拿到完整 payload 原文。watch 热重载真机面由 12 条单测覆盖（含真实 fs.watch 防抖事件）。
+
+### 门禁与备案
+
+4932 pass/0 fail（274 文件，+34）+ 三 tsc 0（主控亲跑）。**live 行为变化报备**：step_timeout_ms 根分区恒 backfill 120000 → 工具限时看门狗自此默认开启（超 120s 工具被结构化中断）——该键设计语义如此，但属默认面可见变化。kimi 7 条偏离全核实合格。
