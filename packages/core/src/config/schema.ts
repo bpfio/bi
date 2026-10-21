@@ -419,15 +419,28 @@ export const thinkingSchema = sObj({
 });
 export type ThinkingSection = InferSchema<typeof thinkingSchema>;
 
-/** Agent 主循环控制。 */
+/**
+ * Agent 主循环控制（[loop_control] 分区）。
+ *
+ * 四键生效语义（消费面 = core AgentLoop / headless 装配层）：
+ * - max_iterations：会话回合上限的**通用层**（优先级链第四层，低于 [session] 专项）：
+ *   CLI --max-rounds > deps 透传 > [session].max_rounds（>0）> 本键（>0）> 内建缺省。
+ *   0 = 不生效（回退内建缺省）——缺省恒 0，避免劫持缺省路径。
+ * - max_tool_calls_per_turn：单回合工具调用上限（超限调用不执行，回填结构化拒绝）；
+ *   0 = 不限（装配层不下发即不限）。
+ * - step_timeout_ms：工具限时看门狗的缺省时限（未知工具的看门狗上限）；
+ *   0 = 关闭看门狗（= 现状不限时）。
+ * - turn_timeout_ms：单回合总时限（headless 装配）；0 = 不限；
+ *   超时 → 在飞工具协作取消 + 结构化失败面 exit="turn-timeout"。
+ */
 export const loopControlSchema = sObj({
-  /** 单次会话最大迭代轮数。 */
-  max_iterations: sInt(200),
-  /** 单轮最大工具调用次数。 */
+  /** 会话回合上限通用层（低于 [session] 专项）；0 = 不生效（回退内建缺省）。 */
+  max_iterations: sInt(0),
+  /** 单轮最大工具调用次数；0 = 不限。 */
   max_tool_calls_per_turn: sInt(80),
-  /** 单步超时毫秒。 */
+  /** 工具限时看门狗缺省时限（毫秒）；0 = 关闭看门狗（现状不限时）。 */
   step_timeout_ms: sInt(120_000),
-  /** 单轮总超时毫秒；0 = 不限。 */
+  /** 单轮总超时毫秒；0 = 不限（超时 → 失败码 exit="turn-timeout"）。 */
   turn_timeout_ms: sInt(0),
 });
 export type LoopControlSection = InferSchema<typeof loopControlSchema>;
@@ -520,13 +533,25 @@ export const imageSchema = sObj({
 });
 export type ImageSection = InferSchema<typeof imageSchema>;
 
-/** 助手身份。 */
+/** 助手身份缺省产品名（[identity] name 的缺省值 = 产品名本身）。 */
+export const DEFAULT_IDENTITY_NAME = "bi";
+
+/**
+ * 助手身份（[identity] 分区）。
+ *
+ * 四键生效语义（消费面）：
+ * - name：TUI 横幅产品名（未显式声明 = 缺省产品名，横幅零变化）；
+ * - tagline：TUI 横幅副题行（空串 = 不出副题行）；
+ * - system_prompt_path：headless 系统指令前缀（CLI --agent-file 优先；文件缺失 →
+ *   结构化 warn + 回退内置）；
+ * - extra_instructions：追加为系统指令末条（空串 = 不追加）。
+ */
 export const identitySchema = sObj({
-  name: sStr("bi"),
+  name: sStr(DEFAULT_IDENTITY_NAME),
   tagline: sStr(""),
-  /** 自定义系统提示词文件路径；空串 = 使用内置。 */
+  /** 自定义系统提示词文件路径；空串 = 使用内置（CLI --agent-file 优先于本键）。 */
   system_prompt_path: sStr(""),
-  /** 追加到系统提示词末尾的附加指令。 */
+  /** 追加到系统提示词末尾的附加指令；空串 = 不追加。 */
   extra_instructions: sStr(""),
 });
 export type IdentitySection = InferSchema<typeof identitySchema>;
@@ -824,13 +849,13 @@ export type MemorySection = InferSchema<typeof memorySchema>;
  * [session] 挂载式分区（仿 [verify]/[subagent]/[ptc]/[cron]/[context]/[memory]，不进 17 根键）。
  *
  * 语义钉死：
- * - 未显式声明时 `config.session === undefined` → 装配层回退内建缺省 8（缺省路径零行为差）；
- * - 声明后 max_rounds > 0 才生效；0 或负数按 0 处理（同样回退内建缺省 8）。
+ * - 未显式声明时 `config.session === undefined` → 装配层回退内建缺省 16（缺省路径零行为差）；
+ * - 声明后 max_rounds > 0 才生效；0 或负数按 0 处理（同样回退内建缺省 16）。
  *
  * 接入面：headless 会话回合上限（CLI --max-rounds 优先级更高，deps 透传次之）。
  */
 export const sessionSchema = sObj({
-  /** headless 会话回合上限；0 = 用内建缺省 8。 */
+  /** headless 会话回合上限；0 = 用内建缺省 16。 */
   max_rounds: sInt(0),
 });
 export type SessionSection = InferSchema<typeof sessionSchema>;

@@ -15,6 +15,7 @@ import { buildDefaultToolset } from "../packages/core/src/cli/toolset";
 import { runBi } from "../packages/core/src/cli/main";
 import { AgentTuiSession, MOUSE_DISABLE, MOUSE_ENABLE } from "../packages/tui/src/mount/agent-tui";
 import { KeyStream, runRepl } from "../packages/tui/src/mount/repl";
+import { attachConfigWatch } from "../packages/tui/src/mount/config-watch";
 import { loadKeybindings } from "../packages/tui/src/mount/keybindings";
 import { InputLoop } from "../packages/tui/src/engine/diff-renderer";
 import { PermissionGate } from "../packages/core/src/guard/permission-gate";
@@ -62,8 +63,16 @@ const builtinFallback = builtinSlashCandidates;
 /** 交互 REPL 主路径（bin 层装配；REPL v1 纯对话，工具注册表面归后续装配卡）。 */
 async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 	try {
-		const service = new ConfigService();
+		// 先读配置取 [watch] 偏好（构造 ConfigService 的 watch 选项用；否则构造期无法读 config）
+		const probe = new ConfigService();
+		const probeConfig = await probe.load();
+		const service = new ConfigService({
+			watchDebounceMs: probeConfig.watch.debounce_ms,
+			watchIgnore: probeConfig.watch.ignore,
+		});
 		const config = await service.load();
+		// [watch] 三键接线：enabled 才开文件监听热重载（缺省 false 零行为差）。
+		attachConfigWatch(service, config.watch);
 		const selection = resolveModelPort(config, {
 			resolveApiKey: (name) => service.resolveProviderApiKey(name),
 		});
@@ -216,6 +225,18 @@ async function runReplMain(stdin: RawCapableStdin): Promise<number> {
 			gate,
 			candidates: () => menuCandidates,
 			slashCommand,
+			// [loop_control] 三键接线（config 显式声明才生效；0 = 该键不生效）：
+			// max_tool_calls_per_turn = 单回合工具调用上限；step_timeout_ms = 工具限时
+			// 看门狗缺省时限（0 = 关闭看门狗）。
+			...(config.loop_control?.max_tool_calls_per_turn !== undefined &&
+			config.loop_control.max_tool_calls_per_turn > 0
+				? { maxToolCallsPerTurn: config.loop_control.max_tool_calls_per_turn }
+				: {}),
+			...(config.loop_control?.step_timeout_ms !== undefined && config.loop_control.step_timeout_ms > 0
+				? { stepTimeoutMs: config.loop_control.step_timeout_ms }
+				: {}),
+			// [identity] 横幅身份面（name = 产品名替代；tagline = 副题行）。
+			...(config.identity !== undefined ? { identity: config.identity } : {}),
 			// BI-11 接线：TokenHud 分母 = 模型上下文窗口（config context_limit；
 			// 0/未配 = 会话缺省 128000）。
 			...(contextLimitOf(config, selection.modelId) !== undefined

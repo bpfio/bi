@@ -84,6 +84,9 @@ export function createSubagentLoopFactory(deps: SubagentLoopFactoryDeps): LoopFa
 	return (_profile: SubagentProfile, ctx: SubLoopSessionCtx): SubLoop => {
 		return {
 			async run(): Promise<SubLoopOutcome> {
+				// 子循环**不走** [loop_control] 装配面（保持现状）：子代理自带
+				// max_iterations / timeout_ms 语义（见 deps.maxRounds / deps.timeoutMs），
+				// 与主会话的 [loop_control] 四键互不干涉。
 				const agentLoop = new AgentLoop({
 					execute: async (call: ToolCall, signal: AbortSignal): Promise<unknown> => {
 						const binding = registry.get(call.name);

@@ -537,6 +537,58 @@ describe("集成钩子", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* [loop_control] max_tool_calls_per_turn（单回合工具调用上限）           */
+/* ------------------------------------------------------------------ */
+
+describe("AgentLoop · max_tool_calls_per_turn（单回合工具调用上限）", () => {
+	test("超限调用不执行，回填结构化拒绝（loop-control: 单轮工具调用超过上限 N）", async () => {
+		const executed: string[] = [];
+		const loop = new AgentLoop({
+			execute: async (c) => {
+				executed.push(c.id);
+				return `v:${c.id}`;
+			},
+			maxToolCallsPerTurn: 2,
+		});
+		loop.beginTurn();
+		const results = await loop.executeTools([call("c1", "t"), call("c2", "t"), call("c3", "t")]);
+		expect(executed).toEqual(["c1", "c2"]);
+		expect(results[0]).toMatchObject({ ok: true });
+		expect(results[2]).toMatchObject({ ok: false });
+		expect(results[2]?.error).toContain("loop-control: 单轮工具调用超过上限 2");
+		expect(results[2]?.error).toContain("[loop_control] max_tool_calls_per_turn");
+	});
+
+	test("0 / 未提供 → 不限（全部调用执行）", async () => {
+		for (const cap of [undefined, 0]) {
+			const executed: string[] = [];
+			const loop = new AgentLoop({
+				execute: async (c) => {
+					executed.push(c.id);
+					return `v:${c.id}`;
+				},
+				...(cap !== undefined ? { maxToolCallsPerTurn: cap } : {}),
+			});
+			loop.beginTurn();
+			const results = await loop.executeTools([call("c1", "t"), call("c2", "t"), call("c3", "t")]);
+			expect(executed).toEqual(["c1", "c2", "c3"]);
+			expect(results.every((r) => r.ok)).toBe(true);
+		}
+	});
+
+	test("拒绝结果按调用序回填（results 下标与调用下标对齐）", async () => {
+		const loop = new AgentLoop({
+			execute: async (c) => `v:${c.id}`,
+			maxToolCallsPerTurn: 1,
+		});
+		loop.beginTurn();
+		const results = await loop.executeTools([call("a", "t"), call("b", "t")]);
+		expect(results[0]).toMatchObject({ id: "a", ok: true });
+		expect(results[1]).toMatchObject({ id: "b", ok: false });
+	});
+});
+
+/* ------------------------------------------------------------------ */
 /* fileAccessesOverlap 路径重叠矩阵                                     */
 /* ------------------------------------------------------------------ */
 

@@ -42,6 +42,8 @@ import {
 import { PermissionGate } from "../guard/permission-gate";
 import type { PermissionRequest } from "../guard/types";
 import type { WorkspaceTrustState } from "../guard/workspace-trust";
+import { ToolTimeoutPolicy } from "../guard/timeout-policy";
+import { systemClock, type Clock } from "../guard/deadline";
 import { boundToolText } from "../context/bounded-tool-text";
 import { buildTimeContext, DEFAULT_TIMEZONE } from "../context/time-context";
 import { DateChangeSensor } from "../context/date-change-sensor";
@@ -55,7 +57,7 @@ import {
 } from "../context/compactor";
 import type { Msg } from "../context/tool-pairing";
 import { sanitizeErrorPayload } from "../observability/endpoint-sanitizer";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as nodeFs from "node:fs";
 import {
 	consolidate,
@@ -71,6 +73,7 @@ import {
 	type VerificationResult,
 } from "../verifier/target-verifier";
 import type { VerifySection } from "../config/schema";
+import type { IdentitySection } from "../config/schema";
 import { HookRunner, type HookSpawnImpl } from "../hooks/hook-runner";
 import type { HookRunRecord } from "../hooks/types";
 import { loadHooksConfig } from "../config/hooks-adapter";
@@ -133,10 +136,46 @@ export interface HeadlessOptions {
 	 */
 	readonly outputFormat?: OutputFormat;
 	/**
-	 * 模型回合上限（防失控，缺省 8）。装配层优先级：CLI --max-rounds > deps 透传 >
-	 * config [session] max_rounds（>0 才生效）> 本缺省 8。
+	 * 模型回合上限（防失控，缺省 16）。装配层优先级：CLI --max-rounds > deps 透传 >
+	 * config [session] max_rounds（>0 才生效）> 本缺省 16。
 	 */
 	readonly maxRounds?: number;
+	/**
+	 * 单回合工具调用上限（对应 config [loop_control] max_tool_calls_per_turn）。
+	 * 超限调用**不执行**，回填结构化拒绝结果（不炸回合）；缺省 / ≤0 = 不限。
+	 */
+	readonly maxToolCallsPerTurn?: number;
+	/**
+	 * 工具限时看门狗缺省时限（对应 config [loop_control] step_timeout_ms）。
+	 * >0 且未显式提供 timeoutPolicy 时装配缺省 ToolTimeoutPolicy（未知工具的看门狗上限）；
+	 * 0 = 关闭看门狗（= 现状不限时）。
+	 */
+	readonly stepTimeoutMs?: number;
+	/**
+	 * 工具限时看门狗显式注入面（缺省不提供 = 由 stepTimeoutMs 决定是否自建；
+	 * 显式提供时优先，stepTimeoutMs 不再自建）。
+	 */
+	readonly timeoutPolicy?: ToolTimeoutPolicy;
+	/**
+	 * 单回合总时限（对应 config [loop_control] turn_timeout_ms；缺省 / ≤0 = 不限）。
+	 * 超时 → 在飞工具协作取消 + 结构化失败面（exit="turn-timeout"）+ stderr 提示。
+	 */
+	readonly turnTimeoutMs?: number;
+	/**
+	 * 注入时钟（单回合时限计时与看门狗定时器；缺省系统时钟）。
+	 */
+	readonly clock?: Clock;
+	/**
+	 * [identity] 分区（config identity.*）：system_prompt_path / extra_instructions 消费面。
+	 * 缺省不提供 = 不消费 identity 的系统指令面（现状逐字节等价）。
+	 */
+	readonly identity?: IdentitySection;
+	/**
+	 * 诊断输出汇（缺省 process.stderr；测试注入收集）。承载 [identity]
+	 * system_prompt_path 读取失败的结构化 warn 与 [loop_control] turn_timeout_ms
+	 * 超时的结构化提示。
+	 */
+	readonly err?: (line: string) => void;
 	/**
 	 * 系统指令注入面（BI-20.2b：--agent-file 内容作为系统指令前置）。
 	 * 若存在，渲染为消息序首条 { role:"system" }；缺省不注入。绝不假冒——
@@ -319,11 +358,11 @@ export class ToolCallAssembler {
 
 /** 会话级装配错误（main 捕获转退出码）。 */
 export class HeadlessError extends Error {
-	readonly code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed" | "session-not-found";
+	readonly code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "turn-timeout" | "verify-failed" | "session-not-found";
 	/** verify-failed 时的结构化自验结果（含 gaps；其余 code 缺省）。 */
 	readonly verification?: VerificationResult;
 	constructor(
-		code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "verify-failed" | "session-not-found",
+		code: "hook-blocked" | "adapter-error" | "rounds-exceeded" | "turn-timeout" | "verify-failed" | "session-not-found",
 		message: string,
 		verification?: VerificationResult,
 	) {
@@ -331,6 +370,20 @@ export class HeadlessError extends Error {
 		this.name = "HeadlessError";
 		this.code = code;
 		if (verification !== undefined) this.verification = verification;
+	}
+}
+
+/**
+ * [loop_control] turn_timeout_ms 单回合总时限到点（内部信号）。
+ *
+ * 与会话级失败码区分：本类只用于打断当前回合（竞速面），对外失败面由
+ * failSession("turn-timeout") 抛出（携带脱敏与结构化语义）。
+ */
+export class TurnTimeoutSignal extends Error {
+	readonly code = "turn-timeout" as const;
+	constructor(readonly timeoutMs: number) {
+		super(`turn exceeded ${timeoutMs}ms`);
+		this.name = "TurnTimeoutSignal";
 	}
 }
 
@@ -365,7 +418,19 @@ export function buildVerifyContract(section: VerifySection): TargetContract {
  */
 export async function runHeadless(options: HeadlessOptions): Promise<HeadlessResult> {
 	const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`));
+	/** 诊断输出汇（缺省 stderr）：结构化 warn / 提示面（测试注入收集）。 */
+	const errOut = options.err ?? ((line: string) => process.stderr.write(`${line}\n`));
 	const outputFormat: OutputFormat = options.outputFormat ?? "stream-json";
+	// [loop_control] 四键消费面（装配层经 config 下发；缺省/≤0 = 该键不生效）：
+	// - max_tool_calls_per_turn：单回合工具调用上限（超限调用不执行，回填结构化拒绝）；
+	// - step_timeout_ms：工具限时看门狗缺省时限（>0 且未显式注入 timeoutPolicy 时自建缺省看门狗）；
+	// - turn_timeout_ms：单回合总时限（>0 时每回合起时限看门狗）。
+	// 注：子代理循环不走本面（自带 max_iterations 语义，见 cli/subagent-adapter.ts）。
+	const maxToolCallsPerTurn = options.maxToolCallsPerTurn ?? 0;
+	const stepTimeoutMs = options.stepTimeoutMs ?? 0;
+	const turnTimeoutMs = options.turnTimeoutMs ?? 0;
+	/** 单回合时限计时时钟（可注入；缺省系统时钟）。 */
+	const turnClock = options.clock ?? systemClock;
 	// text / json 形态：输出面收敛——事件仍内部流转（缓冲/回喂不变），仅不落 out；
 	// text 最终只落 finalText 一段，json 最终只落一个 JSON 对象（见下方终局分支）。
 	// stream-json 保持逐行透传。
@@ -535,14 +600,86 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	const agentLoop = new AgentLoop({
 		execute: assembledExecutor,
 		readOnlyTools,
+		// [loop_control] max_tool_calls_per_turn：单回合工具调用上限（超限调用不执行，
+		// 回填结构化拒绝；0 = 不限，缺省不限）。
+		...(maxToolCallsPerTurn > 0 ? { maxToolCallsPerTurn } : {}),
+		// [loop_control] step_timeout_ms：工具限时看门狗缺省时限。显式注入的 timeoutPolicy
+		// 优先；未注入且 step_timeout_ms > 0 时自建缺省看门狗（未知工具按此上限，
+		// 内置表键沿用既有限时）。0 = 关闭看门狗（现状不限时）。
+		...(options.timeoutPolicy !== undefined
+			? { timeoutPolicy: options.timeoutPolicy }
+			: stepTimeoutMs > 0
+				? { timeoutPolicy: new ToolTimeoutPolicy({ defaultTimeoutMs: stepTimeoutMs }) }
+				: {}),
 	});
+
+	/**
+	 * [loop_control] turn_timeout_ms 单回合时限看门狗（缺省不限时 = 不建，空转）。
+	 *
+	 * 到点语义：abort 本回合的模型流（协作取消信号透传给模型端口）+ abort 在飞工具
+	 * 批次（AgentLoop.abortInFlightTools，不改回合状态）→ 以 TurnTimeoutSignal 打断
+	 * 本回合；对外失败面（终局输出 + failSession("turn-timeout")）由回合 catch 统一落。
+	 */
+	const startTurnWatchdog = (): {
+		readonly signal: AbortSignal | undefined;
+		readonly race: <T>(promise: Promise<T>) => Promise<T>;
+		readonly dispose: () => void;
+	} => {
+		if (turnTimeoutMs <= 0) {
+			return {
+				signal: undefined,
+				race: <T>(promise: Promise<T>): Promise<T> => promise,
+				dispose: () => undefined,
+			};
+		}
+		const controller = new AbortController();
+		let handle: unknown;
+		let disposed = false;
+		const timeoutSignal = new TurnTimeoutSignal(turnTimeoutMs);
+		const timeoutPromise = new Promise<never>((_resolve, reject) => {
+			handle = turnClock.setTimeout(() => {
+				if (disposed) return;
+				controller.abort(timeoutSignal);
+				agentLoop.abortInFlightTools(timeoutSignal);
+				reject(timeoutSignal);
+			}, turnTimeoutMs);
+		});
+		// 兜底处理器：竞速之外的拒绝路径也不产生未捕获拒绝。
+		timeoutPromise.catch(() => undefined);
+		return {
+			signal: controller.signal,
+			race: <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, timeoutPromise]),
+			dispose: () => {
+				disposed = true;
+				turnClock.clearTimeout(handle);
+			},
+		};
+	};
 
 	// ---- 装配序 ④：模型对话驱动器 ----
 	// BI-20.2b：--agent-file 内容作为系统指令前置（系统消息面；无则单条 user）。
 	// BI-05.3（W3-D7）：time-context 当前时钟块作为 system 面追加（缺省 ctxTime=false
 	// 不追加，逐字节等价）；date-change-sensor 基线在首轮 discloseDateChange 建立。
 	const systemParts: string[] = [];
-	if (options.systemInstruction !== undefined) systemParts.push(options.systemInstruction);
+	// [identity] system_prompt_path → 系统指令前缀。CLI --agent-file 优先（CLI 给了
+	// 就不读 config 路径——两者不叠加）；config 声明且 CLI 未给时读该文件内容作为
+	// 系统指令前缀；文件缺失/不可读 → 结构化 warn（stderr）不炸会话，回退内置（零注入）。
+	if (options.systemInstruction !== undefined) {
+		systemParts.push(options.systemInstruction);
+	} else {
+		const promptPath = options.identity?.system_prompt_path?.trim() ?? "";
+		if (promptPath !== "") {
+			const absPath = resolve(options.cwd, promptPath);
+			try {
+				const content = nodeFs.readFileSync(absPath, "utf8").trim();
+				if (content !== "") systemParts.push(content);
+			} catch (cause) {
+				errOut(
+					`bi: [identity] system_prompt_path 不可读或不存在: ${absPath}（${cause instanceof Error ? cause.message : String(cause)}）——回退内置系统指令`,
+				);
+			}
+		}
+	}
 	// BI-05.1（W4-D9）：[memory] inject_enabled → 启动读 <cwd>/BI.dream.md，存在则
 	// 内容经 system 面前缀注入。与 --agent-file 共存时 agent-file 优先（已先 push），
 	// dream 追加其后；文件不存在/空 = 不注入（缺省态，零行为差）。
@@ -571,6 +708,10 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 	if (ctxTime) {
 		systemParts.push(buildTimeContext({ isoNow: new Date(ctxNow()).toISOString(), timezone: ctxTz }));
 	}
+	// [identity] extra_instructions → 系统面末条（顺序钉死：CLI agent-file（或 config
+	// system_prompt_path）→ 内建（项目记忆/时钟块）→ extra_instructions）。
+	const extraInstructions = options.identity?.extra_instructions?.trim() ?? "";
+	if (extraInstructions !== "") systemParts.push(extraInstructions);
 	// --resume 历史重放：user/assistant 的文本轮按序进上下文（assistant 兼容
 	// {text} 与 {content:[{type:"text",text}]} 双形态；tool 轮的配对重放归
 	// BI-10.2 语法树语义，本面备案不重放——续聊文本场景成立）。
@@ -770,7 +911,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		messages.length = 0;
 		messages.push(...next);
 	};
-	const maxRounds = options.maxRounds ?? 8;
+	const maxRounds = options.maxRounds ?? 16;
 	let finalText = "";
 	let rounds = 0;
 
@@ -784,8 +925,24 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		return entry;
 	};
 
-	while (rounds < maxRounds) {
-		rounds += 1;
+	// 本回合状态（每回合重置；提为外层变量以便回合体抽成函数供时限竞速消费）。
+	let text = "";
+	let blocks: ContentBlock[] = [];
+	let assembler = new ToolCallAssembler();
+	let stop: StopReason = null;
+	/** 本轮用量读数（同轮多次上报取最大值，轮末并入会话级汇总）。 */
+	let roundUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 };
+
+	/**
+	 * 本回合主体：模型流 → 工具批 → tool_result 回填。
+	 *
+	 * 抽成函数是为了让 [loop_control] turn_timeout_ms 的时限看门狗能对**整回合**竞速
+	 * （到点 abort 模型流 + abort 在飞工具批次 → 以 TurnTimeoutSignal 打断本回合）。
+	 * 返回 "done" = 本回合收束（成功面已落终局输出）；"tools" = 工具回合已回填（继续下一回合）。
+	 */
+	const runTurnBody = async (
+		signal: AbortSignal | undefined,
+	): Promise<{ kind: "done" } | { kind: "tools" }> => {
 		// 状态机契约：beginTurn 只走 idle→thinking；工具回合落定后已在 thinking，
 		// 直接进入下一轮 executeTools（thinking→tool-executing）。
 		if (agentLoop.state === "idle") agentLoop.beginTurn();
@@ -794,14 +951,12 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 		applyImageOffload(); // BI-08.2 渐进图像卸载（缺省关 = 零变动）
 		await applyAutoCompact(); // BI-10 AutoCompactor 水位紧缩（缺省关 = 走既有条目数门禁）
 		applyHistoryCap(); // window-manager 历史条目上限裁剪
-		let text = "";
-		const blocks: ContentBlock[] = [];
-		const assembler = new ToolCallAssembler();
-		let stop: StopReason = null;
-		/** 本轮用量读数（同轮多次上报取最大值，轮末并入会话级汇总）。 */
-		const roundUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 };
 
-		for await (const event of options.model.stream({ messages, tools: tools.map((t) => t.definition) })) {
+		for await (const event of options.model.stream({
+			messages,
+			tools: tools.map((t) => t.definition),
+			...(signal !== undefined ? { signal } : {}),
+		})) {
 			if (event.type === "content_delta") {
 				text += event.delta;
 			} else if (event.type === "tool_call_delta") {
@@ -918,17 +1073,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			} else {
 				emit({ type: "session_done", sessionId, exit: "ok", rounds, finalText });
 			}
-			return {
-				exitCode: 0,
-				sessionId,
-				finalText,
-				rounds,
-				toolResults,
-				hookRecords,
-				permissionDecisions,
-				additionalDirs: options.additionalDirs ?? [],
-				...(verificationResult !== undefined ? { verification: verificationResult } : {}),
-			};
+			return { kind: "done" };
 		}
 
 		if (stop !== "tool_use") {
@@ -968,6 +1113,72 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
 			);
 		}
 		messages.push({ role: "user", content: resultBlocks });
+		return { kind: "tools" };
+	};
+
+	/**
+	 * [loop_control] turn_timeout_ms 超时的结构化失败面（对齐 F-EV-01 rounds-exceeded 先例）：
+	 * - stream-json：落 session_done 帧（exit="turn-timeout"），自动化消费者据此收尾；
+	 * - json：落完整 JSON 对象（字段对齐成功形态，reply 空串），stdout 仍是单对象可 parse；
+	 * - text：不落 stdout（诊断经 stderr 报出，与既有失败路径同形）。
+	 * 终局输出先落，再抛结构化失败（退出码由装配方转非零）。
+	 */
+	const failTurnTimeout = (): never => {
+		if (outputFormat === "stream-json") {
+			emit({ type: "session_done", sessionId, exit: "turn-timeout", rounds });
+		} else if (outputFormat === "json") {
+			out(
+				JSON.stringify({
+					sessionId,
+					title: sessionTitle,
+					rounds,
+					usage: usagePayload(),
+					reply: "",
+					exit: "turn-timeout",
+				}),
+			);
+		}
+		errOut(
+			`bi: [loop_control] turn-timeout: 单回合超过时限 ${turnTimeoutMs}ms（config [loop_control] turn_timeout_ms）`,
+		);
+		throw failSession(
+			"turn-timeout",
+			`单回合超过时限 ${turnTimeoutMs}ms（config [loop_control] turn_timeout_ms；可用 [loop_control] turn_timeout_ms 调高）`,
+		);
+	};
+
+	while (rounds < maxRounds) {
+		rounds += 1;
+		// 本回合状态重置（每回合独立；与回合体共享同一组外层变量）。
+		text = "";
+		blocks = [];
+		assembler = new ToolCallAssembler();
+		stop = null;
+		roundUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0 };
+		// [loop_control] turn_timeout_ms：本回合时限看门狗（缺省不限时 = 空转，无定时器）。
+		const turnWatch = startTurnWatchdog();
+		try {
+			const outcome = await turnWatch.race(runTurnBody(turnWatch.signal));
+			if (outcome.kind === "done") {
+				return {
+					exitCode: 0,
+					sessionId,
+					finalText,
+					rounds,
+					toolResults,
+					hookRecords,
+					permissionDecisions,
+					additionalDirs: options.additionalDirs ?? [],
+					...(verificationResult !== undefined ? { verification: verificationResult } : {}),
+				};
+			}
+		} catch (cause) {
+			// 超时 → 结构化失败面（对齐 F-EV-01 rounds-exceeded 先例）；其余错误原样抛。
+			if (cause instanceof TurnTimeoutSignal) failTurnTimeout();
+			throw cause;
+		} finally {
+			turnWatch.dispose();
+		}
 	}
 
 	// F-EV-01：回合打尽 = 结构化失败面——先落终局输出，再照旧抛错（退出码仍非零）。

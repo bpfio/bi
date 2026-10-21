@@ -182,7 +182,10 @@ describe("schema: 深度合并语义", () => {
     deepMergeLayer(base, validate({ models: { default: "m1" } }).layer);
     const complete: BiConfig = base;
     expect(complete.models.default).toBe("m1");
-    expect(complete.loop_control.max_iterations).toBe(200);
+    // [loop_control] max_iterations 缺省语义变更：200 → 0（0 = 不生效，回退内建缺省）。
+    // 原钉死 200 的断言随新语义更新——语义变更非回归（回合上限不再被缺省劫持，
+    // 实际生效值改由 CLI --max-rounds > [session].max_rounds > 本键 的优先级链决定）。
+    expect(complete.loop_control.max_iterations).toBe(0);
   });
 });
 
@@ -396,14 +399,14 @@ describe("schema: F-EV-01 [session] 挂载分区（headless 回合上限）", ()
     return { config: base, issues };
   }
 
-  test("缺省 0：不声明 [session] → 不物化（回内建缺省 8，缺省路径零行为差）", () => {
+  test("缺省 0：不声明 [session] → 不物化（回内建缺省 16，缺省路径零行为差）", () => {
     const { config, issues } = load({});
     expect(issues).toEqual([]);
     expect(config.session).toBeUndefined();
     // 挂载拓扑：不进 17 根键（既有钉死断言不红）
     expect("session" in DEFAULT_BI_CONFIG).toBe(false);
     expect(Object.keys(DEFAULT_BI_CONFIG)).toHaveLength(17);
-    // 分区 schema 缺省值 = 0（= 用内建缺省 8）
+    // 分区 schema 缺省值 = 0（= 用内建缺省 16）
     expect(sessionSchema.defaultValue().max_rounds).toBe(0);
   });
 
@@ -413,7 +416,7 @@ describe("schema: F-EV-01 [session] 挂载分区（headless 回合上限）", ()
     expect(config.session?.max_rounds).toBe(24);
   });
 
-  test("0 / 负数按 0 处理（装配层仅 >0 生效 → 回缺省 8）", () => {
+  test("0 / 负数按 0 处理（装配层仅 >0 生效 → 回缺省 16）", () => {
     const zero = load({ session: { max_rounds: 0 } });
     expect(zero.issues).toEqual([]);
     expect(zero.config.session?.max_rounds).toBe(0);

@@ -108,3 +108,37 @@ describe("ConfigService: fs.watch 热重载", () => {
     service.stopWatch();
   });
 });
+
+describe("ConfigService: watch ignore 过滤", () => {
+  test("ignore 字面命中文件名 → 不触发重载（值不变、无 watch 通知）", async () => {
+    service = new ConfigService({ homeDir: home, workDir: work, env: {}, watchDebounceMs: 40, watchIgnore: ["config.toml"] });
+    await service.load();
+    const metas: ConfigChangeMeta[] = [];
+    service.onChange((_c, m) => metas.push(m));
+    service.startWatch();
+
+    await writeHomeConfig(home, "config.toml", "[read]\nmax_file_size_kb = 64\n");
+    await new Promise((resolve) => setTimeout(resolve, 250)); // 等潜在触发
+    expect(metas.some((m) => m.trigger === "watch")).toBe(false);
+    expect(service.currentOrNull?.read.max_file_size_kb).not.toBe(64);
+  });
+
+  test("ignore 通配命中（config*） → 不触发重载", async () => {
+    service = new ConfigService({ homeDir: home, workDir: work, env: {}, watchDebounceMs: 40, watchIgnore: ["config*"] });
+    await service.load();
+    service.startWatch();
+
+    await writeHomeConfig(home, "config.toml", "[read]\nmax_file_size_kb = 91\n");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(service.currentOrNull?.read.max_file_size_kb).not.toBe(91);
+  });
+
+  test("ignore 未命中 → 仍热重载（对照，tui.toml 不受 config* 影响）", async () => {
+    service = new ConfigService({ homeDir: home, workDir: work, env: {}, watchDebounceMs: 40, watchIgnore: ["config*"] });
+    await service.load();
+    service.startWatch();
+
+    await writeHomeConfig(home, "tui.toml", "theme = 'night'\n");
+    await waitFor(() => service?.currentOrNull?.tui.theme === "night");
+  });
+});

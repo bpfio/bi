@@ -280,15 +280,29 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const sanitizeErrors = loadedConfig?.telemetry.sanitize_errors ?? false;
 	const verifySection = loadedConfig?.verify;
 	// F-EV-01：config [session] max_rounds（headless 会话回合上限）。仅 >0 生效；
-	// 0 / 负数按 0 处理 → 不下发（回退内建缺省 8）。未声明 [session] 时恒 undefined。
+	// 0 / 负数按 0 处理 → 不下发（回退内建缺省 16）。未声明 [session] 时恒 undefined。
 	const configMaxRounds = loadedConfig?.session?.max_rounds;
+	// [loop_control] max_iterations：会话回合上限**通用层**（缺省 0 = 不生效）。
+	const loopControlMaxIterations = loadedConfig?.loop_control?.max_iterations;
 	/**
-	 * 回合上限生效值：CLI --max-rounds > deps 透传 maxRounds >
-	 * config [session] max_rounds（>0 才生效）> 内建缺省 8（headless 侧兜底）。
-	 * 三者皆缺省时不下发 maxRounds（headless 侧 `options.maxRounds ?? 8` 兜底）。
+	 * 回合上限生效值（四层优先级链）：
+	 * CLI --max-rounds > deps 透传 maxRounds > config [session] max_rounds（>0 才生效）>
+	 * config [loop_control] max_iterations（>0 才生效）> 内建缺省 16（headless 侧兜底）。
+	 * 皆缺省时不下发 maxRounds（headless 侧 `options.maxRounds ?? 16` 兜底）。
 	 */
 	const effectiveMaxRounds =
-		parsed.maxRounds ?? h.maxRounds ?? (configMaxRounds !== undefined && configMaxRounds > 0 ? configMaxRounds : undefined);
+		parsed.maxRounds ??
+		h.maxRounds ??
+		(configMaxRounds !== undefined && configMaxRounds > 0 ? configMaxRounds : undefined) ??
+		(loopControlMaxIterations !== undefined && loopControlMaxIterations > 0 ? loopControlMaxIterations : undefined);
+	// [loop_control] 其余三键消费面（装配层 → headless / AgentLoop）：
+	// - max_tool_calls_per_turn：单回合工具调用上限（>0 才下发；0 = 不限）；
+	// - step_timeout_ms：工具限时看门狗缺省时限（>0 才下发；0 = 关闭看门狗）；
+	// - turn_timeout_ms：单回合总时限（>0 才下发；0 = 不限）。
+	const loopControl = loadedConfig?.loop_control;
+	const maxToolCallsPerTurn = loopControl?.max_tool_calls_per_turn ?? 0;
+	const stepTimeoutMs = loopControl?.step_timeout_ms ?? 0;
+	const turnTimeoutMs = loopControl?.turn_timeout_ms ?? 0;
 
 	// BI-07.4：config [subagent] enabled 时装配 SubagentRunner 并经 headless 注入
 	// spawn_subagent 工具（缺省 enabled=false = 不装配，既有工具面与对话流零变动）。
@@ -419,6 +433,14 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 				: {}),
 			// 回合上限生效值（优先级链见上方 effectiveMaxRounds）。
 			...(effectiveMaxRounds !== undefined ? { maxRounds: effectiveMaxRounds } : {}),
+			// [loop_control] 三键透传（>0 才下发；0 / 未声明 = 该键不生效，现状路径不变）。
+			...(maxToolCallsPerTurn > 0 ? { maxToolCallsPerTurn } : {}),
+			...(stepTimeoutMs > 0 ? { stepTimeoutMs } : {}),
+			...(turnTimeoutMs > 0 ? { turnTimeoutMs } : {}),
+			// [identity] 系统指令面（system_prompt_path / extra_instructions；CLI --agent-file 优先）。
+			...(loadedConfig?.identity !== undefined ? { identity: loadedConfig.identity } : {}),
+			// 诊断面（stderr）：[identity] system_prompt_path warn 与 [loop_control] turn-timeout 提示。
+			err,
 			// 0.3.0 测试发现补齐：--resume <sessionId> → 无头续会话（headless sessionId
 			// 能力面 BI-23 起就有，缺 CLI 入口——用户此前无法从命令行续会话）。
 			...(parsed.resume !== undefined ? { sessionId: parsed.resume } : {}),

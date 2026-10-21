@@ -59,7 +59,7 @@ export const GLOBAL_ARGS: readonly GlobalArgSpec[] = [
   {
     flag: "--max-rounds",
     valueName: "<n>",
-    description: "无头会话模型回合上限（正整数，缺省 8）",
+    description: "无头会话模型回合上限（正整数，缺省 16）",
     repeatable: false,
   },
   {

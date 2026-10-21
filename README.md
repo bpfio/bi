@@ -103,8 +103,8 @@ bun bin/bi.ts config get models.default
 MY_PROVIDER_API_KEY=sk-... bun bin/bi.ts --prompt "用一句话介绍你自己"
 ```
 
-模型回合上限缺省 8（调研型任务不够）：CLI `--max-rounds <n>` 临时调高，或写进配置的
-`[session] max_rounds`（0 = 用缺省 8，调研型任务建议 16-32）。回合打尽时的输出契约：
+模型回合上限缺省 16（调研型任务不够）：CLI `--max-rounds <n>` 临时调高，或写进配置的
+`[session] max_rounds`（0 = 用缺省 16，调研型任务建议 16-32）。回合打尽时的输出契约：
 stream-json 形态落末帧 `session_done`（`exit="rounds-exceeded"`），`--output-format json`
 形态 stdout 落一个完整 JSON 对象（`exit="rounds-exceeded"`、`reply` 空串），两者退出码均非零。
 
@@ -152,9 +152,9 @@ get/set 键面，直接写 TOML）：
 | --- | --- |
 | `a2a` | `a2a.allow`、`a2a.enabled`、`a2a.listen` |
 | `hooks` | `hooks.enabled`、`hooks.entries` |
-| `identity` | `identity.extra_instructions`、`identity.name`、`identity.system_prompt_path`、`identity.tagline` |
+| `identity` | `identity.extra_instructions`（追加为系统指令末条；空串 = 不追加）、`identity.name`（TUI 横幅产品名；未声明 = 用缺省产品名）、`identity.system_prompt_path`（自定义系统提示词文件；CLI `--agent-file` 优先，文件缺失 → 结构化告警并回退内置）、`identity.tagline`（TUI 横幅副题行；空串 = 不出副题） |
 | `image` | `image.allowed_types`、`image.max_size_mb` |
-| `loop_control` | `loop_control.max_iterations`、`loop_control.max_tool_calls_per_turn`、`loop_control.step_timeout_ms`、`loop_control.turn_timeout_ms` |
+| `loop_control` | `loop_control.max_iterations`（会话回合上限通用层；`0` = 不生效，回退内建缺省）、`loop_control.max_tool_calls_per_turn`（单回合工具调用上限，超限调用不执行并回填结构化拒绝；`0` = 不限）、`loop_control.step_timeout_ms`（工具限时看门狗缺省时限；`0` = 关闭看门狗）、`loop_control.turn_timeout_ms`（单回合总时限；`0` = 不限，超时 → 失败码 `turn-timeout`） |
 | `models` | `models.default` |
 | `permission` | `permission.mode`、`permission.rules` |
 | `providers` | `providers.default` |
@@ -189,11 +189,45 @@ get/set 键面，直接写 TOML）：
 | `[cron]` | `enabled` = 注册会话内 cron 三件套（`cron_schedule` / `cron_list` / `cron_remove`） |
 | `[context]` | 上下文引擎：`time_context` / `date_change_sensor` / `tool_result_prune` / `max_history_entries` / `timezone` / `image_offload`（BI-08.2 渐进图像卸载）/ `auto_compactor`（BI-10 token 水位紧缩） |
 | `[memory]` | 记忆面：`dream_enabled`（收尾沉淀到 `<cwd>/BI.dream.md`）/ `inject_enabled`（启动注入 `<cwd>/BI.md` 项目记忆 + `<cwd>/BI.dream.md` 沉淀） |
-| `[session]` | 无头会话回合上限：`max_rounds`（缺省 0 = 用内建缺省 8；调研型任务建议 16-32；CLI `--max-rounds` 优先级更高） |
+| `[session]` | 无头会话回合上限：`max_rounds`（缺省 0 = 用内建缺省 16；调研型任务建议 16-32；CLI `--max-rounds` 优先级更高） |
 | `[vis]` | 本地会话可视化（`bi vis`）配置面：`enabled`（声明后须 `true` 才启动，否则结构化拒绝 exit 4；未声明 `[vis]` 时不受影响）/ `listen`（缺省监听 `"ip:port"`，CLI `--host`/`--port` 优先）/ `token_env`（令牌环境变量名，缺省空 = 用内建 `BI_VIS_AUTH_TOKEN`） |
 | `[mcp]` | `servers.<id>`（`command`/`args`/`env`/`enabled`）= stdio MCP server 装配（工具以 `mcp__<id>__<tool>` 命名入工具面；坏条目结构化警告不阻塞；SSE 型暂未支持） |
 
 （`[mcp]` 一行按便利列在上表内；实为根分区，缺省恒物化为 `servers = {}`，不属挂载拓扑。）
+
+### `[loop_control]` 分区（Agent 主循环控制）
+
+`[loop_control]` 是根分区（恒物化），四个键约束 Agent 主循环的边界：
+
+| 键 | 缺省 | 说明 |
+| --- | --- | --- |
+| `loop_control.max_iterations` | `0` | 会话回合上限**通用层**（低于 `[session]` 专项）；`0` = 不生效，回退内建缺省 |
+| `loop_control.max_tool_calls_per_turn` | `80` | 单回合工具调用上限；超限调用**不执行**，回填结构化拒绝（`loop-control: 单轮工具调用超过上限 N`）回喂模型；`0` = 不限 |
+| `loop_control.step_timeout_ms` | `120000` | 工具限时看门狗的缺省时限（未知工具的看门狗上限）；`0` = 关闭看门狗 |
+| `loop_control.turn_timeout_ms` | `0` | 单回合总时限；`0` = 不限；超时 → 中止在飞工具 + 结构化失败面（`exit="turn-timeout"`）+ stderr 提示，退出码非零 |
+
+回合上限生效值按四层优先级链取第一个命中者（`0` / 负数 / 未声明视为不命中）：
+
+```
+CLI --max-rounds > deps 透传 maxRounds > [session].max_rounds > [loop_control].max_iterations > 内建缺省
+```
+
+子代理（`spawn_subagent`）循环**不走**本分区：子代理自带 `max_iterations` /
+`timeout_ms` 语义（见 `[subagent]`），与主会话互不干涉。
+
+### `[identity]` 分区（助手身份）
+
+`[identity]` 是根分区（恒物化），四个键分属两条互不重叠的消费面：
+
+| 键 | 缺省 | 说明 |
+| --- | --- | --- |
+| `identity.name` | `bi` | TUI 横幅产品名；未显式声明 = 横幅零变化（沿用现状单行提示） |
+| `identity.tagline` | `""` | TUI 横幅副题行；空串 = 不出副题 |
+| `identity.system_prompt_path` | `""` | 无头会话系统指令前缀（读该文件内容）；CLI `--agent-file` **优先**，两者不叠加；文件缺失/不可读 → stderr 结构化告警并回退内置，不炸会话 |
+| `identity.extra_instructions` | `""` | 追加为系统指令末条；空串 = 不追加 |
+
+系统指令装配顺序（钉死）：CLI `--agent-file`（未给时才用 `system_prompt_path`）
+→ 内建段（项目记忆 `BI.md` / 时钟块）→ `extra_instructions`。
 
 ### `[a2a]` 分区（`bi a2a host` 装配面）
 

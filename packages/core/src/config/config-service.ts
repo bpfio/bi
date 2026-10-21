@@ -14,6 +14,12 @@
  *
  * 热重载：`reload()` / `reloadTui()` 免重启重载；`startWatch()` 以 fs.watch + 防抖
  * （默认 300ms，可注入）监听三个配置文件，变更后自动重载并通知监听者。
+ *
+ * watch ignore 语义（钉死）：`startWatch()` 收到文件事件时，事件文件名先过
+ * `watchIgnore` glob 列表（`**` 跨段、`*` 单段内、`?` 单字符）过滤；命中则丢弃
+ * 不触发重载。ignore 在构造期由 `watchIgnore` 选项固化（缺省取 config
+ * [watch].ignore 内置默认），startWatch 启动后不随运行时配置变更而变（边界：
+ * 启动后增删 watch 键经 reload/reloadTui 本身生效/失效不做，仅 enabled 管启动开关）。
  */
 
 import { existsSync, watch as fsWatch, type FSWatcher } from "node:fs";
@@ -59,6 +65,8 @@ export interface ConfigServiceOptions {
   cliOverrides?: BiConfigLayer;
   /** fs.watch 防抖毫秒数；默认 300。 */
   watchDebounceMs?: number;
+  /** watch 文件事件忽略 glob 列表（** 跨段 / * 单段内 / ? 单字符）；缺省取 config [watch].ignore 内置默认。 */
+  watchIgnore?: string[];
 }
 
 export interface ConfigChangeMeta {
@@ -83,6 +91,7 @@ export class ConfigService {
   private readonly env: Record<string, string | undefined>;
   private readonly cliLayer: BiConfigLayer | undefined;
   private readonly watchDebounceMs: number;
+  private readonly watchIgnore: string[];
   private snapshot: BiConfig | undefined;
   private readonly issuesBySource = new Map<ConfigSourceLabel, ConfigIssue[]>();
   private cachedLayers: CachedLayers = {};
@@ -95,6 +104,7 @@ export class ConfigService {
     this.paths = resolveConfigPaths({ homeDir: options.homeDir, workDir: options.workDir });
     this.env = options.env ?? process.env;
     this.watchDebounceMs = options.watchDebounceMs ?? DEFAULT_WATCH_DEBOUNCE_MS;
+    this.watchIgnore = options.watchIgnore ?? createDefaultConfig().watch.ignore;
     if (options.cliOverrides !== undefined) {
       const cliIssues: ConfigIssue[] = [];
       const validated = validateConfigLayer(options.cliOverrides, cliIssues);
@@ -371,7 +381,13 @@ export class ConfigService {
     }
   }
 
+  /** 事件文件名是否命中 ignore glob（** 跨段 / * 单段内 / ? 单字符）。 */
+  private isIgnored(filename: string): boolean {
+    return this.watchIgnore.some((pattern) => globMatches(pattern, filename));
+  }
+
   private onWatchEvent(filename: string | null): void {
+    if (filename !== null && this.isIgnored(filename)) return; // 命中 ignore 丢弃
     if (filename === null) {
       // 平台不保证提供文件名：退化为全量重载
       this.scheduleWatchReload(this.paths.globalConfig, "reload");
@@ -424,4 +440,34 @@ function withSource(issues: ConfigIssue[], source: ConfigSourceLabel): ConfigIss
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 文件名 glob 匹配（watch ignore 过滤，最小实现）：
+ * - `**` 跨段通配（跨 /，含零段）；其后若紧跟 `/` 一并消费；
+ * - `*` 单段内通配（不含 /）；`?` 单字符；其余字符按字面（正则元字符转义）。
+ * 锚定 ^...$。
+ */
+function globMatches(pattern: string, name: string): boolean {
+  let re = "^";
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i]!;
+    if (ch === "*") {
+      if (pattern[i + 1] === "*") {
+        re += ".*";
+        i += 2;
+        if (pattern[i] === "/") i += 1;
+        continue;
+      }
+      re += "[^/]*";
+    } else if (ch === "?") {
+      re += "[^/]";
+    } else {
+      re += ch.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    }
+    i += 1;
+  }
+  re += "$";
+  return new RegExp(re).test(name);
 }

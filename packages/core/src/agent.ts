@@ -186,6 +186,12 @@ export interface AgentLoopOptions {
   readonly repeatBreaker?: Pick<RepeatBreaker, "observe">;
   /** BI-06.3 工具限时看门狗（缺省不限时，仅协作取消）。 */
   readonly timeoutPolicy?: ToolTimeoutPolicy;
+  /**
+   * 单回合工具调用上限（对应 config [loop_control] max_tool_calls_per_turn）。
+   * 超限的调用**不执行**，回填结构化拒绝结果（不抛异常、不炸回合）。
+   * undefined / 0 = 不限（缺省语义）。
+   */
+  readonly maxToolCallsPerTurn?: number;
   /** 注入时钟（取消窗口计时；默认系统时钟）。 */
   readonly clock?: Clock;
   /** 二段取消判定窗口（毫秒，默认 800）。 */
@@ -241,6 +247,8 @@ export class AgentLoop {
   readonly #options: AgentLoopOptions;
   readonly #clock: Clock;
   readonly #cancelWindowMs: number;
+  /** 单回合工具调用上限（0 = 不限）。 */
+  readonly #maxToolCallsPerTurn: number;
   #state: AgentTurnState = "idle";
   #batchController: AbortController | undefined;
   #lastCancelAt: number | undefined;
@@ -253,6 +261,8 @@ export class AgentLoop {
     this.#options = options;
     this.#clock = options.clock ?? systemClock;
     this.#cancelWindowMs = Math.max(0, options.cancelWindowMs ?? 800);
+    const cap = options.maxToolCallsPerTurn ?? 0;
+    this.#maxToolCallsPerTurn = cap > 0 ? Math.floor(cap) : 0;
   }
 
   /** 当前回合状态（只读观测）。 */
@@ -298,8 +308,18 @@ export class AgentLoop {
     const controller = new AbortController();
     this.#batchController = controller;
     const results: ToolResult[] = new Array(calls.length);
+    // [loop_control] max_tool_calls_per_turn：单回合工具调用上限。超限调用**不执行**，
+    // 回填结构化拒绝结果（对齐权限拒形态：不抛异常、不炸回合，模型可自愈重试）。
+    const items = this.#buildItems(calls);
+    const limit = this.#maxToolCallsPerTurn;
+    const accepted = limit > 0 ? items.slice(0, limit) : items;
+    if (limit > 0 && accepted.length < items.length) {
+      for (const item of items.slice(limit)) {
+        results[item.index] = toolCallLimitResult(item.call, limit);
+      }
+    }
     try {
-      for (const segment of this.#segments(calls)) {
+      for (const segment of this.#segments(accepted)) {
         if (controller.signal.aborted) {
           // 屏障之后/段间取消：整段不再派发，记为已取消。
           const rest = segment.kind === "barrier" ? [segment.item] : segment.items;
@@ -374,6 +394,18 @@ export class AgentLoop {
     return { stage: 2, action: "exit" };
   }
 
+  /**
+   * 中止在飞工具批次（协作取消；**不**迁移状态机）。
+   *
+   * 用途：外部时限看门狗（headless 单回合时限 [loop_control] turn_timeout_ms）
+   * 需要打断在飞工具而不改回合状态——状态迁移与失败面由调用方自行处理，
+   * 避免与二段取消语义（cancelRequest → paused/exit）打架。
+   * 无在飞批次时为空操作。
+   */
+  abortInFlightTools(reason?: unknown): void {
+    this.#batchController?.abort(reason);
+  }
+
   /* ---------------- 内部：转移与在飞落定 ---------------- */
 
   #transition(to: AgentTurnState): void {
@@ -399,7 +431,17 @@ export class AgentLoop {
 
   /* ---------------- 内部：分段与分组 ---------------- */
 
-  #segments(calls: readonly ToolCall[]): Segment[] {
+  /** 调用 → 段内条目（索引为调用在原始数组中的位次，回填结果按此对齐）。 */
+  #buildItems(calls: readonly ToolCall[]): SegmentItem[] {
+    return calls.map((call, index) => ({
+      call,
+      index,
+      isReadOnly: this.#options.readOnlyTools?.has(call.name) ?? false,
+      paths: this.#options.fileAccesses?.(call) ?? [],
+    }));
+  }
+
+  #segments(items: readonly SegmentItem[]): Segment[] {
     const segments: Segment[] = [];
     let batch: SegmentItem[] = [];
     const flush = (): void => {
@@ -408,17 +450,14 @@ export class AgentLoop {
         batch = [];
       }
     };
-    calls.forEach((call, index) => {
-      const isReadOnly = this.#options.readOnlyTools?.has(call.name) ?? false;
-      const paths = this.#options.fileAccesses?.(call) ?? [];
-      const item: SegmentItem = { call, index, isReadOnly, paths };
-      if (this.#options.barrierTools?.has(call.name)) {
+    for (const item of items) {
+      if (this.#options.barrierTools?.has(item.call.name)) {
         flush();
         segments.push({ kind: "barrier", item });
       } else {
         batch.push(item);
       }
-    });
+    }
     flush();
     return segments;
   }
@@ -557,4 +596,17 @@ export class AgentLoop {
 
 function cancelledResult(call: ToolCall): ToolResult {
   return { id: call.id, name: call.name, ok: false, cancelled: true, error: CANCELLED_ERROR };
+}
+
+/**
+ * [loop_control] max_tool_calls_per_turn 超限调用的结构化拒绝结果。
+ * 形态对齐权限拒（ok:false + error），不抛异常、不炸回合——模型可自愈重试。
+ */
+function toolCallLimitResult(call: ToolCall, limit: number): ToolResult {
+  return {
+    id: call.id,
+    name: call.name,
+    ok: false,
+    error: `loop-control: 单轮工具调用超过上限 ${limit}（config [loop_control] max_tool_calls_per_turn）`,
+  };
 }

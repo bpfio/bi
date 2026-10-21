@@ -634,7 +634,7 @@ describe("F-ST-02 headless outputFormat：json 形态", () => {
 });
 
 // ---------------------------------------------------------------------------
-// F-EV-01 —— 回合上限可配（CLI > deps > config > 缺省 8）+ rounds-exceeded 结构化失败面
+// F-EV-01 —— 回合上限可配（CLI > deps > config > 缺省 16）+ rounds-exceeded 结构化失败面
 // ---------------------------------------------------------------------------
 
 /** 回合打尽脚本：每回合只回 tool_use（无工具调用）→ 回合计数持续推进至上限。 */
@@ -785,17 +785,17 @@ describe("F-EV-01 headless 回合上限可配 + rounds-exceeded 结构化失败�
 		expect(errs.join("\n")).toContain("模型回合超过上限 2");
 	});
 
-	test("优先级：config max_rounds = 0 / 负数 → 按 0 处理，回内建缺省 8", async () => {
+	test("优先级：config max_rounds = 0 / 负数 → 按 0 处理，回内建缺省 16", async () => {
 		for (const value of [0, -3]) {
 			const { code, errs } = await runUntilRoundsExceeded({ sessionMaxRounds: value });
 			expect(code).toBe(1);
-			expect(errs.join("\n")).toContain("模型回合超过上限 8");
+			expect(errs.join("\n")).toContain("模型回合超过上限 16");
 		}
 	});
 
-	test("优先级：三者皆缺省 → 内建缺省 8（缺省语义不变）", async () => {
+	test("优先级：三者皆缺省 → 内建缺省 16（缺省语义不变）", async () => {
 		const { code, errs } = await runUntilRoundsExceeded({});
 		expect(code).toBe(1);
-		expect(errs.join("\n")).toContain("模型回合超过上限 8");
+		expect(errs.join("\n")).toContain("模型回合超过上限 16");
 	});
 });

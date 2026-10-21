@@ -60,6 +60,8 @@ import {
 import { ToolCallAssembler, type ModelPort, type ToolBinding } from "../../../core/src/cli/headless";
 import { PermissionGate } from "../../../core/src/guard/permission-gate";
 import type { Clock } from "../../../core/src/guard/deadline";
+import { ToolTimeoutPolicy } from "../../../core/src/guard/timeout-policy";
+import { DEFAULT_IDENTITY_NAME, type IdentitySection } from "../../../core/src/config/schema";
 import type { PermissionRequest, PermissionMode } from "../../../core/src/guard/types";
 import { SessionManager } from "../../../core/src/session/manager";
 import { type BtwService, type BtwAnswer } from "../../../core/src/subagent/btw-service";
@@ -168,7 +170,25 @@ export interface TuiSessionOptions {
 	readonly sessionsRoot?: string;
 	/** 权限门初始模式；TUI 挂载的 ask 回路只有 manual 模式可达。 */
 	readonly permissionMode?: "manual" | "auto" | "yolo";
+	/** 会话回合上限（缺省 16，与 CLI/headless 缺省对齐）。 */
 	readonly maxRounds?: number;
+	/**
+	 * 单回合工具调用上限（对应 config [loop_control] max_tool_calls_per_turn）。
+	 * 超限调用不执行，回填结构化拒绝；缺省 / ≤0 = 不限。
+	 */
+	readonly maxToolCallsPerTurn?: number;
+	/**
+	 * 工具限时看门狗缺省时限（对应 config [loop_control] step_timeout_ms）。
+	 * >0 且未显式提供 timeoutPolicy 时装配缺省 ToolTimeoutPolicy；0 = 关闭看门狗。
+	 */
+	readonly stepTimeoutMs?: number;
+	/** 工具限时看门狗显式注入面（优先于 stepTimeoutMs 自建）。 */
+	readonly timeoutPolicy?: ToolTimeoutPolicy;
+	/**
+	 * [identity] 分区（config identity.*）：横幅产品名（name）与副题行（tagline）。
+	 * 缺省不提供 = 横幅零变化（沿用现状单行提示）。
+	 */
+	readonly identity?: IdentitySection;
 	/** Esc 二段取消窗口毫秒（透传 BI-07 AgentLoop；缺省 800）。 */
 	readonly cancelWindowMs?: number;
 	/** 渲染面尺寸（缺省 24x80）。 */
@@ -401,6 +421,8 @@ export class AgentTuiSession {
 	readonly #toolResults: ToolResult[] = [];
 	readonly #permissionDecisions: Array<{ tool: string; decision: string }> = [];
 	readonly #maxRounds: number;
+	/** [identity] 分区（config identity.*）：横幅产品名与副题行；缺省 undefined = 横幅零变化。 */
+	readonly #identity: IdentitySection | undefined;
 	#sessionId: string | undefined;
 	#messages: AgentMessage[] = [];
 	#turnController: AbortController | undefined;
@@ -454,7 +476,8 @@ export class AgentTuiSession {
 		this.#rows = options.rows ?? 24;
 		this.#cols = options.cols ?? 80;
 		this.#hooks = options.hooks ?? {};
-		this.#maxRounds = options.maxRounds ?? 8;
+		this.#maxRounds = options.maxRounds ?? 16;
+		this.#identity = options.identity;
 		this.#model = options.model;
 		this.#clock = options.clock;
 		this.projection = new TranscriptProjection({ width: this.#cols });
@@ -504,6 +527,17 @@ export class AgentTuiSession {
 			readOnlyTools,
 			...(options.cancelWindowMs !== undefined ? { cancelWindowMs: options.cancelWindowMs } : {}),
 			...(options.clock !== undefined ? { clock: options.clock } : {}),
+			// [loop_control] max_tool_calls_per_turn：单回合工具调用上限（0/未提供 = 不限）。
+			...(options.maxToolCallsPerTurn !== undefined && options.maxToolCallsPerTurn > 0
+				? { maxToolCallsPerTurn: options.maxToolCallsPerTurn }
+				: {}),
+			// [loop_control] step_timeout_ms：工具限时看门狗缺省时限。显式注入优先；
+			// 未注入且 >0 时自建缺省看门狗（未知工具按此上限）；0 = 关闭看门狗。
+			...(options.timeoutPolicy !== undefined
+				? { timeoutPolicy: options.timeoutPolicy }
+				: options.stepTimeoutMs !== undefined && options.stepTimeoutMs > 0
+					? { timeoutPolicy: new ToolTimeoutPolicy({ defaultTimeoutMs: options.stepTimeoutMs }) }
+					: {}),
 		});
 	}
 
@@ -1142,6 +1176,16 @@ export class AgentTuiSession {
 	/** 首屏操作提示（F-ST-01 工单）：REPL 启动首帧前调用一次，落 system 行。 */
 	showBanner(): void {
 		if (this.#sessionId === undefined) return;
+		// [identity] 横幅身份行：config 声明时用 identity.name 替代产品名、tagline 作副题行；
+		// 未声明（name = 缺省产品名且 tagline 空）→ 零变化（不额外落行）。
+		const identityName = this.#identity?.name?.trim() ?? "";
+		const identityTagline = this.#identity?.tagline?.trim() ?? "";
+		if (identityName !== "" && identityName !== DEFAULT_IDENTITY_NAME) {
+			this.#transcribe("system", identityName);
+		}
+		if (identityTagline !== "") {
+			this.#transcribe("system", identityTagline);
+		}
 		this.#transcribe("system", "？ 指令与键位：输入 /help 查看 · 退出：Ctrl+D 或 /exit");
 		this.#frame();
 	}
