@@ -83,6 +83,14 @@ ${renderSubcommandList()}
 export async function runBi(argv: readonly string[], options: RunBiOptions = {}): Promise<number> {
 	const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`));
 	const err = options.err ?? ((line: string) => process.stderr.write(`${line}\n`));
+	// FIX-B F8：同文本告警去重——无头路径两次构建缺省工具集（子代理基集 + 主工具集），
+	// 同一条挂载告警（如 LSP_MOUNT_SKIPPED_WARNING）会打两遍。本次运行内同文本只告一次。
+	const warned = new Set<string>();
+	const warnOnce = (line: string): void => {
+		if (warned.has(line)) return;
+		warned.add(line);
+		err(line);
+	};
 
 	if (argv.includes("--version")) {
 		const { VERSION } = await import("../index");
@@ -326,7 +334,7 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 	const hasMcpServers = Object.keys(mcpServers).length > 0;
 	const mcpMount = hasMcpServers
 		? await mountMcpServers(loadedConfig?.mcp ?? { servers: {} }, h.cwd ?? process.cwd(), {
-				warn: (line) => err(line),
+				warn: warnOnce,
 			})
 		: null;
 	// FIX-A F2：解析为普通数组（避免条件展开产生联合元素类型），并入两处工具集构建。
@@ -364,8 +372,8 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 						jobs: loadedConfig?.tools.job_tools === true,
 						lsp: loadedConfig?.tools.lsp === true,
 						select_tools: loadedConfig?.tools.select_tools === true,
-						// FIX-A F3：结构化警告出口（stderr 诊断面）。
-						warn: (line) => err(line),
+						// FIX-A F3：结构化警告出口（stderr 诊断面）；FIX-B F8：同文本只告一次。
+						warn: warnOnce,
 						// X4 接线：config [tools] code_mode 显式 true 才挂 run_js（缺省 false = 不挂 = 工具面零变动）。
 						codemode: loadedConfig?.tools.code_mode === true,
 						skill: true,
@@ -428,8 +436,9 @@ export async function runBi(argv: readonly string[], options: RunBiOptions = {})
 							// lspClient 由宿主 LSP server 连接面注入——未注入时工具**不挂载**
 							// （FIX-A F3：依赖缺失不伪造能力，结构化警告由工具集挂载面发出）。
 							lsp: loadedConfig?.tools.lsp === true,
-							// FIX-A F3：结构化警告出口（stderr 诊断面）。
-							warn: (line) => err(line),
+							// FIX-A F3：结构化警告出口（stderr 诊断面）；FIX-B F8：同文本只告一次
+							// （子代理基集与主工具集各构建一次 → 同一条挂载告警只打一遍）。
+							warn: warnOnce,
 							// BI-07.8：AgentSwarm 随子代理使能联动（swarm 门 = [subagent] enabled）；
 							// swarmRunner 实例一并传入（上一步装配）。
 							swarm: subagentSection?.enabled === true,

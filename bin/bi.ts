@@ -20,12 +20,13 @@ import { parseResumeArg } from "../packages/core/src/cli/commands/args";
 import { resumeContextMessages, withResumeHistory } from "../packages/core/src/cli/resume-context";
 import { SessionManager } from "../packages/core/src/session/manager";
 import type { AgentMessage } from "../packages/core/src/adapters/deepseek-adapter";
-import { AgentTuiSession, MOUSE_DISABLE, MOUSE_ENABLE } from "../packages/tui/src/mount/agent-tui";
+import { AgentTuiSession, mouseModeSequences } from "../packages/tui/src/mount/agent-tui";
 import { KeyStream, runRepl, type ReplInitialSession } from "../packages/tui/src/mount/repl";
 import { attachConfigWatch } from "../packages/tui/src/mount/config-watch";
 import { loadKeybindings } from "../packages/tui/src/mount/keybindings";
 import { InputLoop } from "../packages/tui/src/engine/diff-renderer";
 import { PermissionGate } from "../packages/core/src/guard/permission-gate";
+import type { PermissionRule } from "../packages/core/src/guard/types";
 import { permissionModeFromConfig, PermissionSessionController } from "../packages/core/src/cli/permission-mode";
 import {
   createSubagentRunner,
@@ -166,13 +167,18 @@ async function runReplMain(stdin: RawCapableStdin, resumeSessionId?: string): Pr
 			}
 			// BI-20 接线：diff 审查门入口(REPL 斜杠命令,侵入面最小的一入口)——
 			// 工作区 git diff → parseDiff → renderDiff → presentDiff 审查门。
-			// 交互式确认回调未注册 → 门禁按 fail-closed 判拒绝并如实回报
-			// (备案:宿主可经 confirm 端口接交互确认;另一入口——edit/write 工具
-			//  执行前的 diff 预览——留待后续卡,见 mount/diff-gate.ts 头注)。
+			// FIX-B F5：审查门接真交互确认——confirm 端口注入会话的确认浮层
+			// (y=批准 / n·Esc=拒绝；浮层态 awaiting-confirm,REPL 据此把按键
+			// 派给浮层栈顶)。用户看到的是渲染后的真实 diff 内容。
 			if (head === "/diff") {
 				const args = parseDiffArgs(trimmed.slice(head.length).trim());
 				if (!args.ok) return args.error;
-				const result = await runDiffGate({ cwd: process.cwd() });
+				const result = await runDiffGate({
+					cwd: process.cwd(),
+					ports: {
+						confirm: (view, summary) => session.confirmReview(view, summary),
+					},
+				});
 				return result.text;
 			}
 			// BI-11 接线：手动门三命令由会话内建执行体处理（会话在模型回合前
@@ -326,10 +332,13 @@ async function runReplMain(stdin: RawCapableStdin, resumeSessionId?: string): Pr
 			}
 		}
 		const loop = new InputLoop(stdinChunks(), (key) => keys.push(key));
+		// FIX-B F6：config [tui] mouse_mode 真接线（schema 缺省 true）——
+		// 关闭时既不启用 SGR 鼠标上报，也不写还原序列（不启用即不还原）。
+		const mouse = mouseModeSequences(config.tui.mouse_mode);
 		if (stdin.isTTY === true) {
 			try {
 				stdin.setRawMode?.(true); // raw-mode 尽力而为；失败退化为行式输入
-				process.stdout.write(MOUSE_ENABLE); // BI-27.5 滚轮历史:SGR 鼠标上报
+				if (mouse.enable !== "") process.stdout.write(mouse.enable); // BI-27.5 滚轮历史:SGR 鼠标上报
 			} catch {
 				// 忽略：非交互/受限终端
 			}
@@ -351,7 +360,7 @@ async function runReplMain(stdin: RawCapableStdin, resumeSessionId?: string): Pr
 			await mcpMount?.closeAll().catch(() => {});
 			if (stdin.isTTY === true) {
 				try {
-					process.stdout.write(MOUSE_DISABLE); // 离场还原鼠标语义
+					if (mouse.disable !== "") process.stdout.write(mouse.disable); // 离场还原鼠标语义
 					stdin.setRawMode?.(false);
 				} catch {
 					// 忽略

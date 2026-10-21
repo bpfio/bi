@@ -717,10 +717,21 @@ export type A2aSection = InferSchema<typeof a2aSchema>;
  * 渲染实现由 BI-19 消费。
  */
 export const tuiSchema = sObj({
+  /** 主题名。**预留未接线**：本版本无主题系统，该键无消费者（保留以向后兼容）。 */
   theme: sStr("dark"),
-  /** 是否展示思考过程流。 */
+  /**
+   * 是否展示思考过程流。**预留未接线**：本版本无 thinking 上屏面，该键无消费者
+   * （保留以向后兼容）。
+   */
   show_thoughts: sBool(true),
+  /**
+   * 鼠标语义开关：缺省 true = 启用 SGR 鼠标上报（滚轮翻页）；false = 不启用。
+   * 本分区唯一被消费的真键（FIX-B F6 接线）。
+   */
   mouse_mode: sBool(true),
+  /**
+   * 通知开关。**预留未接线**：本版本无通知面，该键无消费者（保留以向后兼容）。
+   */
   notifications: sBool(true),
   /** 键位绑定：动作名 → 按键序列（键级合并）。 */
   keybindings: sRecord(sStr("")),

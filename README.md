@@ -22,15 +22,29 @@ CLI 的 fork：产品代码全部在本仓库逐卡新写，设计上以「五�
 - **配置体系**：三级 TOML（`~/.bi/config.toml` → `~/.bi/tui.toml` → 项目级
   `.bi/local.toml`）+ 环境变量覆盖；`providers.entries.*.api_key_env` 间接引用密钥，
   配置文件永不落明文。
-- **质量门**：`bun test` 全绿（BI_PTY_E2E=1 全量：270 个测试文件 / 4858 个用例 0 失败，
-  含 pty 真人面回归），三包 `tsc --noEmit`（core/tui/a2a）0 错误。
+- **质量门**：`bun test` 全绿（BI_PTY_E2E=1 全量：283 个测试文件 / 4979 个用例 0 失败，
+  含 pty 真人面回归），七包 `tsc --noEmit`（core/tui/mcp/a2a/plugins/workflow/worktree）
+  0 错误（CI 逐包类型门；仓根 `bun run typecheck` 另以单 tsconfig 覆盖 `packages/*/src`）。
 
 ## 快速上手
 
-### 1. 安装依赖
+### 1. 安装
+
+终态用户走 npm 全局包（`@bpfio/bi` 0.3.0 已在 registry）：
+
+```bash
+npm i -g @bpfio/bi     # 元包：按平台自动选装原生二进制（linux-x64 / darwin-arm64）
+bi --version           # → bi 0.3.0
+```
+
+- **版本要求**：npm 侧 shim 需 Node ≥ 18（包内 `engines.node`）；被拉起的是 Bun Compile
+  单文件原生二进制，运行期不依赖 Node/Bun 运行时；
+- **平台覆盖**：linux-x64 / darwin-arm64；其余平台结构化报错退出（不静默降级）；
+- 源码开发另需 Bun（仓库锁定 1.3.14，见 `packageManager`）：
 
 ```bash
 bun install
+bun bin/bi.ts --version
 ```
 
 ### 2. 初始化工作区
@@ -54,7 +68,7 @@ bun bin/bi.ts init
 | 层 | 路径 | 用途 |
 | --- | --- | --- |
 | 全局运行 | `~/.bi/config.toml` | provider / model / 权限等运行时行为 |
-| 终端外观 | `~/.bi/tui.toml` | 主题、键位等外观偏好 |
+| 终端外观 | `~/.bi/tui.toml` | 键位、鼠标语义等外观偏好（`theme` / `notifications` / `show_thoughts` 为预留键，本版本无消费者） |
 | 工作区私有 | `<项目>/.bi/local.toml` | additional_dir、模型覆盖等私有项 |
 
 密钥**只经环境变量间接引用**（`api_key_env`），配置文件永不落明文。最小可跑配置
@@ -114,6 +128,10 @@ stream-json 形态落末帧 `session_done`（`exit="rounds-exceeded"`），`--ou
 bun bin/bi.ts
 ```
 
+交互形态下的 `/diff` 走 diff 审查门：先在工作区取真实差异（`/diff --staged` 看暂存区）
+并上屏渲染，随后提示 `[y] 批准 / n·Esc 拒绝`——`y` 放行、`n` 或 `Esc` 否决
+（fail-closed：未裁决即拒绝），裁决结论与完整差异一并落入转录。
+
 续会话（REPL 形态）：`bun bin/bi.ts --resume <sessionId>` 复用既有会话——会话 id 连续
 （JSONL 续写同一份会话文件）、既有历史注入模型上下文；会话不存在 → 结构化报错
 `[session-not-found]`，退出码 2（不静默开新会话）。
@@ -167,7 +185,7 @@ get/set 键面，直接写 TOML）：
 | `telemetry` | `telemetry.enabled`、`telemetry.sanitize_errors` |
 | `thinking` | `thinking.budget_tokens`、`thinking.effort`、`thinking.enabled` |
 | `tools` | `tools.allow`、`tools.code_mode`、`tools.deny`、`tools.output_limit_bytes`、`tools.media`、`tools.job_tools`、`tools.lsp`（需宿主 LSP 装配；本版本未提供 → `lsp_navigate` 不挂载并告警）、`tools.select_tools` |
-| `tui` | `tui.mouse_mode`、`tui.notifications`、`tui.show_thoughts`、`tui.theme` |
+| `tui` | `tui.mouse_mode`（鼠标语义开关；缺省 `true` = 启用 SGR 鼠标上报，滚轮翻页随之生效；`false` = 不启用）、`tui.notifications`（**预留未接线**：本版本无通知面，无消费者）、`tui.show_thoughts`（**预留未接线**：本版本无 thinking 上屏面，无消费者）、`tui.theme`（**预留未接线**：本版本无主题系统，无消费者） |
 | `watch` | `watch.debounce_ms`、`watch.enabled`、`watch.ignore` |
 | `workspace` | `workspace.additional_dir`、`workspace.respect_gitignore` |
 
@@ -292,9 +310,13 @@ CLI 面仅 `bi a2a host`。
 ```bash
 bun install          # 安装依赖
 bun test             # 全部测试
-bun run typecheck    # 双 tsconfig 类型门
+bun run typecheck    # 根 tsconfig 类型门（单条 tsc --noEmit -p tsconfig.json，覆盖 packages/*/src）
 bun run build:bin    # 单文件二进制构建
 ```
+
+终态用户不必克隆本仓库：`npm i -g @bpfio/bi`（0.3.0 已在 registry；shim 需 Node ≥ 18，
+平台原生二进制覆盖 linux-x64 / darwin-arm64，运行期不依赖 Node/Bun）——详见
+「快速上手 · 1. 安装」。
 
 ## 仓库结构
 
@@ -310,7 +332,8 @@ bun run build:bin    # 单文件二进制构建
 
 ## 文档
 
-- [`devplan.md`](./devplan.md) — 117 卡开发计划（SSOT）
+- [`devplan.md`](./devplan.md) — 109 卡开发计划（SSOT；卡表本身无状态列，落地状态分散记于
+  [`DEVLOG.md`](./DEVLOG.md) 与各工单台账）
 - [`DEVLOG.md`](./DEVLOG.md) — 排障手记与验收记录
 - [`docs/RESEARCH.md`](./docs/RESEARCH.md) — 架构全景调研与设计蓝图
 - [`docs/FIVE_AGENTS_FULL_SPECTRUM_ANALYSIS.md`](./docs/FIVE_AGENTS_FULL_SPECTRUM_ANALYSIS.md) — 五标杆技术大典

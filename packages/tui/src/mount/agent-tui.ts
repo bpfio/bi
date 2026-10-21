@@ -93,6 +93,8 @@ import {
 	type GateDispatchResult,
 } from "./gate-commands";
 import { DEFAULT_WORK_MODE, dispatchModeCommand, isModeCommandLine } from "./mode-command";
+import { DiffReviewOverlay } from "./diff-review";
+import type { DiffGateSummary } from "../diff-view";
 import { renderModeIndicator } from "../components/mode-indicator";
 import { ModeSelector, type ModeId } from "../../../core/src/modes/mode-selector";
 import type { CommandContext } from "../../../core/src/commands/compact";
@@ -100,6 +102,28 @@ import type { CommandContext } from "../../../core/src/commands/compact";
 /** SGR 鼠标上报开关序列（BI-27.5 滚轮历史）：1000=按键上报，1006=SGR 编码。 */
 export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
 export const MOUSE_DISABLE = "\x1b[?1006l\x1b[?1000l";
+
+/**
+ * 鼠标语义开关（FIX-B F6）：config [tui] mouse_mode 真接线——
+ * 缺省 true = 启用 SGR 鼠标上报（BI-27.5 滚轮翻页）；false = 不启用。
+ * 未声明（undefined）按 schema 缺省 true 处理。
+ */
+export function mouseModeEnabled(mouseMode: boolean | undefined): boolean {
+	return mouseMode !== false;
+}
+
+/**
+ * 鼠标语义开关的转义序列面（FIX-B F6）：启用态给出「开 + 还原」两序列；
+ * 关闭态两序列皆空串（宿主据此不写任何鼠标转义——不启用即不还原）。
+ */
+export function mouseModeSequences(mouseMode: boolean | undefined): {
+	readonly enable: string;
+	readonly disable: string;
+} {
+	return mouseModeEnabled(mouseMode)
+		? { enable: MOUSE_ENABLE, disable: MOUSE_DISABLE }
+		: { enable: "", disable: "" };
+}
 
 /** 滚轮单格滚动行数（BI-27.5 滚轮历史；一格 = 三行，readline/分页器惯例）。 */
 export const WHEEL_SCROLL_LINES = 3;
@@ -161,7 +185,19 @@ export interface FrameInfo {
 	readonly state: TuiSessionState;
 }
 
-export type TuiSessionState = "idle" | "running" | "awaiting-approval" | "exited";
+/**
+ * 驱动器状态。
+ * - idle：编辑态（提示行可编辑）；running：模型回合在飞；
+ * - awaiting-approval：权限审批浮层在栈顶（按键派给浮层）；
+ * - awaiting-confirm：diff 审查门确认浮层在栈顶（FIX-B F5；按键派给浮层）；
+ * - exited：会话终场。
+ */
+export type TuiSessionState =
+	| "idle"
+	| "running"
+	| "awaiting-approval"
+	| "awaiting-confirm"
+	| "exited";
 
 export interface TuiSessionOptions {
 	readonly model: ModelPort;
@@ -256,6 +292,11 @@ export interface TuiSessionResult {
 	readonly permissionDecisions: ReadonlyArray<{ tool: string; decision: string }>;
 	/** finish=自然收尾；cancelled=Esc 一段暂停收束；exit=Esc 二段退出。 */
 	readonly endedAs: "finish" | "cancelled" | "exit";
+}
+
+/** 浮层行集契约（帧探针与网格渲染共用的单一来源）。 */
+interface OverlayLines {
+	lines(): readonly string[];
 }
 
 /** 审批浮层：y=允许 / n=拒绝 / Esc=拒绝；栈顶拦截按键直至回答。 */
@@ -432,7 +473,7 @@ export class AgentTuiSession {
 	#exitedViaCommand = false;
 	#state: TuiSessionState = "idle";
 	#rounds = 0;
-	#activeOverlay: ApprovalOverlay | undefined;
+	#activeOverlay: OverlayLines | undefined;
 	/** BI-27.3：富文本转录视图（与 projection 并行消费同一份 L1 条目）。 */
 	readonly #styled: StyledTranscript;
 	/** BI-27.5：转录窗滚回偏移（0 = 实时锚底；向上为正，按可见窗高钳制）。 */
@@ -626,6 +667,8 @@ export class AgentTuiSession {
 			}
 			case "awaiting-approval":
 				return `[${mode}] 等待审批 — y 允许 / n 拒绝`;
+			case "awaiting-confirm":
+				return `[${mode}] 等待审查确认 — y 批准 / n 拒绝`;
 			case "exited":
 				return "[已退出]";
 			default:
@@ -1008,6 +1051,42 @@ export class AgentTuiSession {
 	}
 
 	#parentId: string | undefined;
+
+	/**
+	 * diff 审查门交互确认面（FIX-B F5）：挂审查浮层（y=批准 / n·Esc=拒绝），
+	 * 等待用户裁决后收场。返回 true=批准、false=拒绝。
+	 *
+	 * 会话态置 awaiting-confirm——REPL 据此把按键派给组件栈顶（与审批浮层同路，
+	 * 浮层消费 y/n/Esc，其余键落空）。裁决后复原原会话态并出帧（浮层撤场，
+	 * 转录面复原）；斜杠命令路径不进模型回合，原态恒为 idle。
+	 *
+	 * 诚实边界：浮层只展示当前屏高内的 diff 头部（超出行数显式标注省略），
+	 * 完整 diff 在裁决后随命令回执上屏转录。
+	 */
+	async confirmReview(view: readonly string[], summary: DiffGateSummary): Promise<boolean> {
+		const overlay = new DiffReviewOverlay(
+			view,
+			summary,
+			() => this.#frame(),
+			this.#bindings,
+			Math.max(3, this.#rows - 2),
+		);
+		const previous = this.#state;
+		this.app.push(overlay);
+		this.#activeOverlay = overlay;
+		this.#state = "awaiting-confirm";
+		this.#frame();
+		try {
+			const verdict = await overlay.wait();
+			return verdict === "approve";
+		} finally {
+			const popped = this.app.pop();
+			if (popped !== undefined && popped !== overlay) this.app.push(popped);
+			this.#activeOverlay = undefined;
+			this.#state = previous;
+			this.#frame();
+		}
+	}
 
 	#result(endedAs: TuiSessionResult["endedAs"], finalText: string): TuiSessionResult {
 		return {

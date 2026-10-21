@@ -53,8 +53,8 @@
  *   ——raw-mode 真实终端接线归后续装配卡。
  *
  * 键位路由（runRepl 单一裁决点）：
- * - awaiting-approval：全部键经 session.app.dispatchKey（审批浮层栈顶消费
- *   y/n/Esc，其余落空）；
+ * - awaiting-approval / awaiting-confirm：全部键经 session.app.dispatchKey
+ *   （审批浮层栈顶消费 y/n/Esc；diff 审查门确认浮层栈顶消费 y/n/Esc）；
  * - running：Esc → session.handleKey（二段取消语义， awaited）；其余键经
  *   dispatchKey 透传（无浮层则落空）；
  * - 编辑态（idle）：up/down=历史逐条翻页、pageup/pagedown=十条跳页（BI-27.1，
@@ -781,7 +781,9 @@ export async function runRepl(options: ReplOptions): Promise<ReplResult> {
           prompt.update(editor.draft, editor.cursor);
           session.app.render();
         }
-      } else if (stateOf(session) === "awaiting-approval") {
+      } else if (stateOf(session) === "awaiting-approval" || stateOf(session) === "awaiting-confirm") {
+        // 模态浮层在栈顶：审批浮层（y/n/Esc）与 diff 审查门确认浮层（FIX-B F5：
+        // y=批准 / n·Esc=拒绝）同路——按键全交组件栈顶消费。
         session.app.dispatchKey(key);
       } else if (stateOf(session) === "running") {
         // 回合在飞：Esc=二段取消语义（await 落定）；其余键透传组件栈。

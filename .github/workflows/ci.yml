@@ -34,5 +34,15 @@ jobs:
         run: cd packages/core && bunx tsc --noEmit
       - name: tui 类型
         run: cd packages/tui && bunx tsc --noEmit
+      - name: mcp 类型
+        run: cd packages/mcp && bunx tsc --noEmit
+      - name: a2a 类型
+        run: cd packages/a2a && bunx tsc --noEmit
+      - name: plugins 类型
+        run: cd packages/plugins && bunx tsc --noEmit
+      - name: workflow 类型
+        run: cd packages/workflow && bunx tsc --noEmit
+      - name: worktree 类型
+        run: cd packages/worktree && bunx tsc --noEmit
       - name: 版本双源同步(BI-26.6)
         run: bun test scripts/version-sync.test.ts

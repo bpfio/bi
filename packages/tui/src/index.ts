@@ -160,6 +160,10 @@ export type {
 export { defaultGitRunner, parseDiffArgs, runDiffGate, stripAnsi } from "./mount/diff-gate";
 export type { DiffCommandResult, DiffGatePorts, GitRunner } from "./mount/diff-gate";
 
+// —— FIX-B F5 接线：diff 审查门交互确认浮层（/diff 真交互 y/n 裁决）——
+export { buildReviewLines, DiffReviewOverlay, DIFF_REVIEW_HINT } from "./mount/diff-review";
+export type { DiffReviewVerdict } from "./mount/diff-review";
+
 // —— BI-20.1 接线：四态工作模式命令面（/mode）+ 模式徽标 ——
 export {
 	DEFAULT_WORK_MODE,

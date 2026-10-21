@@ -91,6 +91,28 @@ describe("BI-20 · /diff 渲染入口", () => {
 		expect(result.text).toContain("未注册审查回调");
 	});
 
+	test("审查门把渲染后的真实 diff 视图交给确认回调（用户看到的是真实差异）", async () => {
+		let seen: readonly string[] = [];
+		let summarySeen: { files: number; additions: number; deletions: number } | undefined;
+		await runDiffGate({
+			cwd: "/tmp",
+			ports: {
+				readDiff: async () => SAMPLE_DIFF,
+				confirm: (view, summary) => {
+					seen = view;
+					summarySeen = summary;
+					return true;
+				},
+			},
+		});
+		const shown = seen.map((line) => stripAnsi(line)).join("\n");
+		expect(shown).toContain("[M] packages/tui/src/hud.ts (+1 -1)");
+		expect(shown).toContain("@@ -1,3 +1,3 @@");
+		expect(shown).toContain("-旧行");
+		expect(shown).toContain("+新行");
+		expect(summarySeen).toEqual({ files: 1, additions: 1, deletions: 1 });
+	});
+
 	test("空 diff：无可审内容 → 门禁放行且视图为空", async () => {
 		const result = await runDiffGate({
 			cwd: "/tmp",
