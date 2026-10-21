@@ -849,3 +849,9 @@ T1-A 主控伪端点 CLI 级 20/20（help16 子命令/fork-export-transfer-query
 ### 门禁与备案
 
 4932 pass/0 fail（274 文件，+34）+ 三 tsc 0（主控亲跑）。**live 行为变化报备**：step_timeout_ms 根分区恒 backfill 120000 → 工具限时看门狗自此默认开启（超 120s 工具被结构化中断）——该键设计语义如此，但属默认面可见变化。kimi 7 条偏离全核实合格。
+
+### 会话终态（封存，2026-10-21 凌晨）
+
+origin=**0b066ef**（bpfio/bi，树净零差，HEAD=origin/main）；本会话提交链 beea533→cb5cadf→903599d→79b91da→33ba1fb→b8b9eec→0b066ef。台账：task_query(planned/running/blocked)=**0**；F-EV-01~05 全 fixed；GHOST-A/B、COV-T1BC/COV-FIX1 全 closed；批次 BI-EVAL / BI-COVERAGE / BI-GHOSTWIRE 全 completed；手记 #283-#286。门禁 4932 pass/0 fail（274 文件）+ 三包 tsc 0；真机效用 S1-S5 全绿。
+
+**终态画像**：bi 16 子命令全接线；三节 11 键配置虚账清零（loop_control/identity/watch 全部有生产消费者，回合预算缺省 16）；幻觉率 0/7（双评审复验）；工具面/失败面/热重载全部真机实证。**备案例外（非 bi 产品缺陷）**：TOOL-1/TOOL-2/LOGBOOK-EXPORT-1 三条 open 系 bpfio/logbook 工具链基础设施缺陷（task_upsert 破坏性覆盖、devlog 幂等误伤、大导出不可达），各带操作规程规避，留 bpfio/logbook 上游处置。bi 停在完全干净、随时可继续的状态。
