@@ -921,3 +921,29 @@ origin=**0b066ef**（bpfio/bi，树净零差，HEAD=origin/main）；本会话�
 - **台账**：ISO-0/EVAL-0 双卡 closed（proof_link 指产出文档）；BI-C1-ISOLATION/BI-C2-EVALBASE 两批次保持 running（战役在途，ISO-1..4/EVAL-1..4 施工面已定稿待令）；手记 #288。
 - **下一步**：EVAL-1（语料落地，按首批 10 条）与 ISO-1（OsSandbox 接 bash，spawnSync 分叉方案）可并行开工；ISO-3 路线 A/B 待用户裁定。
 - **通道沉淀**：kimi 落盘阶段断流空转坑入记忆（识别法：产出缺失+日志停滞+尾部重复；干预法：杀单保日志重组）；本单思考流内容质量极高（设计可完整回收），杀单≠报废。
+
+## 三十三、方向切换：bi 冻结、围绕 zcode CLI——闲时任务（Off-Peak）能力核实 (2026-10-21 午后第二封存笔)
+
+用户三项动作：①指出 zcode 官方包含完整 CLI 源码而开局排战役未讲——呈现失误认账，落反馈记忆「提方案先亮杠杆」（派单强制「先读 zcode 对应实现」前置步）；②裁定「围绕 zcode cli 来，不再继续在 bi 开发上浪费算力」——四战役 23 卡全冻结，BI-C1/BI-C2 两批次转 halted（卡保留 planned 不销）；③要求核实 zcode CLI 包能否加入闲时任务能力。
+
+### 核实结论：能加入，且 apps/zcode-cli 已「半接入」
+
+闲时任务正式名 **Off-Peak Task**（英文 UI=Idle-time task）：Automations 体系下的一次性后台任务；**排队与并发归服务端**（全局 ticket FIFO，D18/D20），客户端不承载调度策略。分层事实（树 ~/references/zcode，文档套 docs/off-peak-task/：spec/glossary/decisions D1-D44/tech-design）：
+
+- **CLI 已有（apps/zcode-cli 内）**：
+  - contracts：`tools/off-peak.ts` 工具族 OffPeakCreate/OffPeakList（D49 会话内创建，绑定会话，与 Cron* 兄弟并列）+ `interfaces/off-peak.port.ts` OffPeakPort（create/list，错误判别联合 quota_3103/eligibility_3101 跨协议保真到 handler）；
+  - core：`tool/handlers/off-peak.ts:60` 断言 port 未配置即结构化报错（不留空壳）；
+  - bootstrap：`zcode-protocol/offpeak-port.ts:34` createProtocolOffPeakPort——**实现由宿主经协议注入**（offPeak/create + offPeak/list 协议方法）；递归创建拒绝（闲时轮内禁建闲时）+ 绑定会话守卫（一会话一未终态任务，查询失败 fail-closed）；`server-operations.ts:3420` 挂线；工具面由宿主 `offPeakToolEnabled` 下发控制（缺省不下发=不注册）；
+  - adapters 执行链：`model/off-peak-request-auth.ts`（每 turn Request Auth）+ `model/offpeak-retry.ts`（429/3105 容量等待=min(Retry-After, 5min) 无限幂等探测，豁免重试预算，D19/D24）——**即嵌入宿主时 CLI 已能完整执行闲时 turn**。
+- **CLI 缺的重端=外层 packages/services 运行时（实测 5,552 行）**：offPeakTaskRepo 819（SQLite off_peak_* 表）+ offPeakTaskService 680（创建/取号/生命周期）+ offPeakMockGateway 830（进程内 mock，无服务端全环）+ offPeakServerClient 282（五端点 HTTP）+ offPeakRuntimeModel 358 + automationRepo 1469 + zcodeTaskService 847 + shared/off-peak-types 220。
+- **服务端契约（硬依赖）**：内部仓 zcode/zcode-server `docs/off_peak_design.md`（契约真源）；五接口生命周期（D39）availability→POST /ticket→批量 status→messages→settle；3h 分段+400/3102 换票 resume 同一 session（D26）；五端点均需 X-Coding-Plan-Api-Key，BigModel 连接需同快照成对 bigmodel-organization/bigmodel-project；idle provider=隐藏 Built-in `builtin:offpeak-idle-plan`（不进普通模型选择、不改 Session Selection，D44）。
+- **三条加入路径**：A 宿主注入（**产品现状**，CLI 零改动，能力随宿主而来）；B CLI 独立内置运行时（移植 services 子集入 apps/zcode-cli workspace，mock 档约 2.5k 行起步、真实档另加 server client；port 边界干净=仅 create/list）；C mock-only（开发/测试全环）。**真实排队无法自建**——权威 FIFO 在官方服务端。
+
+待深挖（下次会话续）：bootstrap/src/app/create-app.ts 独立挂线点（app/types.ts:205 offPeakPort 可选位）；builtin:offpeak-idle-plan 在 CLI provider registry 的存在性与凭据面；offPeakMockGateway 可否脱离桌面壳独立运行；CLI 独立形态（TUI）下工具注册的宿主门控绕行。
+
+### 会话终态（2026-10-21 午后第二封存笔）
+
+- **bi 代码零改动**（本会话全程只读+文档）；门禁面 4979/0 基线不动；本笔随提交入库。
+- **台账**：BI-C1-ISOLATION/BI-C2-EVALBASE 转 halted（用户冻结，summary 备案冻结令；23 卡保留 planned 待令）；零悬空。
+- **记忆**：新增 zcode-offpeak-capability 底数 + surface-leverage-upfront 反馈；bi-devplan-state/zcode-reference-tree 同步转向。
+- **方向**：后续围绕 zcode CLI（~/references/zcode）施工；首个待令事项=闲时任务加入方案定档（路径 B 移植范围/C mock 边界，等用户拍板）。
