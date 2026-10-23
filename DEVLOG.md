@@ -889,3 +889,35 @@ origin=**0b066ef**（bpfio/bi，树净零差，HEAD=origin/main）；本会话�
 - **文档**：DEVLOG 三十一章 + 本封存笔；派工档案 docs/dispatch/2026-10-20-excel-wave/（3 报告+3 工单+5 日志+索引 README）。
 - **门禁终态**：bun test 4979 pass / 0 fail（283 文件）+ 根 typecheck 零错 + 七包 tsc 全 OK + BI_PTY_E2E pty 绿。
 - **方法论落点**：METH-1 文档待用户裁定是否立为 docs/ 正式方法论文档（验证金字塔/六档门禁矩阵/发布检查单可直接采用）；其 7 项「待实测」基线指标（M3/M4/M5/M6/M10/M11/M12）可在下周窗口首采。
+
+## 三十二、四战役开门手：ISO-0 + EVAL-0 双闭，C1/C2 施工面定稿 (2026-10-21 午后)
+
+用户指令「通过向 kimi 派单方式，确认 bi 下一步工作」——即执行战役地图预定开门手：EVAL-0（kimi 只读设计单）+ ISO-0（主控自查）并行。本会话**零代码改动**（双单皆只读设计），门禁面无变化（4979/0 基线保持）。
+
+### EVAL-0：C2 评测语料设计（kimi 派单 + 断流事故 + 主控重组）
+
+- **派发**：裸 `kimi -p`（minimax-m3.1-flash-free），简报 eval0-brief.md 预落盘（只读铁律/格式从简先落盘后润色/未核实标注/预计 20-30 分钟）；台账 running + 日志路径补记。
+- **事故与干预**：kimi 完成全部读码+锚点核实（含 fake-endpoint/deepseek-adapter/headless/eval-harness 十余文件）后，在最终 write 落盘阶段遭 `provider.connection_error: terminated` 断流并陷入「Now write the file / compose carefully」重试空转 30+ 分钟——「先落盘后润色」条款防不住（非格式自省，是断流重试死循环）。主控识别（产出文件缺失+日志 mtime 停滞+尾部重复）→ 杀单 → pgrep 复核死透（无 detach 幸存）→ 从 200KB 思考流日志完整回收设计内容重组落盘。
+- **产出**（eval0-design.md）：26 条语料总盘（9 dogfood E01-E09 + 17 fixture E10-E26，六领域 S/M/L 分层，每条含 --prompt 原文/shell 可判定判据/补丁正确性判定/预计回合）；18 类判据词汇（文件 F/命令 C/diff D/轨迹 T/输出 O/防护 A/预算 N）；G1-G12 harness 对接缝缺件清单；EvalTask/Judge schema 草案；L1-L8 防作弊清单（cat 冒充产物/改测试不改实现/写新文件冒充/越界/谎报/刷回合/工具幻觉/半成品）。
+- **验收**：主控抽样核实 8/8 论断零幻觉（Check 五类/lastUserText 只收 text/usage 固定 8/session_done 无 usage/rounds 语义/tsconfig 盲区/tool_result 序列化/沙箱即焚）。
+- **关键新发现（G10）**：**fake-endpoint 双 wire 模式均看不到 tool_result**——openai 模式 tool_result 是 role:"tool" 消息不在 lastUserText 扫描面；anthropic 模式是 user 消息内 type:"tool_result" 块被过滤（fake-endpoint.ts:35-52 + deepseek-adapter.ts:295-299 双证）→ 伪端点轨「响应式回显」（E25 依赖）必须先扩展 fake-endpoint。
+- **首批 10 条建议**（主控补充，kimi 未及产出）：E25/E26（伪端点轨地基，逼出 G10）+E01/E02（dogfood S 最小闭环）+E06（种子缺陷机制 G2）+E10/E12（fixture bugfix 双样本）+E22（只读纪律 T2 试金石）+E20（read-before-write 保序 T1）+E09（安全面代表）。
+
+### ISO-0：C1 隔离层施工面定稿（主控自查，与 kimi 并行）
+
+现读四件套确证「有器官、零接线」：OsSandbox（os-sandbox.ts 587 行，probe 三后端结构化 verdict + runSandboxed fail-closed refused，全仓消费方仅测试）；shell-scan（2443 行，REASONS 19 稳定码，现仅 argSummary 标注不阻断）；PathJail（已接 edit/write/glob/grep，bash 不接）；权限门（三层矩阵，headless.ts:568 装配层消费，ask 在 headless 结构化拒绝）。
+
+接线设计四定案（iso0-design.md）：
+1. **ISO-1 沙箱轨走 spawnSync 分叉**：runBashCommand 内 mode=off 走既有异步轨、≠off 走 runSandboxed 同步轨——os-sandbox.ts 零改动（红线）；probe 构造时一次缓存。
+2. **降级语义定案：拒绝优于降级**：mode≠off 且后端全不可用 → fail-closed 拒执行 + refusals 结构化回喂，不做「带告警继续裸跑」（安全假象）；卡面「不可用结构化告警降级」措辞开工时备案修正。
+3. **ISO-2 阻断放 binding 层**：dangerous/opaque 默认拒（reason code 清单回喂可自纠）；审批记忆键天然成立（键=bash+归一化 argSummary，标签已在摘要内）——「审批记忆键语义保持」零额外设计；yolo/auto 下安全阻断依然生效（安全层独立于权限模式）。
+4. **ISO-3 路线重审（待用户定案）**：静态分析 bash 写目标对 sh -c 动态性必留旁路；**推荐路线 A=写面 jail 走 ISO-1 的 workspace-write 档（landlock/bwrap 内核强制，旁路归零）**，PathJail 维持其完备域（edit/write/glob/grep）；路线 B（PathJail 静态接 bash）语义重叠+误杀面大。采纳 A 则 ISO-3 复用 ISO-1 成果、施工量大幅缩小。
+
+文件红线矩阵：os-sandbox/shell-scan/sandbox-policy/path-jail/permission-gate/headless 全部禁改（方案②）；改动面收敛在 toolset.ts bash 段 + [sandbox] 配置节 + 新测试。
+
+### 会话终态（2026-10-21 午后封存笔）
+
+- **代码**：零改动；origin/main = HEAD = `3bed2bd` 保持。产出=纯文档（docs/dispatch/2026-10-21-campaigns/：eval0-brief + eval0-design + iso0-design），随本封存笔提交。
+- **台账**：ISO-0/EVAL-0 双卡 closed（proof_link 指产出文档）；BI-C1-ISOLATION/BI-C2-EVALBASE 两批次保持 running（战役在途，ISO-1..4/EVAL-1..4 施工面已定稿待令）；手记 #288。
+- **下一步**：EVAL-1（语料落地，按首批 10 条）与 ISO-1（OsSandbox 接 bash，spawnSync 分叉方案）可并行开工；ISO-3 路线 A/B 待用户裁定。
+- **通道沉淀**：kimi 落盘阶段断流空转坑入记忆（识别法：产出缺失+日志停滞+尾部重复；干预法：杀单保日志重组）；本单思考流内容质量极高（设计可完整回收），杀单≠报废。
